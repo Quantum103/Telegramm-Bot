@@ -49,8 +49,12 @@ func (r *EnrollmentRepository) SetCurrentQuestion(ctx context.Context, studentID
 	if tag.RowsAffected() == 1 {
 		return nil
 	}
-	if _, err := r.GetByIDForStudent(ctx, studentID, enrollmentID); err != nil {
+	enrollment, err := r.GetByIDForStudent(ctx, studentID, enrollmentID)
+	if err != nil {
 		return err
+	}
+	if enrollment.Status == "cancelled" {
+		return ErrInvalidState
 	}
 	return ErrNotFound
 }
