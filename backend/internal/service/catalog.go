@@ -11,6 +11,7 @@ type CatalogStore interface {
 	GetPublishedCourseByID(context.Context, int64) (domain.Course, error)
 	ListPublishedLessonsByCourseID(context.Context, int64) ([]domain.Lesson, error)
 	GetPublishedLessonByID(context.Context, int64) (domain.Lesson, error)
+	GetPublishedLessonInCourse(context.Context, int64, int64) (domain.Lesson, error)
 }
 
 type QuestionStore interface {
@@ -36,6 +37,19 @@ func (s *CatalogService) GetCourse(ctx context.Context, courseID int64) (domain.
 
 func (s *CatalogService) ListCourseLessons(ctx context.Context, courseID int64) ([]domain.Lesson, error) {
 	return s.courses.ListPublishedLessonsByCourseID(ctx, courseID)
+}
+
+
+func (s *CatalogService) GetLessonDetailInCourse(ctx context.Context, courseID, lessonID int64) (domain.LessonDetail, error) {
+	lesson, err := s.courses.GetPublishedLessonInCourse(ctx, courseID, lessonID)
+	if err != nil {
+		return domain.LessonDetail{}, err
+	}
+	questions, err := s.questions.ListQuestionsForVersion(ctx, lesson.LessonVersionID)
+	if err != nil {
+		return domain.LessonDetail{}, err
+	}
+	return domain.LessonDetail{Lesson: lesson, Questions: questions}, nil
 }
 
 func (s *CatalogService) GetLessonDetail(ctx context.Context, lessonID int64) (domain.LessonDetail, error) {
