@@ -14,6 +14,13 @@ type CreateLessonParams struct {
 	Description *string
 }
 
+type QuestionCriterionInput struct {
+	Key         string
+	Description string
+	Weight      float64
+	Required    *bool
+}
+
 type QuestionOptionInput struct {
 	Key       string
 	Text      string
