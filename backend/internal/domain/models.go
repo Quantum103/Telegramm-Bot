@@ -50,7 +50,7 @@ type Student struct {
 	AccountStatus    string     `json:"account_status"`
 	RegisteredAt     time.Time  `json:"registered_at"`
 	LastActiveAt     *time.Time `json:"last_active_at,omitempty"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type CreateStudentParams struct {
@@ -102,19 +102,19 @@ type BiblePassage struct {
 
 // LessonQuestion содержит внутренние материалы; ученические ответы API строятся отдельными DTO.
 type LessonQuestion struct {
-	ID                  int64              `json:"id"`
-	LessonVersionID     int64              `json:"lesson_version_id"`
-	QuestionNumber      int                `json:"question_number"`
-	Prompt              string             `json:"prompt"`
-	ExpectedAnswer      string             `json:"-"`
-	AnswerType          string             `json:"answer_type"`
-	ExpectedExplanation *string            `json:"-"`
+	ID                  int64               `json:"id"`
+	LessonVersionID     int64               `json:"lesson_version_id"`
+	QuestionNumber      int                 `json:"question_number"`
+	Prompt              string              `json:"prompt"`
+	ExpectedAnswer      string              `json:"-"`
+	AnswerType          string              `json:"answer_type"`
+	ExpectedExplanation *string             `json:"-"`
 	Criteria            []QuestionCriterion `json:"-"`
-	CommonMistakes      []CommonMistake    `json:"-"`
-	BiblePassages       []BiblePassage     `json:"-"`
-	Options             []QuestionOption   `json:"options"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
+	CommonMistakes      []CommonMistake     `json:"-"`
+	BiblePassages       []BiblePassage      `json:"-"`
+	Options             []QuestionOption    `json:"options"`
+	CreatedAt           time.Time           `json:"created_at"`
+	UpdatedAt           time.Time           `json:"updated_at"`
 }
 
 type LessonDetail struct {
@@ -145,14 +145,14 @@ type StartEnrollmentParams struct {
 }
 
 type Progress struct {
-	Enrollment          Enrollment `json:"enrollment"`
-	AnsweredQuestions   int        `json:"answered_questions"`
-	TotalQuestions      int        `json:"total_questions"`
-	RemainingQuestions  int        `json:"remaining_questions"`
-	IsComplete          bool       `json:"is_complete"`
-	FirstQuestionID     *int64     `json:"first_question_id,omitempty"`
-	PreviousQuestionID  *int64     `json:"previous_question_id,omitempty"`
-	NextQuestionID      *int64     `json:"next_question_id,omitempty"`
+	Enrollment         Enrollment `json:"enrollment"`
+	AnsweredQuestions  int        `json:"answered_questions"`
+	TotalQuestions     int        `json:"total_questions"`
+	RemainingQuestions int        `json:"remaining_questions"`
+	IsComplete         bool       `json:"is_complete"`
+	FirstQuestionID    *int64     `json:"first_question_id,omitempty"`
+	PreviousQuestionID *int64     `json:"previous_question_id,omitempty"`
+	NextQuestionID     *int64     `json:"next_question_id,omitempty"`
 }
 
 type SaveTextAnswerParams struct {
@@ -164,22 +164,22 @@ type SaveTextAnswerParams struct {
 }
 
 type AnswerSubmission struct {
-	StudentID        int64
-	EnrollmentID     int64
-	QuestionID       int64
-	AnswerText       string
+	StudentID         int64
+	EnrollmentID      int64
+	QuestionID        int64
+	AnswerText        string
 	SelectedOptionIDs []int64
-	IdempotencyKey   string
+	IdempotencyKey    string
 }
 
 type SavedAnswer struct {
-	AnswerID         int64     `json:"answer_id"`
-	AttemptID        int64     `json:"attempt_id,omitempty"`
-	AnswerText       string    `json:"answer_text"`
-	SelectedOptionIDs []int64  `json:"selected_option_ids"`
-	ProcessingStatus string    `json:"processing_status"`
-	Replayed         bool      `json:"replayed,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	AnswerID          int64     `json:"answer_id"`
+	AttemptID         int64     `json:"attempt_id,omitempty"`
+	AnswerText        string    `json:"answer_text"`
+	SelectedOptionIDs []int64   `json:"selected_option_ids"`
+	ProcessingStatus  string    `json:"processing_status"`
+	Replayed          bool      `json:"replayed,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type EvaluationParams struct {
@@ -202,9 +202,9 @@ type AttemptFailureParams struct {
 
 type AnswerAttempt struct {
 	ID               int64      `json:"id"`
-	AnswerID         int64      `json:"answer_id"`
+	AnswerID          int64      `json:"answer_id"`
 	SubmittedAnswer  string     `json:"submitted_answer"`
-	ProcessingStatus string     `json:"processing_status"`
+	ProcessingStatus  string     `json:"processing_status"`
 	EvaluationResult *string    `json:"evaluation_result,omitempty"`
 	Explanation      *string    `json:"explanation,omitempty"`
 	MissingPoints    []string   `json:"missing_points"`
