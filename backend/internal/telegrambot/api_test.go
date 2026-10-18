@@ -20,7 +20,7 @@ func TestAPIClientGetMe(t *testing.T) {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
+			"ok":     true,
 			"result": map[string]any{"id": 7, "first_name": "StudyBot", "username": "study_test_bot"},
 		})
 	}))
@@ -101,5 +101,4 @@ func (*testAPI) EditMessageText(context.Context, int64, int64, string, *InlineKe
 	return nil
 }
 func (*testAPI) AnswerCallbackQuery(context.Context, string, string) error { return nil }
-func (*testAPI) DeleteMessage(context.Context, int64, int64) error { return nil }
-
+func (*testAPI) DeleteMessage(context.Context, int64, int64) error         { return nil }
