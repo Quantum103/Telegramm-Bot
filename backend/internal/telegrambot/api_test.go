@@ -58,6 +58,28 @@ func TestAPIClientErrorDoesNotExposeToken(t *testing.T) {
 	}
 }
 
+func TestAPIClientTransportErrorDoesNotExposeToken(t *testing.T) {
+	const secret = "very-secret-bot-token"
+	client := newAPIClient(secret, "https://telegram.test", &http.Client{
+		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		}),
+	})
+	_, err := client.GetMe(context.Background())
+	if err == nil {
+		t.Fatal("GetMe should fail when the HTTP transport fails")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("transport error leaked token: %v", err)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
 func TestBotRunStopsWhenContextIsCancelled(t *testing.T) {
 	api := &testAPI{updatesWaitForCancel: true}
 	bot := NewBot(api, testUpdateHandler{}, nil)
