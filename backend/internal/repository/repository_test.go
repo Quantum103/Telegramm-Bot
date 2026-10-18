@@ -22,7 +22,7 @@ func TestIsCanonicalUUID(t *testing.T) {
 }
 
 func TestValidEvaluationResult(t *testing.T) {
-	for _, result := range []string{"correct", "partial", "incorrect", "ambiguous"} {
+	for _, result := range []string{"correct", "partial", "incorrect", "ambiguous", "uncertain"} {
 		if !validEvaluationResult(result) {
 			t.Errorf("результат %q должен быть допустимым", result)
 		}

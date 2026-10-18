@@ -13,6 +13,8 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/config"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/database"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/httpserver"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/repository"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 func main() {
@@ -37,9 +39,14 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	catalogService := service.NewCatalogService(
+		repository.NewCatalogRepository(pool),
+		repository.NewContentRepository(pool),
+	)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.NewHandler(pool, logger),
+		Handler:           httpserver.NewHandler(pool, logger, catalogService),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,

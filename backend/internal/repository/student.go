@@ -3,31 +3,17 @@ package repository
 import (
 	"context"
 	"strings"
-	"time"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Student struct {
-	ID               int64
-	TelegramID       int64
-	DisplayName      string
-	TelegramUsername *string
-	PreferredName    *string
-	AccountStatus    string
-	RegisteredAt     time.Time
-	LastActiveAt     *time.Time
-	UpdatedAt        time.Time
-}
-
-type CreateStudentParams struct {
-	TelegramID       int64
-	DisplayName      string
-	TelegramUsername *string
-	PreferredName    *string
-}
+type Student = domain.Student
+type CreateStudentParams = domain.CreateStudentParams
+type EnsureStudentParams = domain.EnsureStudentParams
+type UpdateStudentProfileParams = domain.UpdateStudentProfileParams
 
 type StudentRepository struct {
 	pool *pgxpool.Pool

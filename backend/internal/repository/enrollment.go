@@ -2,8 +2,8 @@ package repository
 
 import (
 	"context"
-	"time"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,27 +17,8 @@ func NewEnrollmentRepository(pool *pgxpool.Pool) *EnrollmentRepository {
 	return &EnrollmentRepository{pool: pool}
 }
 
-type Enrollment struct {
-	ID                int64
-	StudentID         int64
-	LessonID          int64
-	LessonVersionID   int64
-	Mode              string
-	CurrentQuestionID *int64
-	Status            string
-	StartedAt         *time.Time
-	CompletedAt       *time.Time
-	LastActivityAt    *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-}
-
-type StartEnrollmentParams struct {
-	StudentID       int64
-	LessonID        int64
-	LessonVersionID int64
-	Mode            string
-}
+type Enrollment = domain.Enrollment
+type StartEnrollmentParams = domain.StartEnrollmentParams
 
 func (r *EnrollmentRepository) Start(ctx context.Context, params StartEnrollmentParams) (Enrollment, error) {
 	if params.StudentID <= 0 || params.LessonID <= 0 || params.LessonVersionID <= 0 {
