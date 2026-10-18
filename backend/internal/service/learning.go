@@ -79,6 +79,9 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 	if err != nil {
 		return domain.Progress{}, err
 	}
+	if enrollment.Status == "cancelled" {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
 
 	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollment.ID)
 	if err != nil {
