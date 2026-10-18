@@ -36,6 +36,22 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.Database.Port != 5432 || cfg.Database.MaxConns != 10 || cfg.Database.MinConns != 1 {
 		t.Errorf("unexpected database defaults: %+v", cfg.Database)
 	}
+	if cfg.TelegramBotToken != "" {
+		t.Errorf("TelegramBotToken = %q, want empty when not configured", cfg.TelegramBotToken)
+	}
+}
+
+func TestLoadTrimsOptionalTelegramToken(t *testing.T) {
+	values := validEnvironment()
+	values["TELEGRAM_BOT_TOKEN"] = "  test-token-value  "
+
+	cfg, err := load(lookupFrom(values))
+	if err != nil {
+		t.Fatalf("load returned error: %v", err)
+	}
+	if cfg.TelegramBotToken != "test-token-value" {
+		t.Fatalf("TelegramBotToken = %q, want trimmed token", cfg.TelegramBotToken)
+	}
 }
 
 func TestLoadRejectsMissingRequiredDatabaseValues(t *testing.T) {
