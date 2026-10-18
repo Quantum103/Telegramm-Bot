@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -127,4 +126,3 @@ func TestCourseListReturnsEmptyArrayRatherThanNull(t *testing.T) {
 
 func stringPointer(value string) *string { return &value }
 
-var _ = errors.Is
