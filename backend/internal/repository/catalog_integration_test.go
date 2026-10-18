@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
 )
 
 func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
