@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,61 +18,12 @@ func NewContentRepository(pool *pgxpool.Pool) *ContentRepository {
 	return &ContentRepository{pool: pool}
 }
 
-type PublishedLesson struct {
-	CourseTitle     string
-	LessonID        int64
-	LessonVersionID int64
-	VersionNumber   int
-	Position        int
-	Title           string
-	PublishedAt     time.Time
-}
-
-type QuestionCriterion struct {
-	Key         string  `json:"key"`
-	Description string  `json:"description"`
-	Weight      float64 `json:"weight"`
-	Required    bool    `json:"required"`
-}
-
-type QuestionOption struct {
-	ID        int64  `json:"id"`
-	Key       string `json:"key"`
-	Text      string `json:"text"`
-	IsCorrect bool   `json:"-"`
-}
-
-type CommonMistake struct {
-	Text        string `json:"text"`
-	Explanation string `json:"explanation"`
-}
-
-type BiblePassage struct {
-	ID              int64   `json:"id"`
-	BookName        string  `json:"book_name"`
-	Chapter         int     `json:"chapter"`
-	StartVerse      int     `json:"start_verse"`
-	EndVerse        int     `json:"end_verse"`
-	TranslationName *string `json:"translation_name"`
-	PassageText     *string `json:"passage_text"`
-	SourceNote      *string `json:"source_note"`
-}
-
-type LessonQuestion struct {
-	ID                  int64
-	LessonVersionID     int64
-	QuestionNumber      int
-	Prompt              string
-	ExpectedAnswer      string `json:"-"`
-	AnswerType          string
-	ExpectedExplanation *string             `json:"-"`
-	Criteria            []QuestionCriterion `json:"-"`
-	CommonMistakes      []CommonMistake     `json:"-"`
-	BiblePassages       []BiblePassage      `json:"-"`
-	Options             []QuestionOption
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-}
+type PublishedLesson = domain.CourseLesson
+type QuestionCriterion = domain.QuestionCriterion
+type QuestionOption = domain.QuestionOption
+type CommonMistake = domain.CommonMistake
+type BiblePassage = domain.BiblePassage
+type LessonQuestion = domain.LessonQuestion
 
 func (r *ContentRepository) ListPublishedLessonsByCourse(ctx context.Context, courseSlug string) ([]PublishedLesson, error) {
 	const query = `
