@@ -1,0 +1,28 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Go
+/backend/bin/
+/backend/coverage.out
+/backend/coverage.html
+
+# Node.js / Vite
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+
+# IDE and operating system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local logs and temporary files
+*.log
+*.tmp
+
+# Local volumes / database dumps
+*.dump
+*.sql.gz
