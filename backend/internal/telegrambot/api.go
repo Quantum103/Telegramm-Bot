@@ -120,7 +120,14 @@ func (c *APIClient) call(ctx context.Context, method string, payload any, result
 		return fmt.Errorf("read Telegram response for %s: %w", method, err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return &APIError{Method: method, Code: response.StatusCode, Description: "HTTP request failed"}
+		description := "HTTP request failed"
+		switch response.StatusCode {
+		case http.StatusUnauthorized:
+			description = "unauthorized; проверьте TELEGRAM_BOT_TOKEN"
+		case http.StatusConflict:
+			description = "conflict; вероятно, другой процесс использует long polling для этого токена"
+		}
+		return &APIError{Method: method, Code: response.StatusCode, Description: description}
 	}
 	var envelope apiEnvelope
 	if err := json.Unmarshal(responseBody, &envelope); err != nil {
