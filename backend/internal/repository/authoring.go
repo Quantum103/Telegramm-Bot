@@ -264,7 +264,6 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	return question, nil
 }
 
-
 // CreateDraftRevision создаёт новую неизменяемую версию на основе последнего опубликованного содержимого.
 func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID int64) (domain.Lesson, error) {
 	if lessonID <= 0 {
@@ -322,13 +321,13 @@ func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID in
 	}
 
 	type questionCopy struct {
-		oldID             int64
-		newID             int64
-		number            int
-		prompt            string
-		expectedAnswer    string
-		answerType        string
-		expectedExplain   pgtype.Text
+		oldID           int64
+		newID           int64
+		number          int
+		prompt          string
+		expectedAnswer  string
+		answerType      string
+		expectedExplain pgtype.Text
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT id, question_number, prompt, expected_answer, answer_type, expected_explanation
