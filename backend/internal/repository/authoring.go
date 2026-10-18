@@ -8,7 +8,6 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (r *CatalogRepository) CreateDraftCourse(ctx context.Context, params domain.CreateCourseParams) (domain.Course, error) {
@@ -96,7 +95,7 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 	return domain.Lesson{
 		ID: lessonID, CourseID: params.CourseID, CourseTitle: courseTitle,
 		Position: position, LessonVersionID: versionID, VersionNumber: 1,
-		Title: params.Title, Description: stringPointerValue(description),
+		Title: params.Title, Description: cleanOptionalString(params.Description),
 		QuestionCount: 0,
 	}, nil
 }
@@ -173,7 +172,7 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 			VALUES ($1, $2, $3, $4)
 		`, question.ID, strings.TrimSpace(mistake.Text), strings.TrimSpace(mistake.Explanation), index+1)
 	}
-	if batch.Len() > 0 {
+	if batchCount > 0 {
 		results := tx.SendBatch(ctx, batch)
 		for index := range params.Options {
 			var optionID int64
@@ -289,7 +288,8 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID 
 	if status != "draft" {
 		return ErrInvalidState
 	}
-	if _, err := tx.Exec(ctx, "SELECT id FROM lessons WHERE id = $1 FOR UPDATE", lessonID); err != nil {
+	var lockedLessonID int64
+	if err := tx.QueryRow(ctx, "SELECT id FROM lessons WHERE id = $1 FOR UPDATE", lessonID).Scan(&lockedLessonID); err != nil {
 		return mapDatabaseError("заблокировать урок для публикации", err)
 	}
 
@@ -486,11 +486,3 @@ func cleanOptionalString(value *string) *string {
 	return nil
 }
 
-func stringPointerValue(value any) *string {
-	if stringValue, ok := value.(string); ok {
-		return &stringValue
-	}
-	return nil
-}
-
-var _ = pgtype.Text{}
