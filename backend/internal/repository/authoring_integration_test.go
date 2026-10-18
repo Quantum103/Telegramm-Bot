@@ -113,6 +113,35 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 	if !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("нельзя менять опубликованную версию, получено %v", err)
 	}
+	revision, err := authoring.CreateDraftRevision(ctx, lesson.ID)
+	if err != nil {
+		t.Fatalf("создать новую черновую версию опубликованного урока: %v", err)
+	}
+	if revision.LessonVersionID == lesson.LessonVersionID || revision.VersionNumber != 2 || revision.QuestionCount != 1 {
+		t.Fatalf("новая версия создана некорректно: %+v", revision)
+	}
+	if err := authoring.PublishLessonVersion(ctx, revision.LessonVersionID); err != nil {
+		t.Fatalf("опубликовать новую версию урока: %v", err)
+	}
+
+	currentLessons, err := repo.ListPublishedLessonsByCourseID(ctx, course.ID)
+	if err != nil {
+		t.Fatalf("получить уроки после обновления версии: %v", err)
+	}
+	if len(currentLessons) != 1 || currentLessons[0].LessonVersionID != revision.LessonVersionID ||
+		currentLessons[0].VersionNumber != 2 {
+		t.Fatalf("ученический каталог не переключился на новую версию: %+v", currentLessons)
+	}
+	archivedQuestions, err := NewContentRepository(pool).ListQuestionsForVersion(ctx, lesson.LessonVersionID)
+	if err != nil {
+		t.Fatalf("восстановить вопросы архивной версии: %v", err)
+	}
+	if len(archivedQuestions) != 1 || archivedQuestions[0].Prompt != "Какой вариант указан в тексте?" ||
+		archivedQuestions[0].ExpectedAnswer != "Предполагаемый ответ для внутренней проверки" ||
+		len(archivedQuestions[0].Options) != 2 || len(archivedQuestions[0].Criteria) != 1 ||
+		len(archivedQuestions[0].BiblePassages) != 1 {
+		t.Fatalf("архивная версия не сохранила прежние материалы: %+v", archivedQuestions)
+	}
 	if err := authoring.PublishCourse(ctx, course.ID); err != nil {
 		t.Fatalf("повторная публикация курса должна быть идемпотентной: %v", err)
 	}
