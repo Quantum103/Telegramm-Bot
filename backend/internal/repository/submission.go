@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -266,4 +265,3 @@ func (r *AnswerRepository) GetSavedAnswer(ctx context.Context, studentID, enroll
 	return answer, nil
 }
 
-var _ = domain.ErrInvalidInput
