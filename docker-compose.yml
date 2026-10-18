@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-bible_platform}"
+      POSTGRES_USER: "${POSTGRES_USER:-bible_app}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}"
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      HTTP_READ_TIMEOUT: "${HTTP_READ_TIMEOUT:-15s}"
+      HTTP_READ_HEADER_TIMEOUT: "${HTTP_READ_HEADER_TIMEOUT:-5s}"
+      HTTP_WRITE_TIMEOUT: "${HTTP_WRITE_TIMEOUT:-15s}"
+      HTTP_IDLE_TIMEOUT: "${HTTP_IDLE_TIMEOUT:-60s}"
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${POSTGRES_DB:-bible_platform}"
+      DATABASE_USER: "${POSTGRES_USER:-bible_app}"
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}"
+      DATABASE_SSLMODE: "${DATABASE_SSLMODE:-disable}"
+      DATABASE_CONNECT_TIMEOUT: "${DATABASE_CONNECT_TIMEOUT:-5s}"
+      DATABASE_MAX_CONNS: "${DATABASE_MAX_CONNS:-10}"
+      DATABASE_MIN_CONNS: "${DATABASE_MIN_CONNS:-1}"
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: "${VITE_API_BASE_URL:-}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8081}:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
