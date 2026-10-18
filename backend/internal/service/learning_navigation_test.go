@@ -38,6 +38,9 @@ func (s navigationCatalogStore) ListPublishedLessonsByCourseID(context.Context, 
 func (s navigationCatalogStore) GetPublishedLessonByID(context.Context, int64) (domain.Lesson, error) {
 	return s.lesson, nil
 }
+func (s navigationCatalogStore) GetPublishedLessonInCourse(context.Context, int64, int64) (domain.Lesson, error) {
+	return s.lesson, nil
+}
 
 type navigationQuestionStore struct{ questions []domain.LessonQuestion }
 
