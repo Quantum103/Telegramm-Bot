@@ -38,13 +38,13 @@ type SavedAnswer struct {
 }
 
 type EvaluationParams struct {
-	AttemptID       int64
-	Result          string
-	Explanation     *string
-	MissingPoints   []string
-	Provider        string
-	Model           string
-	Duration        time.Duration
+	AttemptID     int64
+	Result        string
+	Explanation   *string
+	MissingPoints []string
+	Provider      string
+	Model         string
+	Duration      time.Duration
 }
 
 type AttemptFailureParams struct {
