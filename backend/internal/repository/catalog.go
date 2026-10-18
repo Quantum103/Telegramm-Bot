@@ -119,7 +119,6 @@ func (r *CatalogRepository) ListPublishedLessonsByCourseID(ctx context.Context, 
 	return lessons, nil
 }
 
-
 func (r *CatalogRepository) GetPublishedLessonInCourse(ctx context.Context, courseID, lessonID int64) (domain.Lesson, error) {
 	if courseID <= 0 || lessonID <= 0 {
 		return domain.Lesson{}, ErrInvalidInput
