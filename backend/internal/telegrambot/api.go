@@ -106,7 +106,8 @@ func (c *APIClient) call(ctx context.Context, method string, payload any, result
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/bot"+c.token+"/"+method, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create Telegram request for %s: %w", method, err)
+		// Ошибка построения URL тоже может включать значение токена, добавленное в путь.
+		return fmt.Errorf("create Telegram request for %s: invalid request (%T)", method, err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.httpClient.Do(request)
