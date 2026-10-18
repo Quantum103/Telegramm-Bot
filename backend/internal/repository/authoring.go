@@ -251,8 +251,8 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 			ID: passageID, BookName: strings.TrimSpace(passage.BookName),
 			Chapter: passage.Chapter, StartVerse: passage.StartVerse, EndVerse: passage.EndVerse,
 			TranslationName: cleanOptionalString(passage.TranslationName),
-			PassageText: cleanOptionalString(passage.PassageText),
-			SourceNote: cleanOptionalString(passage.SourceNote),
+			PassageText:     cleanOptionalString(passage.PassageText),
+			SourceNote:      cleanOptionalString(passage.SourceNote),
 		})
 	}
 
@@ -495,4 +495,3 @@ func cleanOptionalString(value *string) *string {
 	}
 	return nil
 }
-
