@@ -74,6 +74,9 @@ jobs:
         working-directory: backend
         run: go vet ./...
 
+      - name: Build backend Docker image
+        run: docker build --tag bible-platform-backend:ci ./backend
+
   frontend:
     name: Frontend checks and Compose configuration
     runs-on: ubuntu-latest
