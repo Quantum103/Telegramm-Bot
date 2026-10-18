@@ -303,10 +303,10 @@ func TestTextWithoutActiveQuestionIsRejected(t *testing.T) {
 func TestSingleChoiceOptionIsSaved(t *testing.T) {
 	options := []domain.QuestionOption{{ID: 6101, Key: "a", Text: "первый вариант"}, {ID: 6102, Key: "b", Text: "второй вариант"}}
 	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", options)
-	if !hasButton(lastEdit(t, api.fakeAPI).markup, "pick:701:1001:6101") {
+	if !hasButton(lastEdit(t, api.fakeAPI).markup, "p:701:1001:6101") {
 		t.Fatal("single-choice options were not shown")
 	}
-	bot.handleCallbackWithUpdateID(context.Background(), 9010, testCallback("pick:701:1001:6102", user, mainID))
+	bot.handleCallbackWithUpdateID(context.Background(), 9010, testCallback("p:701:1001:6102", user, mainID))
 	if len(learning.attempts) != 1 || len(learning.attempts[0].SelectedOptionIDs) != 1 || learning.attempts[0].SelectedOptionIDs[0] != 6102 {
 		t.Fatalf("single-choice answer not saved through the service: %+v", learning.attempts)
 	}
@@ -319,7 +319,7 @@ func TestSingleChoiceOptionIsSaved(t *testing.T) {
 func TestOptionBelongingToAnotherQuestionIsRejected(t *testing.T) {
 	options := []domain.QuestionOption{{ID: 6201, Key: "a", Text: "только этот вопрос"}}
 	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", options)
-	bot.handleCallbackWithUpdateID(context.Background(), 9011, testCallback("pick:701:1001:99999", user, mainID))
+	bot.handleCallbackWithUpdateID(context.Background(), 9011, testCallback("p:701:1001:99999", user, mainID))
 	if len(learning.attempts) != 0 {
 		t.Fatalf("foreign option was saved: %+v", learning.attempts)
 	}
@@ -337,12 +337,12 @@ func TestOptionBelongingToAnotherQuestionIsRejected(t *testing.T) {
 func TestMultipleChoiceNeedsExplicitConfirmation(t *testing.T) {
 	options := []domain.QuestionOption{{ID: 6301, Key: "a", Text: "вариант A"}, {ID: 6302, Key: "b", Text: "вариант B"}}
 	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "multiple_choice", options)
-	bot.handleCallbackWithUpdateID(context.Background(), 9020, testCallback("multi-toggle:701:1001:6301", user, mainID))
+	bot.handleCallbackWithUpdateID(context.Background(), 9020, testCallback("t:701:1001:6301", user, mainID))
 	if len(learning.attempts) != 0 {
 		t.Fatal("multiple choice saved before confirmation")
 	}
-	bot.handleCallbackWithUpdateID(context.Background(), 9021, testCallback("multi-toggle:701:1001:6302", user, mainID))
-	bot.handleCallbackWithUpdateID(context.Background(), 9022, testCallback("multi-submit:701:1001", user, mainID))
+	bot.handleCallbackWithUpdateID(context.Background(), 9021, testCallback("t:701:1001:6302", user, mainID))
+	bot.handleCallbackWithUpdateID(context.Background(), 9022, testCallback("s:701:1001", user, mainID))
 	if len(learning.attempts) != 1 || len(learning.attempts[0].SelectedOptionIDs) != 2 {
 		t.Fatalf("confirmed multiple selection wasn't saved: %+v", learning.attempts)
 	}
@@ -370,7 +370,7 @@ func TestMultipleChoiceDraftsAreIsolatedBetweenStudents(t *testing.T) {
 	bot.handleUpdate(context.Background(), testUpdate(2, "/start", userB))
 	mainB := api.messages[1].messageID
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", userB, mainB))
-	bot.handleCallbackWithUpdateID(context.Background(), 9030, testCallback("multi-toggle:701:1001:6401", userA, mainA))
+	bot.handleCallbackWithUpdateID(context.Background(), 9030, testCallback("t:701:1001:6401", userA, mainA))
 
 	var lastB *editedMessage
 	for i := range api.edits {
@@ -387,5 +387,8 @@ func TestMultipleChoiceDraftsAreIsolatedBetweenStudents(t *testing.T) {
 	}
 	if len(learning.attempts) != 0 {
 		t.Fatalf("draft choices should not create attempts before confirmation: %+v", learning.attempts)
+	}
+	if got := len(bot.multiDraftSelection(answerStateKey{studentID: 2, enrollmentID: 702, questionID: 1001})); got != 0 {
+		t.Fatalf("second student's draft is not isolated, selected options=%d", got)
 	}
 }
