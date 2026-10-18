@@ -263,6 +263,183 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	return question, nil
 }
 
+
+// CreateDraftRevision создаёт новую неизменяемую версию на основе последнего опубликованного содержимого.
+func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID int64) (domain.Lesson, error) {
+	if lessonID <= 0 {
+		return domain.Lesson{}, ErrInvalidInput
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Lesson{}, mapDatabaseError("начать создание версии урока", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var lockedLessonID int64
+	if err := tx.QueryRow(ctx, "SELECT id FROM lessons WHERE id = $1 FOR UPDATE", lessonID).Scan(&lockedLessonID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Lesson{}, ErrNotFound
+		}
+		return domain.Lesson{}, mapDatabaseError("заблокировать урок для создания версии", err)
+	}
+
+	var baseVersionID int64
+	var baseTitle string
+	var baseDescription pgtype.Text
+	var baseVersionNumber int
+	if err := tx.QueryRow(ctx, `
+		SELECT id, version_number, title, description
+		FROM lesson_versions
+		WHERE lesson_id = $1 AND status IN ('published', 'archived')
+		ORDER BY version_number DESC
+		LIMIT 1
+	`, lessonID).Scan(&baseVersionID, &baseVersionNumber, &baseTitle, &baseDescription); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Lesson{}, ErrInvalidState
+		}
+		return domain.Lesson{}, mapDatabaseError("найти исходную опубликованную версию", err)
+	}
+
+	var nextVersionNumber int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(MAX(version_number), 0) + 1
+		FROM lesson_versions WHERE lesson_id = $1
+	`, lessonID).Scan(&nextVersionNumber); err != nil {
+		return domain.Lesson{}, mapDatabaseError("определить номер новой версии", err)
+	}
+
+	var newVersionID int64
+	var description any
+	if baseDescription.Valid {
+		description = baseDescription.String
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO lesson_versions (lesson_id, version_number, title, description, status)
+		VALUES ($1, $2, $3, $4, 'draft')
+		RETURNING id
+	`, lessonID, nextVersionNumber, baseTitle, description).Scan(&newVersionID); err != nil {
+		return domain.Lesson{}, mapDatabaseError("создать черновую версию урока", err)
+	}
+
+	type questionCopy struct {
+		oldID             int64
+		newID             int64
+		number            int
+		prompt            string
+		expectedAnswer    string
+		answerType        string
+		expectedExplain   pgtype.Text
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id, question_number, prompt, expected_answer, answer_type, expected_explanation
+		FROM lesson_questions
+		WHERE lesson_version_id = $1
+		ORDER BY question_number
+	`, baseVersionID)
+	if err != nil {
+		return domain.Lesson{}, mapDatabaseError("получить вопросы исходной версии", err)
+	}
+	questions := make([]questionCopy, 0)
+	for rows.Next() {
+		var item questionCopy
+		if err := rows.Scan(&item.oldID, &item.number, &item.prompt, &item.expectedAnswer,
+			&item.answerType, &item.expectedExplain); err != nil {
+			rows.Close()
+			return domain.Lesson{}, mapDatabaseError("прочитать вопрос исходной версии", err)
+		}
+		questions = append(questions, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.Lesson{}, mapDatabaseError("обойти вопросы исходной версии", err)
+	}
+	rows.Close()
+
+	for index := range questions {
+		item := &questions[index]
+		var explanation any
+		if item.expectedExplain.Valid {
+			explanation = item.expectedExplain.String
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO lesson_questions (
+				lesson_version_id, question_number, prompt, expected_answer, answer_type, expected_explanation
+			)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id
+		`, newVersionID, item.number, item.prompt, item.expectedAnswer, item.answerType, explanation).Scan(&item.newID); err != nil {
+			return domain.Lesson{}, mapDatabaseError("скопировать вопрос в новую версию", err)
+		}
+		copyStatements := []struct {
+			name string
+			sql  string
+		}{
+			{
+				name: "варианты ответа",
+				sql: `INSERT INTO question_options (question_id, option_key, option_text, sort_order, is_correct)
+				      SELECT $1, option_key, option_text, sort_order, is_correct
+				      FROM question_options WHERE question_id = $2`,
+			},
+			{
+				name: "критерии оценки",
+				sql: `INSERT INTO question_criteria (question_id, criterion_key, description, weight, is_required, sort_order)
+				      SELECT $1, criterion_key, description, weight, is_required, sort_order
+				      FROM question_criteria WHERE question_id = $2`,
+			},
+			{
+				name: "распространённые ошибки",
+				sql: `INSERT INTO question_common_mistakes (question_id, mistake_text, explanation, sort_order)
+				      SELECT $1, mistake_text, explanation, sort_order
+				      FROM question_common_mistakes WHERE question_id = $2`,
+			},
+			{
+				name: "библейские отрывки",
+				sql: `INSERT INTO question_bible_passages (question_id, passage_id, sort_order)
+				      SELECT $1, passage_id, sort_order
+				      FROM question_bible_passages WHERE question_id = $2`,
+			},
+		}
+		for _, statement := range copyStatements {
+			if _, err := tx.Exec(ctx, statement.sql, item.newID, item.oldID); err != nil {
+				return domain.Lesson{}, mapDatabaseError("скопировать "+statement.name, err)
+			}
+		}
+	}
+
+	var result domain.Lesson
+	var publishedCourseTitle pgtype.Text
+	err = tx.QueryRow(ctx, `
+		SELECT cl.course_id, c.title, cl.position
+		FROM course_lessons cl
+		JOIN courses c ON c.id = cl.course_id
+		WHERE cl.lesson_id = $1
+		ORDER BY c.id
+		LIMIT 1
+	`, lessonID).Scan(&result.CourseID, &publishedCourseTitle, &result.Position)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return domain.Lesson{}, mapDatabaseError("получить курс урока", err)
+	}
+	result.ID = lessonID
+	result.LessonVersionID = newVersionID
+	result.VersionNumber = nextVersionNumber
+	result.Title = baseTitle
+	result.Description = cleanOptionalString(func() *string {
+		if baseDescription.Valid {
+			value := baseDescription.String
+			return &value
+		}
+		return nil
+	}())
+	result.QuestionCount = len(questions)
+	if publishedCourseTitle.Valid {
+		result.CourseTitle = publishedCourseTitle.String
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Lesson{}, mapDatabaseError("зафиксировать новую версию урока", err)
+	}
+	return result, nil
+}
+
 func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID int64) error {
 	if versionID <= 0 {
 		return ErrInvalidInput
