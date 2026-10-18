@@ -70,6 +70,22 @@ func (f *answerTestLearning) CurrentQuestion(ctx context.Context, studentID int6
 	return state, nil
 }
 
+func (f *answerTestLearning) PreviousQuestion(ctx context.Context, studentID, enrollmentID int64) (service.NavigationState, error) {
+	state, err := f.fakeLearning.PreviousQuestion(ctx, studentID, enrollmentID)
+	if err == nil {
+		f.addSavedAnswer(&state)
+	}
+	return state, err
+}
+
+func (f *answerTestLearning) NextQuestion(ctx context.Context, studentID, enrollmentID int64) (service.NavigationState, error) {
+	state, err := f.fakeLearning.NextQuestion(ctx, studentID, enrollmentID)
+	if err == nil {
+		f.addSavedAnswer(&state)
+	}
+	return state, err
+}
+
 func (f *answerTestLearning) OpenQuestion(ctx context.Context, studentID, enrollmentID, questionID int64) (service.NavigationState, error) {
 	state, err := f.fakeLearning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
 	if err != nil {
