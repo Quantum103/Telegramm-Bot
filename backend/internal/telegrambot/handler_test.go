@@ -367,6 +367,36 @@ func TestFailedAnswerSaveDoesNotConfirmSuccess(t *testing.T) {
 	}
 }
 
+func TestCancelPreservesSavedMultipleChoiceSelection(t *testing.T) {
+	q := choiceQuestion(1, "multiple_choice", 101, 102)
+	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{q})
+	startLesson(t, h, api)
+	for _, item := range []struct {
+		updateID int64
+		data     string
+	}{
+		{4, "toggle:1:101"},
+		{5, "submit:1"},
+	} {
+		if err := h.HandleUpdate(context.Background(), callbackUpdate(item.updateID, 900, api.lastMessageID, item.data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.HandleUpdate(context.Background(), messageUpdate(6, 900, "/cancel")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := states.Get(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if learning.attempts != 1 || !sameIDs(state.SelectedOptionIDs, []int64{101}) {
+		t.Fatalf("cancel altered a saved answer: attempts=%d state=%+v", learning.attempts, state)
+	}
+	if !keyboardHasLabel(api.lastMarkup, "☑ Option 1") {
+		t.Fatalf("saved choice is no longer visibly selected after /cancel: %+v", api.lastMarkup)
+	}
+}
+
 func TestCancelStopsWaitingForTextWithoutChangingSavedAnswers(t *testing.T) {
 	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{textQuestion(1)})
 	startLesson(t, h, api)
@@ -425,6 +455,20 @@ func startLesson(t *testing.T, h *Handler, api *fakeBotAPI) {
 	if err := h.HandleUpdate(ctx, callbackUpdate(3, 900, api.lastMessageID, "lesson:10:20")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func keyboardHasLabel(markup *InlineKeyboardMarkup, wanted string) bool {
+	if markup == nil {
+		return false
+	}
+	for _, row := range markup.InlineKeyboard {
+		for _, item := range row {
+			if item.Text == wanted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func keyboardHasCallback(markup *InlineKeyboardMarkup, wanted string) bool {
