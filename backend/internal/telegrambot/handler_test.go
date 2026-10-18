@@ -255,7 +255,7 @@ func (a *fakeBotAPI) SendMessage(_ context.Context, _ int64, text string, _ *Inl
 	a.sends++
 	a.lastMessageID++
 	a.lastText = text
-	return Message{MessageID: a.lastMessageID + 100}, nil
+	return Message{MessageID: a.lastMessageID}, nil
 }
 func (a *fakeBotAPI) EditMessageText(_ context.Context, _ int64, _ int64, text string, _ *InlineKeyboardMarkup) error {
 	a.edits++
