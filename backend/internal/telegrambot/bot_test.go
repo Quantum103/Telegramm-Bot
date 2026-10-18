@@ -2,9 +2,12 @@ package telegrambot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -253,5 +256,45 @@ func TestRunStopsOnPollingConflict(t *testing.T) {
 	err := bot.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "409") {
 		t.Fatalf("Run error = %v, want a fatal 409 polling-conflict error", err)
+	}
+}
+
+func TestHTTPClientHandlesTelegramAuthorizationErrorWithoutLeakingToken(t *testing.T) {
+	const token = "secret-token-for-test"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": false, "error_code": 401, "description": "Unauthorized",
+		})
+	}))
+	defer server.Close()
+
+	client := newHTTPClient(token, server.URL, server.Client())
+	_, err := client.GetMe(context.Background())
+	if err == nil {
+		t.Fatal("expected authorization error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected API error: %v", err)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatal("API error exposed the bot token")
+	}
+}
+
+func TestHTTPClientSanitizesNetworkErrors(t *testing.T) {
+	const token = "secret-token-for-test"
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	serverURL := server.URL
+	server.Close()
+
+	client := newHTTPClient(token, serverURL, &http.Client{Timeout: time.Second})
+	_, err := client.GetMe(context.Background())
+	if err == nil {
+		t.Fatal("expected network error")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatal("network error exposed the bot token")
 	}
 }
