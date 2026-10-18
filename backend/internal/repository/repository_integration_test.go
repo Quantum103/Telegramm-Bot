@@ -201,11 +201,11 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	// Смоделированная ошибка в конце транзакции проверяет, что текущий ответ и прогресс откатываются вместе.
 	if _, err := pool.Exec(ctx, `
 		CREATE FUNCTION test_reject_answer_attempt() RETURNS TRIGGER
-		LANGUAGE plpgsql AS $
+		LANGUAGE plpgsql AS $test$
 		BEGIN
 			RAISE EXCEPTION 'ошибка, созданная integration test';
 		END;
-		$
+		$test$
 	`); err != nil {
 		t.Fatalf("создать тестовую функцию отказа: %v", err)
 	}
