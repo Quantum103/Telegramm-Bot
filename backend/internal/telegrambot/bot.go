@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -169,6 +170,10 @@ func (c *HTTPClient) EditMessageText(ctx context.Context, chatID, messageID int6
 	return c.call(ctx, "editMessageText", payload, nil)
 }
 
+func (c *HTTPClient) DeleteMessage(ctx context.Context, chatID, messageID int64) error {
+	return c.call(ctx, "deleteMessage", map[string]any{"chat_id": chatID, "message_id": messageID}, nil)
+}
+
 func (c *HTTPClient) AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string) error {
 	payload := map[string]any{"callback_query_id": callbackQueryID}
 	if text != "" {
@@ -235,13 +240,24 @@ type Bot struct {
 	catalog  CourseCatalog
 	learning LearningNavigator
 	logger   *slog.Logger
+
+	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
+	messageMu     sync.RWMutex
+	mainMessages  map[int64]int64
+	choiceMu      sync.Mutex
+	choiceEditing map[answerStateKey]bool
+	multiDrafts   map[answerStateKey]map[int64]struct{}
 }
 
 func NewBot(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Bot{api: api, students: students, catalog: catalog, learning: learning, logger: logger}
+	return &Bot{
+		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
+		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
+		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
+	}
 }
 
 func (b *Bot) Run(ctx context.Context) error {
@@ -328,7 +344,7 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 
 func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 	if update.CallbackQuery != nil {
-		b.handleCallback(ctx, *update.CallbackQuery)
+		b.handleCallbackWithUpdateID(ctx, update.UpdateID, *update.CallbackQuery)
 		return
 	}
 	message := update.Message
@@ -339,8 +355,16 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 		return
 	}
 
-	fields := strings.Fields(strings.TrimSpace(message.Text))
-	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
+	trimmedText := strings.TrimSpace(message.Text)
+	if trimmedText == "" {
+		return
+	}
+	fields := strings.Fields(trimmedText)
+	if len(fields) == 0 {
+		return
+	}
+	if !strings.HasPrefix(fields[0], "/") {
+		b.handleTextAnswer(ctx, update.UpdateID, *message.From, *message, trimmedText)
 		return
 	}
 	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
@@ -349,9 +373,9 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 	case "/start":
 		b.handleStart(ctx, message.Chat.ID, *message.From)
 	case "/help":
-		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки.\n\n/start — открыть каталог курсов\n/help — показать эту справку\n/cancel — отменить текущее действие. Отправка учебных ответов пока не подключена.")
+		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки.\n\n/start — открыть каталог курсов\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. В вопросах с вариантами используйте кнопки.")
 	case "/cancel":
-		b.send(ctx, message.Chat.ID, "Сейчас нет активного действия для отмены.")
+		b.send(ctx, message.Chat.ID, "Команда /cancel не сохраняется как учебный ответ. Чтобы вернуться к уроку, откройте /start и выберите его в каталоге.")
 	default:
 		b.send(ctx, message.Chat.ID, "Пока доступны команды /start, /help и /cancel.")
 	}
