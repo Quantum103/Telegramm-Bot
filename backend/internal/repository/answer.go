@@ -221,7 +221,7 @@ func (r *AnswerRepository) checkAttemptState(ctx context.Context, attemptID int6
 
 func validEvaluationResult(result string) bool {
 	switch result {
-	case "correct", "partial", "incorrect", "ambiguous":
+	case "correct", "partial", "incorrect", "ambiguous", "uncertain":
 		return true
 	default:
 		return false
