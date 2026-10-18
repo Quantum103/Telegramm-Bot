@@ -11,6 +11,7 @@ import (
 
 // Config содержит настройки HTTP-сервера и подключения к PostgreSQL.
 type Config struct {
+	TelegramBotToken      string
 	HTTPAddr              string
 	HTTPReadTimeout       time.Duration
 	HTTPReadHeaderTimeout time.Duration
@@ -41,6 +42,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	var cfg Config
 	var err error
 
+	cfg.TelegramBotToken = strings.TrimSpace(stringValue(lookup, "TELEGRAM_BOT_TOKEN", ""))
 	cfg.HTTPAddr = stringValue(lookup, "HTTP_ADDR", ":8080")
 	if err := validateListenAddress(cfg.HTTPAddr); err != nil {
 		return Config{}, fmt.Errorf("HTTP_ADDR: %w", err)

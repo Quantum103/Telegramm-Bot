@@ -6,6 +6,7 @@ on:
       - main
       - "stage-2/**"
       - "stage-3/**"
+      - "stage-4/**"
   pull_request:
     branches:
       - main
@@ -72,6 +73,9 @@ jobs:
       - name: Run go vet
         working-directory: backend
         run: go vet ./...
+
+      - name: Build backend Docker image
+        run: docker build --tag bible-platform-backend:ci ./backend
 
   frontend:
     name: Frontend checks and Compose configuration

@@ -49,6 +49,12 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"evaluation_result",
 				"uncertain",
 			}
+		case strings.HasPrefix(filepath.Base(upPath), "000003_"):
+			required = []string{
+				"CREATE TABLE telegram_dialog_states",
+				"CREATE TABLE telegram_processed_updates",
+				"update_id",
+			}
 		}
 		for _, item := range required {
 			if !strings.Contains(string(content), item) {
