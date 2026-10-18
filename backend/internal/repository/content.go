@@ -62,12 +62,12 @@ type LessonQuestion struct {
 	LessonVersionID     int64
 	QuestionNumber      int
 	Prompt              string
-	ExpectedAnswer      string             `json:"-"`
+	ExpectedAnswer      string  `json:"-"`
 	AnswerType          string
-	ExpectedExplanation *string            `json:"-"`
+	ExpectedExplanation *string             `json:"-"`
 	Criteria            []QuestionCriterion `json:"-"`
-	CommonMistakes      []CommonMistake    `json:"-"`
-	BiblePassages       []BiblePassage     `json:"-"`
+	CommonMistakes      []CommonMistake     `json:"-"`
+	BiblePassages       []BiblePassage      `json:"-"`
 	Options             []QuestionOption
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -238,4 +238,3 @@ func (r *ContentRepository) ListQuestionsForVersion(ctx context.Context, lessonV
 	}
 	return questions, nil
 }
-
