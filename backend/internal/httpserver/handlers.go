@@ -113,7 +113,7 @@ type lessonResponse struct {
 	Description     *string           `json:"description,omitempty"`
 	PublishedAt     *time.Time        `json:"published_at,omitempty"`
 	QuestionCount   int               `json:"question_count"`
-	Questions       []questionResponse `json:"questions,omitempty"`
+	Questions       []questionResponse `json:"questions"`
 }
 
 type questionResponse struct {
