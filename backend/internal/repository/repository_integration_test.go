@@ -34,6 +34,14 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("подключиться к тестовой БД: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// Интеграционные тесты запускаются только на отдельной тестовой БД.
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, "TRUNCATE TABLE students, courses, lessons RESTART IDENTITY CASCADE"); err != nil {
+			t.Errorf("очистить тестовые данные: %v", err)
+		}
+	})
 	return pool
 }
 
@@ -52,9 +60,6 @@ func TestStudentCreateLookupAndUniqueTelegramID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("создать ученика: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM students WHERE id = $1", student.ID)
-	})
 
 	got, err := repo.GetByTelegramID(ctx, telegramID)
 	if err != nil {
@@ -128,23 +133,6 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 	enrollmentID = enrollment.ID
 
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM answer_attempts WHERE enrollment_id = $1", enrollmentID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM student_answers WHERE enrollment_id = $1", enrollmentID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM lesson_enrollments WHERE id = $1", enrollmentID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM students WHERE id = $1", student.ID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM question_criteria WHERE question_id = $1", questionID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM question_options WHERE question_id = $1", questionID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM question_common_mistakes WHERE question_id = $1", questionID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM question_bible_passages WHERE question_id = $1", questionID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM lesson_questions WHERE id = $1", questionID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM lesson_versions WHERE id = $1", versionID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM course_lessons WHERE course_id = $1 AND lesson_id = $2", courseID, lessonID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM lessons WHERE id = $1", lessonID)
-		_, _ = pool.Exec(cleanupCtx, "DELETE FROM courses WHERE id = $1", courseID)
-	})
 
 	answers := NewAnswerRepository(pool)
 	idempotencyKey := "7ad6a3e1-4c40-4ea9-810f-8e5e27ab0001"
