@@ -310,6 +310,7 @@ type fakeStudentService struct {
 	byTelegramID map[int64]domain.Student
 	ensureCalls  int
 }
+
 func (s *fakeStudentService) EnsureByTelegramID(_ context.Context, params domain.EnsureStudentParams) (domain.Student, error) {
 	s.ensureCalls++
 	if student, ok := s.byTelegramID[params.TelegramID]; ok {
@@ -366,6 +367,7 @@ type fakeLearningService struct {
 	submitErr error
 	completed bool
 }
+
 func (l *fakeLearningService) StartLesson(ctx context.Context, studentID, lessonID int64, mode string) (domain.Progress, error) {
 	if studentID != 42 || lessonID != 20 {
 		return domain.Progress{}, domain.ErrNotFound
@@ -482,6 +484,7 @@ type memoryStateStore struct {
 	processed map[int64]bool
 	getErr    error
 }
+
 func (s *memoryStateStore) Get(_ context.Context, id int64) (domain.TelegramDialogState, error) {
 	if s.getErr != nil {
 		return domain.TelegramDialogState{}, s.getErr
