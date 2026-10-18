@@ -6,9 +6,11 @@ on:
       - main
       - "stage-2/**"
       - "stage-3/**"
+      - "stage-4.1/**"
   pull_request:
     branches:
       - main
+      - "stage-3/**"
   workflow_dispatch:
 
 permissions:
