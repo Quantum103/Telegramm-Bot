@@ -40,6 +40,16 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 		defer cleanupCancel()
 		if _, err := pool.Exec(cleanupCtx, "TRUNCATE TABLE students, courses, lessons RESTART IDENTITY CASCADE"); err != nil {
 			t.Errorf("очистить тестовые данные: %v", err)
+			return
+		}
+		// Отрывки не удаляются каскадно после удаления связей, поэтому убираем сиротские строки в изолированной БД тестов.
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM bible_passages passage
+			WHERE NOT EXISTS (
+				SELECT 1 FROM question_bible_passages link WHERE link.passage_id = passage.id
+			)
+		`); err != nil {
+			t.Errorf("очистить библейские отрывки без связей: %v", err)
 		}
 	})
 	return pool
