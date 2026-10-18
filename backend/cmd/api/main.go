@@ -41,9 +41,17 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	catalogService := service.NewCatalogService(
-		repository.NewCatalogRepository(pool),
-		repository.NewContentRepository(pool),
+	studentRepository := repository.NewStudentRepository(pool)
+	studentService := service.NewStudentService(studentRepository)
+	catalogRepository := repository.NewCatalogRepository(pool)
+	contentRepository := repository.NewContentRepository(pool)
+	catalogService := service.NewCatalogService(catalogRepository, contentRepository)
+	learningService := service.NewLearningService(
+		studentService,
+		catalogRepository,
+		contentRepository,
+		repository.NewEnrollmentRepository(pool),
+		repository.NewAnswerRepository(pool),
 	)
 
 	server := &http.Server{
@@ -75,8 +83,7 @@ func run(logger *slog.Logger) error {
 		logger.Info("Telegram-бот отключён: переменная TELEGRAM_BOT_TOKEN не задана")
 	} else {
 		botDone = make(chan struct{})
-		studentService := service.NewStudentService(repository.NewStudentRepository(pool))
-		bot := telegrambot.NewBot(telegrambot.NewHTTPClient(cfg.TelegramBotToken), studentService, logger)
+		bot := telegrambot.NewBot(telegrambot.NewHTTPClient(cfg.TelegramBotToken), studentService, catalogService, learningService, logger)
 		go func() {
 			defer close(botDone)
 			if err := bot.Run(appCtx); err != nil {
