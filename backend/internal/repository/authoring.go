@@ -397,6 +397,7 @@ func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 	}
 
 	optionKeys := make(map[string]struct{}, len(params.Options))
+	correctOptions := 0
 	for index := range params.Options {
 		params.Options[index].Key = strings.TrimSpace(params.Options[index].Key)
 		params.Options[index].Text = strings.TrimSpace(params.Options[index].Text)
@@ -407,6 +408,15 @@ func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 			return ErrInvalidInput
 		}
 		optionKeys[params.Options[index].Key] = struct{}{}
+		if params.Options[index].IsCorrect {
+			correctOptions++
+		}
+	}
+	if params.AnswerType == "single_choice" && correctOptions != 1 {
+		return ErrInvalidInput
+	}
+	if params.AnswerType == "multiple_choice" && correctOptions == 0 {
+		return ErrInvalidInput
 	}
 
 	criterionKeys := make(map[string]struct{}, len(params.Criteria))
