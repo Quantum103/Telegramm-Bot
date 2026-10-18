@@ -71,7 +71,6 @@ type TelegramAPI interface {
 	SendMessageWithKeyboard(context.Context, int64, string, *InlineKeyboardMarkup) (int64, error)
 	EditMessageText(context.Context, int64, int64, string, *InlineKeyboardMarkup) error
 	AnswerCallbackQuery(context.Context, string, string) error
-	AnswerCallbackQuery(context.Context, string, string) error
 }
 
 type StudentRegistrar interface {
