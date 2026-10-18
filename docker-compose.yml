@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      test: ["CMD-SHELL", "pg_isready -U \\"$${POSTGRES_USER}\\" -d \\"$${POSTGRES_DB}\\""]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -54,6 +54,19 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-8081}:80"
     depends_on:
       - backend
+
+  migrate:
+    image: migrate/migrate:v4.20.1
+    profiles: ["tools"]
+    volumes:
+      - ./backend/db/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - "-path=/migrations"
+      - "-database=${MIGRATIONS_DATABASE_URL:-postgres://${POSTGRES_USER:-bible_app}:${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}@postgres:5432/${POSTGRES_DB:-bible_platform}?sslmode=disable}"
+      - "up"
 
 volumes:
   postgres_data:
