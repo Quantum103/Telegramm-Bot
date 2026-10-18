@@ -479,3 +479,151 @@ CREATE INDEX audit_events_entity_idx
 CREATE INDEX audit_events_actor_idx
     ON audit_events (actor_staff_id, created_at DESC)
     WHERE actor_staff_id IS NOT NULL;
+
+
+CREATE FUNCTION assert_lesson_version_is_draft(target_version_id BIGINT)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    target_status TEXT;
+BEGIN
+    SELECT status INTO target_status
+    FROM lesson_versions
+    WHERE id = target_version_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'версия урока % не найдена', target_version_id;
+    END IF;
+    IF target_status <> 'draft' THEN
+        RAISE EXCEPTION 'содержимое опубликованной или архивной версии урока неизменяемо';
+    END IF;
+END;
+$$;
+
+CREATE FUNCTION guard_lesson_version_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.status <> 'draft' THEN
+            RAISE EXCEPTION 'опубликованную или архивную версию урока нельзя удалять';
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF OLD.status <> 'draft' THEN
+        IF NEW.lesson_id IS DISTINCT FROM OLD.lesson_id
+            OR NEW.version_number IS DISTINCT FROM OLD.version_number
+            OR NEW.title IS DISTINCT FROM OLD.title
+            OR NEW.description IS DISTINCT FROM OLD.description
+            OR NEW.created_by_staff_id IS DISTINCT FROM OLD.created_by_staff_id
+            OR NEW.created_at IS DISTINCT FROM OLD.created_at
+            OR NEW.published_at IS DISTINCT FROM OLD.published_at THEN
+            RAISE EXCEPTION 'содержимое опубликованной или архивной версии урока неизменяемо';
+        END IF;
+
+        IF OLD.status = 'archived' AND NEW.status <> 'archived' THEN
+            RAISE EXCEPTION 'архивную версию урока нельзя повторно публиковать';
+        END IF;
+        IF OLD.status = 'published' AND NEW.status NOT IN ('published', 'archived') THEN
+            RAISE EXCEPTION 'опубликованную версию можно только архивировать';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER lesson_versions_immutable_trg
+    BEFORE UPDATE OR DELETE ON lesson_versions
+    FOR EACH ROW EXECUTE FUNCTION guard_lesson_version_mutation();
+
+CREATE FUNCTION guard_question_content_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    old_version_id BIGINT;
+    new_version_id BIGINT;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        IF TG_TABLE_NAME = 'lesson_questions' THEN
+            old_version_id := OLD.lesson_version_id;
+        ELSE
+            SELECT lesson_version_id INTO old_version_id
+            FROM lesson_questions
+            WHERE id = OLD.question_id;
+        END IF;
+        PERFORM assert_lesson_version_is_draft(old_version_id);
+    END IF;
+
+    IF TG_OP <> 'DELETE' THEN
+        IF TG_TABLE_NAME = 'lesson_questions' THEN
+            new_version_id := NEW.lesson_version_id;
+        ELSE
+            SELECT lesson_version_id INTO new_version_id
+            FROM lesson_questions
+            WHERE id = NEW.question_id;
+        END IF;
+        PERFORM assert_lesson_version_is_draft(new_version_id);
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER lesson_questions_draft_only_trg
+    BEFORE INSERT OR UPDATE OR DELETE ON lesson_questions
+    FOR EACH ROW EXECUTE FUNCTION guard_question_content_mutation();
+CREATE TRIGGER question_options_draft_only_trg
+    BEFORE INSERT OR UPDATE OR DELETE ON question_options
+    FOR EACH ROW EXECUTE FUNCTION guard_question_content_mutation();
+CREATE TRIGGER question_criteria_draft_only_trg
+    BEFORE INSERT OR UPDATE OR DELETE ON question_criteria
+    FOR EACH ROW EXECUTE FUNCTION guard_question_content_mutation();
+CREATE TRIGGER question_mistakes_draft_only_trg
+    BEFORE INSERT OR UPDATE OR DELETE ON question_common_mistakes
+    FOR EACH ROW EXECUTE FUNCTION guard_question_content_mutation();
+CREATE TRIGGER question_passages_draft_only_trg
+    BEFORE INSERT OR UPDATE OR DELETE ON question_bible_passages
+    FOR EACH ROW EXECUTE FUNCTION guard_question_content_mutation();
+
+CREATE FUNCTION guard_referenced_bible_passage_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' AND EXISTS (
+        SELECT 1
+        FROM question_bible_passages link
+        JOIN lesson_questions question ON question.id = link.question_id
+        JOIN lesson_versions version ON version.id = question.lesson_version_id
+        WHERE link.passage_id = OLD.id AND version.status <> 'draft'
+    ) THEN
+        RAISE EXCEPTION 'библейский отрывок нельзя менять, если он используется опубликованной или архивной версией урока';
+    END IF;
+
+    IF TG_OP <> 'DELETE' AND EXISTS (
+        SELECT 1
+        FROM question_bible_passages link
+        JOIN lesson_questions question ON question.id = link.question_id
+        JOIN lesson_versions version ON version.id = question.lesson_version_id
+        WHERE link.passage_id = NEW.id AND version.status <> 'draft'
+    ) THEN
+        RAISE EXCEPTION 'библейский отрывок нельзя менять, если он используется опубликованной или архивной версией урока';
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER bible_passages_referenced_content_trg
+    BEFORE UPDATE OR DELETE ON bible_passages
+    FOR EACH ROW EXECUTE FUNCTION guard_referenced_bible_passage_mutation();
