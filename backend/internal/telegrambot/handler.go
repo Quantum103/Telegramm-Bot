@@ -530,11 +530,14 @@ func (h *Handler) showNavigation(ctx context.Context, studentID int64, state dom
 	oldQuestionID := state.QuestionID
 	sameQuestion := oldQuestionID != nil && *oldQuestionID == question.ID
 	state.Screen = "question"
-	state.CourseID = optionalInt64(state.CourseID, nav.Progress.Enrollment.LessonID)
 	state.LessonID = int64Pointer(nav.Progress.Enrollment.LessonID)
 	state.EnrollmentID = int64Pointer(nav.Progress.Enrollment.ID)
 	state.QuestionID = int64Pointer(question.ID)
-	state.AwaitingText = question.AnswerType == "text" && nav.SavedAnswer == nil
+	if question.AnswerType != "text" || nav.SavedAnswer != nil {
+		state.AwaitingText = false
+	} else if !sameQuestion {
+		state.AwaitingText = true
+	}
 	if sameQuestion && state.SelectedOptionIDs != nil {
 		state.SelectedOptionIDs = orderedOptions(question, state.SelectedOptionIDs)
 	} else {
@@ -785,13 +788,6 @@ func idempotencyKey(updateID int64) string {
 func stateHasQuestion(state domain.TelegramDialogState, raw string) bool {
 	id, err := parseID(raw)
 	return err == nil && state.Screen == "question" && state.QuestionID != nil && *state.QuestionID == id
-}
-
-func optionalInt64(value *int64, fallback int64) *int64 {
-	if value != nil {
-		return value
-	}
-	return int64Pointer(fallback)
 }
 
 func int64Pointer(value int64) *int64 { return &value }
