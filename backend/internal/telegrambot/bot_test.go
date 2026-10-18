@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
@@ -25,6 +26,7 @@ type fakeAPI struct {
 	updates         []Update
 	updateErr       error
 	blockUpdates    bool
+	updatesStarted  chan struct{}
 	mu              sync.Mutex
 }
 
@@ -41,6 +43,12 @@ func (f *fakeAPI) DeleteWebhook(context.Context) error {
 
 func (f *fakeAPI) GetUpdates(ctx context.Context, _ int64, _ int) ([]Update, error) {
 	if f.blockUpdates {
+		if f.updatesStarted != nil {
+			select {
+			case f.updatesStarted <- struct{}{}:
+			default:
+			}
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -211,14 +219,21 @@ func TestInvalidUpdatesAreIgnored(t *testing.T) {
 }
 
 func TestRunStopsOnContextCancellation(t *testing.T) {
-	api := &fakeAPI{blockUpdates: true}
-	bot := newTestBot(api, &fakeStudents())
+	api := &fakeAPI{blockUpdates: true, updatesStarted: make(chan struct{}, 1)}
+	bot := newTestBot(api, &fakeStudents{})
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 
 	go func() {
 		done <- bot.Run(ctx)
 	}()
+
+	select {
+	case <-api.updatesStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("long polling did not start")
+	}
 	cancel()
 
 	select {
@@ -226,8 +241,8 @@ func TestRunStopsOnContextCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error during cancellation: %v", err)
 		}
-	case <-context.Background().Done():
-		t.Fatal("unreachable")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop after context cancellation")
 	}
 }
 
