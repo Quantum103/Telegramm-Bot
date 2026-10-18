@@ -18,18 +18,18 @@ func NewEnrollmentRepository(pool *pgxpool.Pool) *EnrollmentRepository {
 }
 
 type Enrollment struct {
-	ID               int64
-	StudentID        int64
-	LessonID         int64
-	LessonVersionID  int64
-	Mode             string
+	ID                int64
+	StudentID         int64
+	LessonID          int64
+	LessonVersionID   int64
+	Mode              string
 	CurrentQuestionID *int64
-	Status           string
-	StartedAt        *time.Time
-	CompletedAt      *time.Time
-	LastActivityAt   *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	Status            string
+	StartedAt         *time.Time
+	CompletedAt       *time.Time
+	LastActivityAt    *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type StartEnrollmentParams struct {
