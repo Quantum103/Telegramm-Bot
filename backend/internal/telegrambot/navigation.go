@@ -126,10 +126,10 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Вернитесь к списку уроков и попробуйте снова.", keyboard(button("К урокам", fmt.Sprintf("lessons:%d", courseID))))
 		return
 	}
-	b.renderQuestion(ctx, chatID, studentID, messageID, state, &detail.Lesson)
+	b.renderQuestion(ctx, chatID, studentID, messageID, state, &detail.Lesson, courseID)
 }
 
-func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID int64, enrollmentID int64) {
+func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, enrollmentID, courseID int64) {
 	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Error("не удалось восстановить прогресс вопроса", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
@@ -146,10 +146,10 @@ func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID int
 		b.render(ctx, chatID, messageID, "Сохранённый вопрос больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
 		return
 	}
-	b.renderQuestion(ctx, chatID, studentID, messageID, nav, nil)
+	b.renderQuestion(ctx, chatID, studentID, messageID, nav, nil, 0)
 }
 
-func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson) {
+func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64) {
 	if lesson == nil {
 		detail, err := b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID)
 		if err == nil {
@@ -163,6 +163,9 @@ func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID i
 			lessonTitle = lesson.Title
 		}
 		courseID = lesson.CourseID
+	}
+	if contextCourseID > 0 {
+		courseID = contextCourseID
 	}
 
 	progress := state.Progress
@@ -183,10 +186,10 @@ func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID i
 	currentQuestionID := question.ID
 	enrollmentID := progress.Enrollment.ID
 	if progress.PreviousQuestionID != nil {
-		rows = append(rows, []InlineKeyboardButton{button("← Назад", fmt.Sprintf("nav:prev:%d:%d", enrollmentID, currentQuestionID))})
+		rows = append(rows, []InlineKeyboardButton{button("← Назад", navigationCallback("prev", enrollmentID, currentQuestionID, courseID))})
 	}
 	if progress.NextQuestionID != nil {
-		next := button("Далее →", fmt.Sprintf("nav:next:%d:%d", enrollmentID, currentQuestionID))
+		next := button("Далее →", navigationCallback("next", enrollmentID, currentQuestionID, courseID))
 		if len(rows) > 0 && progress.PreviousQuestionID != nil {
 			rows[len(rows)-1] = append(rows[len(rows)-1], next)
 		} else {
@@ -247,20 +250,25 @@ func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
 			return
 		}
 		b.openLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
-	case len(parts) == 4 && parts[0] == "nav" && (parts[1] == "prev" || parts[1] == "next"):
+	case (len(parts) == 4 || len(parts) == 5) && parts[0] == "nav" && (parts[1] == "prev" || parts[1] == "next"):
 		enrollmentID, okEnrollment := parsePositiveID(parts[2])
 		expectedQuestionID, okQuestion := parsePositiveID(parts[3])
-		if !okEnrollment || !okQuestion {
+		courseID := int64(0)
+		okCourse := true
+		if len(parts) == 5 {
+			courseID, okCourse = parsePositiveID(parts[4])
+		}
+		if !okEnrollment || !okQuestion || !okCourse {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
 			return
 		}
-		b.navigate(ctx, chatID, student.ID, messageID, enrollmentID, expectedQuestionID, parts[1])
+		b.navigate(ctx, chatID, student.ID, messageID, enrollmentID, expectedQuestionID, courseID, parts[1])
 	default:
 		b.showStaleCallback(ctx, chatID, student.ID, messageID)
 	}
 }
 
-func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID int64, direction string) {
+func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID, courseID int64, direction string) {
 	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Warn("callback с недоступным прохождением", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
@@ -272,7 +280,7 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 		return
 	}
 	if *progress.Enrollment.CurrentQuestionID != expectedQuestionID {
-		b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID)
+		b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
 		return
 	}
 
@@ -291,7 +299,7 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 		b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Попробуйте снова или вернитесь к каталогу.", keyboard(button("К курсам", "courses")))
 		return
 	}
-	b.renderQuestion(ctx, chatID, studentID, messageID, state, nil)
+	b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
 }
 
 func (b *Bot) showStaleCallback(ctx context.Context, chatID, studentID, messageID int64) {
@@ -330,6 +338,14 @@ func markup(rows [][]InlineKeyboardButton) *InlineKeyboardMarkup {
 
 func button(text, callbackData string) InlineKeyboardButton {
 	return InlineKeyboardButton{Text: truncate(text, 60), CallbackData: callbackData}
+}
+
+func navigationCallback(direction string, enrollmentID, questionID, courseID int64) string {
+	callback := fmt.Sprintf("nav:%s:%d:%d:%d", direction, enrollmentID, questionID, courseID)
+	if len(callback) <= 64 {
+		return callback
+	}
+	return fmt.Sprintf("nav:%s:%d:%d", direction, enrollmentID, questionID)
 }
 
 func parsePositiveID(value string) (int64, bool) {
