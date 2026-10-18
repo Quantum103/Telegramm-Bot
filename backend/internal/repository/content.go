@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,13 +18,13 @@ func NewContentRepository(pool *pgxpool.Pool) *ContentRepository {
 }
 
 type PublishedLesson struct {
-	CourseTitle    string
-	LessonID       int64
+	CourseTitle     string
+	LessonID        int64
 	LessonVersionID int64
-	VersionNumber  int
-	Position       int
-	Title          string
-	PublishedAt    time.Time
+	VersionNumber   int
+	Position        int
+	Title           string
+	PublishedAt     time.Time
 }
 
 type QuestionCriterion struct {
@@ -39,21 +38,21 @@ type QuestionOption struct {
 	ID        int64  `json:"id"`
 	Key       string `json:"key"`
 	Text      string `json:"text"`
-	IsCorrect bool   `json:"is_correct"`
+	IsCorrect bool   `json:"-"`
 }
 
 type PublishedQuestion struct {
-	ID                   int64
-	LessonVersionID      int64
-	QuestionNumber       int
-	Prompt               string
-	ExpectedAnswer       string
-	AnswerType           string
-	ExpectedExplanation  *string
-	Criteria              []QuestionCriterion
-	Options               []QuestionOption
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID                  int64
+	LessonVersionID     int64
+	QuestionNumber      int
+	Prompt              string
+	ExpectedAnswer      string             `json:"-"`
+	AnswerType          string
+	ExpectedExplanation *string            `json:"-"`
+	Criteria            []QuestionCriterion `json:"-"`
+	Options             []QuestionOption
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (r *ContentRepository) ListPublishedLessonsByCourse(ctx context.Context, courseSlug string) ([]PublishedLesson, error) {
@@ -188,4 +187,3 @@ func (r *ContentRepository) ListPublishedQuestions(ctx context.Context, lessonVe
 	return questions, nil
 }
 
-var _ pgx.Row
