@@ -22,15 +22,15 @@ type sentMessage struct {
 }
 
 type fakeAPI struct {
-	getMeErr        error
+	getMeErr         error
 	deleteWebhookErr error
-	sendErr         error
-	messages        []sentMessage
-	updates         []Update
-	updateErr       error
-	blockUpdates    bool
-	updatesStarted  chan struct{}
-	mu              sync.Mutex
+	sendErr          error
+	messages         []sentMessage
+	updates          []Update
+	updateErr        error
+	blockUpdates     bool
+	updatesStarted   chan struct{}
+	mu               sync.Mutex
 }
 
 func (f *fakeAPI) GetMe(context.Context) (User, error) {
