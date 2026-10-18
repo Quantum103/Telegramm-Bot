@@ -189,7 +189,7 @@ func (r *AnswerRepository) SaveTextAnswer(ctx context.Context, params SaveTextAn
 			answer_id, enrollment_id, lesson_version_id, question_id,
 			idempotency_key, submitted_answer_text, processing_status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+		VALUES ($1, $2, $3, $4, $5::uuid, $6, 'pending')
 		RETURNING id
 	`, answerID, params.EnrollmentID, lessonVersionID, params.QuestionID,
 		idempotencyKey, params.AnswerText).Scan(&attemptID)
