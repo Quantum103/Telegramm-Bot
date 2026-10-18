@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"\n\t"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
@@ -309,5 +309,69 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 	if questions[0].Prompt != "Тестовый вопрос?" {
 		t.Fatalf("триггер не сохранил содержимое архивного вопроса: %q", questions[0].Prompt)
+	}
+}
+
+
+func TestTelegramDialogStatePersistenceAndUpdateIdempotency(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	student, err := NewStudentRepository(pool).EnsureByTelegramID(ctx, EnsureStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "telegram-state-integration-test",
+	})
+	if err != nil {
+		t.Fatalf("создать ученика: %v", err)
+	}
+	messageID := int64(345)
+	stateRepo := NewTelegramDialogRepository(pool)
+	state := domain.TelegramDialogState{
+		StudentID: student.ID, ChatID: student.TelegramID, MessageID: &messageID,
+		Screen: "question", AwaitingText: true, SelectedOptionIDs: []int64{11, 12},
+	}
+	if err := stateRepo.Save(ctx, state); err != nil {
+		t.Fatalf("сохранить состояние диалога: %v", err)
+	}
+	got, err := stateRepo.Get(ctx, student.ID)
+	if err != nil {
+		t.Fatalf("восстановить состояние диалога: %v", err)
+	}
+	if got.StudentID != state.StudentID || got.ChatID != state.ChatID || got.MessageID == nil ||
+		*got.MessageID != messageID || got.Screen != "question" || !got.AwaitingText ||
+		len(got.SelectedOptionIDs) != 2 || got.SelectedOptionIDs[0] != 11 || got.SelectedOptionIDs[1] != 12 {
+		t.Fatalf("состояние диалога восстановлено неверно: %+v", got)
+	}
+
+	updateID := time.Now().UnixNano()
+	retryID := updateID + 1
+	defer func() {
+		_, cleanupErr := pool.Exec(context.Background(),
+			"DELETE FROM telegram_processed_updates WHERE update_id = ANY($1::BIGINT[])", []int64{updateID, retryID})
+		if cleanupErr != nil {
+			t.Errorf("очистить записи Telegram update: %v", cleanupErr)
+		}
+	}()
+	claimed, err := stateRepo.BeginUpdate(ctx, updateID)
+	if err != nil || !claimed {
+		t.Fatalf("первое получение update должно быть разрешено: claimed=%t err=%v", claimed, err)
+	}
+	if err := stateRepo.CompleteUpdate(ctx, updateID); err != nil {
+		t.Fatalf("отметить update обработанным: %v", err)
+	}
+	claimed, err = stateRepo.BeginUpdate(ctx, updateID)
+	if err != nil || claimed {
+		t.Fatalf("обработанный update не должен быть захвачен повторно: claimed=%t err=%v", claimed, err)
+	}
+	claimed, err = stateRepo.BeginUpdate(ctx, retryID)
+	if err != nil || !claimed {
+		t.Fatalf("первичный захват повторяемого update не удался: claimed=%t err=%v", claimed, err)
+	}
+	if err := stateRepo.FailUpdate(ctx, retryID); err != nil {
+		t.Fatalf("отметить неудачный update: %v", err)
+	}
+	claimed, err = stateRepo.BeginUpdate(ctx, retryID)
+	if err != nil || !claimed {
+		t.Fatalf("неудачный update должен разрешаться к повторной обработке: claimed=%t err=%v", claimed, err)
 	}
 }
