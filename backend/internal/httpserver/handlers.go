@@ -103,25 +103,25 @@ type lessonsResponse struct {
 }
 
 type lessonResponse struct {
-	ID              int64             `json:"id"`
-	CourseID        int64             `json:"course_id"`
-	CourseTitle     string            `json:"course_title"`
-	Position        int               `json:"position"`
-	LessonVersionID int64             `json:"lesson_version_id"`
-	VersionNumber   int               `json:"version_number"`
-	Title           string            `json:"title"`
-	Description     *string           `json:"description,omitempty"`
-	PublishedAt     *time.Time        `json:"published_at,omitempty"`
-	QuestionCount   int               `json:"question_count"`
+	ID              int64              `json:"id"`
+	CourseID        int64              `json:"course_id"`
+	CourseTitle     string             `json:"course_title"`
+	Position        int                `json:"position"`
+	LessonVersionID int64              `json:"lesson_version_id"`
+	VersionNumber   int                `json:"version_number"`
+	Title           string             `json:"title"`
+	Description     *string            `json:"description,omitempty"`
+	PublishedAt     *time.Time         `json:"published_at,omitempty"`
+	QuestionCount   int                `json:"question_count"`
 	Questions       []questionResponse `json:"questions"`
 }
 
 type questionResponse struct {
-	ID             int64                 `json:"id"`
-	QuestionNumber int                   `json:"question_number"`
-	Prompt         string                `json:"prompt"`
-	AnswerType     string                `json:"answer_type"`
-	Options        []optionResponse      `json:"options"`
+	ID             int64                  `json:"id"`
+	QuestionNumber int                    `json:"question_number"`
+	Prompt         string                 `json:"prompt"`
+	AnswerType     string                 `json:"answer_type"`
+	Options        []optionResponse       `json:"options"`
 	BiblePassages  []biblePassageResponse `json:"bible_passages"`
 }
 
@@ -224,7 +224,7 @@ func toQuestionResponse(question domain.LessonQuestion) questionResponse {
 	response := questionResponse{
 		ID: question.ID, QuestionNumber: question.QuestionNumber,
 		Prompt: question.Prompt, AnswerType: question.AnswerType,
-		Options: make([]optionResponse, 0, len(question.Options)),
+		Options:       make([]optionResponse, 0, len(question.Options)),
 		BiblePassages: make([]biblePassageResponse, 0, len(question.BiblePassages)),
 	}
 	for _, option := range question.Options {
