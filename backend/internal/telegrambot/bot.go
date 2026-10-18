@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 const (
@@ -34,14 +35,32 @@ type Chat struct {
 }
 
 type Message struct {
-	From *User  `json:"from"`
-	Chat Chat   `json:"chat"`
-	Text string `json:"text"`
+	MessageID int64  `json:"message_id"`
+	From      *User  `json:"from"`
+	Chat      Chat   `json:"chat"`
+	Text      string `json:"text"`
+}
+
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    *User    `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
 }
 
 type Update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *Message `json:"message"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 type TelegramAPI interface {
@@ -49,10 +68,27 @@ type TelegramAPI interface {
 	DeleteWebhook(context.Context) error
 	GetUpdates(context.Context, int64, int) ([]Update, error)
 	SendMessage(context.Context, int64, string) error
+	SendMessageWithKeyboard(context.Context, int64, string, InlineKeyboardMarkup) (int64, error)
+	EditMessageText(context.Context, int64, int64, string, InlineKeyboardMarkup) error
+	AnswerCallbackQuery(context.Context, string, string) error
 }
 
 type StudentRegistrar interface {
 	EnsureByTelegramID(context.Context, domain.EnsureStudentParams) (domain.Student, error)
+}
+
+type CourseCatalog interface {
+	ListCourses(context.Context) ([]domain.Course, error)
+	ListCourseLessons(context.Context, int64) ([]domain.Lesson, error)
+	GetLessonDetailInCourse(context.Context, int64, int64) (domain.LessonDetail, error)
+	GetLessonDetail(context.Context, int64) (domain.LessonDetail, error)
+}
+
+type LearningNavigator interface {
+	StartLesson(context.Context, int64, int64, string) (domain.Progress, error)
+	OpenQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
+	PreviousQuestion(context.Context, int64, int64) (service.NavigationState, error)
+	NextQuestion(context.Context, int64, int64) (service.NavigationState, error)
 }
 
 type APIError struct {
@@ -164,14 +200,16 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 type Bot struct {
 	api      TelegramAPI
 	students StudentRegistrar
+	catalog  CourseCatalog
+	learning LearningNavigator
 	logger   *slog.Logger
 }
 
-func NewBot(api TelegramAPI, students StudentRegistrar, logger *slog.Logger) *Bot {
+func NewBot(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Bot{api: api, students: students, logger: logger}
+	return &Bot{api: api, students: students, catalog: catalog, learning: learning, logger: logger}
 }
 
 func (b *Bot) Run(ctx context.Context) error {
@@ -257,6 +295,10 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 }
 
 func (b *Bot) handleUpdate(ctx context.Context, update Update) {
+	if update.CallbackQuery != nil {
+		b.handleCallback(ctx, *update.CallbackQuery)
+		return
+	}
 	message := update.Message
 	if message == nil || message.From == nil || message.From.ID <= 0 || message.Chat.ID <= 0 {
 		return
@@ -275,7 +317,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 	case "/start":
 		b.handleStart(ctx, message.Chat.ID, *message.From)
 	case "/help":
-		b.send(ctx, message.Chat.ID, "Этот бот предназначен для прохождения библейских уроков.\n\n/start — регистрация и приветствие\n/help — справка\n/cancel — отмена активного действия. Сейчас учебный сценарий ещё не подключён.")
+		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки.\n\n/start — открыть каталог курсов\n/help — показать эту справку\n/cancel — отменить текущее действие. Отправка учебных ответов пока не подключена.")
 	case "/cancel":
 		b.send(ctx, message.Chat.ID, "Сейчас нет активного действия для отмены.")
 	default:
@@ -284,24 +326,24 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 }
 
 func (b *Bot) handleStart(ctx context.Context, chatID int64, user User) {
-	params := domain.EnsureStudentParams{
-		TelegramID:       user.ID,
-		DisplayName:      displayName(user),
-		TelegramUsername: optionalString(user.Username),
-		PreferredName:    optionalString(user.FirstName),
-	}
-	student, err := b.students.EnsureByTelegramID(ctx, params)
+	student, err := b.ensureStudent(ctx, user)
 	if err != nil {
 		b.logger.Error("не удалось зарегистрировать ученика Telegram", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось завершить регистрацию из-за временной ошибки. Попробуйте ещё раз немного позже.")
 		return
 	}
-
 	name := student.DisplayName
 	if strings.TrimSpace(name) == "" {
 		name = displayName(user)
 	}
-	b.send(ctx, chatID, fmt.Sprintf("Привет, %s! Регистрация в библейской обучающей платформе выполнена.\n\nЗдесь будут доступны библейские уроки и вопросы по ним. Учебный сценарий пока подключается.\n\nИспользуйте /help для справки.", name))
+	b.showCourses(ctx, chatID, student.ID, 0, "Привет, "+name+"! Выберите курс для изучения Библии.")
+}
+
+func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
+	return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
+		TelegramID: user.ID, DisplayName: displayName(user),
+		TelegramUsername: optionalString(user.Username), PreferredName: optionalString(user.FirstName),
+	})
 }
 
 func (b *Bot) send(ctx context.Context, chatID int64, text string) {
