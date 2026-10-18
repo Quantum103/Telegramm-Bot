@@ -186,14 +186,19 @@ func (h *Handler) handleCancel(ctx context.Context, telegramID, chatID int64) er
 		return h.apiErrorMessage(ctx, chatID, 0, "Не удалось загрузить состояние обучения. Сохранённые ответы не изменены.")
 	}
 	state.AwaitingText = false
-	state.SelectedOptionIDs = []int64{}
 	if state.Screen == "question" && state.EnrollmentID != nil && state.QuestionID != nil {
 		nav, err := h.learning.OpenQuestion(ctx, student.ID, *state.EnrollmentID, *state.QuestionID)
 		if err != nil {
 			return h.showOperationError(ctx, state, "открыть текущий вопрос", err)
 		}
+		if nav.SavedAnswer != nil {
+			state.SelectedOptionIDs = append([]int64{}, nav.SavedAnswer.SelectedOptionIDs...)
+		} else {
+			state.SelectedOptionIDs = []int64{}
+		}
 		return h.showNavigation(ctx, student.ID, state, nav, "Ввод отменён. Сохранённые ответы не удалены.")
 	}
+	state.SelectedOptionIDs = []int64{}
 	state.Screen = "home"
 	text, markup := h.homeScreen(ctx, student.ID, state, student.DisplayName)
 	return h.render(ctx, state, "Ожидающий ввод отменён.\n\n"+text, markup)
