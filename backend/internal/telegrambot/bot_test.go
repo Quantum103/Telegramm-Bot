@@ -251,7 +251,7 @@ func TestRunStopsOnContextCancellation(t *testing.T) {
 
 func TestRunStopsOnPollingConflict(t *testing.T) {
 	api := &fakeAPI{updateErr: &APIError{Code: 409, Description: "Conflict: another getUpdates request"}}
-	bot := newTestBot(api, &fakeStudents())
+	bot := newTestBot(api, &fakeStudents{})
 
 	err := bot.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "409") {
