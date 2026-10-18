@@ -62,7 +62,7 @@ type LessonQuestion struct {
 	LessonVersionID     int64
 	QuestionNumber      int
 	Prompt              string
-	ExpectedAnswer      string  `json:"-"`
+	ExpectedAnswer      string `json:"-"`
 	AnswerType          string
 	ExpectedExplanation *string             `json:"-"`
 	Criteria            []QuestionCriterion `json:"-"`
