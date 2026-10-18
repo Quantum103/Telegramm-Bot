@@ -128,6 +128,7 @@ Invoke-RestMethod http://localhost:8080/health/ready
 
 ```text
 .
+├── main.go                 # существующий файл, оставлен без изменений
 ├── backend/
 │   ├── .dockerignore
 │   ├── cmd/api/main.go
@@ -135,7 +136,8 @@ Invoke-RestMethod http://localhost:8080/health/ready
 │   ├── internal/database/
 │   ├── internal/httpserver/
 │   ├── Dockerfile
-│   └── go.mod
+│   ├── go.mod
+│   └── go.sum
 ├── frontend/
 │   ├── .dockerignore
 │   ├── src/
