@@ -45,7 +45,7 @@ type CreateQuestionParams struct {
 	ExpectedAnswer    string
 	AnswerType        string
 	ExpectedExplanation *string
-	Criteria          []QuestionCriterion
+	Criteria          []QuestionCriterionInput
 	Options           []QuestionOptionInput
 	CommonMistakes    []CommonMistake
 	BiblePassages     []BiblePassageInput
