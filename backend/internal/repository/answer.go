@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,56 +21,12 @@ func NewAnswerRepository(pool *pgxpool.Pool) *AnswerRepository {
 	return &AnswerRepository{pool: pool}
 }
 
-type SaveTextAnswerParams struct {
-	StudentID      int64
-	EnrollmentID   int64
-	QuestionID     int64
-	AnswerText     string
-	IdempotencyKey string
-}
-
-type SavedAnswer struct {
-	AnswerID         int64
-	AttemptID        int64
-	AnswerText       string
-	ProcessingStatus string
-	Replayed         bool
-	UpdatedAt        time.Time
-}
-
-type EvaluationParams struct {
-	AttemptID     int64
-	Result        string
-	Explanation   *string
-	MissingPoints []string
-	Provider      string
-	Model         string
-	Duration      time.Duration
-}
-
-type AttemptFailureParams struct {
-	AttemptID int64
-	Provider  string
-	Model     string
-	ErrorCode string
-	Duration  time.Duration
-}
-
-type AnswerAttempt struct {
-	ID               int64
-	AnswerID         int64
-	SubmittedAnswer  string
-	ProcessingStatus string
-	EvaluationResult *string
-	Explanation      *string
-	MissingPoints    []string
-	Provider         *string
-	Model            *string
-	DurationMS       *int32
-	ErrorCode        *string
-	CreatedAt        time.Time
-	CompletedAt      *time.Time
-}
+type SaveTextAnswerParams = domain.SaveTextAnswerParams
+type AnswerSubmission = domain.AnswerSubmission
+type SavedAnswer = domain.SavedAnswer
+type EvaluationParams = domain.EvaluationParams
+type AttemptFailureParams = domain.AttemptFailureParams
+type AnswerAttempt = domain.AnswerAttempt
 
 // SaveTextAnswer записывает текущий ответ и новую попытку одной транзакцией.
 // Блокировка прохождения сериализует повторные запросы с одним idempotency key.
