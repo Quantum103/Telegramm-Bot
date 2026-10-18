@@ -54,7 +54,7 @@ func TestStudentCreateLookupAndUniqueTelegramID(t *testing.T) {
 	telegramID := time.Now().UnixNano()
 	displayName := fmt.Sprintf("test-student-%d", telegramID)
 	student, err := repo.Create(ctx, CreateStudentParams{
-		TelegramID: telegramID,
+		TelegramID:  telegramID,
 		DisplayName: displayName,
 	})
 	if err != nil {
@@ -139,7 +139,6 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 		t.Fatalf("создать прохождение: %v", err)
 	}
 	enrollmentID = enrollment.ID
-
 
 	answers := NewAnswerRepository(pool)
 	idempotencyKey := "7ad6a3e1-4c40-4ea9-810f-8e5e27ab0001"
@@ -232,7 +231,7 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 
 	_, err = answers.SaveTextAnswer(ctx, SaveTextAnswerParams{
 		StudentID: student.ID, EnrollmentID: enrollmentID, QuestionID: secondQuestionID,
-		AnswerText: "Этот ответ не должен сохраниться",
+		AnswerText:     "Этот ответ не должен сохраниться",
 		IdempotencyKey: "902b71df-0e63-4ed4-b1c2-b8bb5b38e004",
 	})
 	if err == nil {
@@ -302,4 +301,3 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 		t.Fatalf("триггер не сохранил содержимое архивного вопроса: %q", questions[0].Prompt)
 	}
 }
-
