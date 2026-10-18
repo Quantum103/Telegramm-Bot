@@ -27,6 +27,9 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load returned error: %v", err)
 	}
+	if cfg.TelegramBotToken != "" {
+		t.Errorf("TelegramBotToken = %q, want empty when not configured", cfg.TelegramBotToken)
+	}
 	if cfg.HTTPAddr != ":8080" {
 		t.Errorf("HTTPAddr = %q, want :8080", cfg.HTTPAddr)
 	}
@@ -83,6 +86,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 
 func TestLoadAcceptsOverrides(t *testing.T) {
 	values := validEnvironment()
+	values["TELEGRAM_BOT_TOKEN"] = " test-token "
 	values["HTTP_ADDR"] = "127.0.0.1:9090"
 	values["HTTP_READ_TIMEOUT"] = "20s"
 	values["DATABASE_PORT"] = "5544"
@@ -91,7 +95,7 @@ func TestLoadAcceptsOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load returned error: %v", err)
 	}
-	if cfg.HTTPAddr != "127.0.0.1:9090" || cfg.HTTPReadTimeout != 20*time.Second || cfg.Database.Port != 5544 || cfg.Database.MinConns != 0 {
+	if cfg.TelegramBotToken != "test-token" || cfg.HTTPAddr != "127.0.0.1:9090" || cfg.HTTPReadTimeout != 20*time.Second || cfg.Database.Port != 5544 || cfg.Database.MinConns != 0 {
 		t.Fatalf("unexpected overridden config: %+v", cfg)
 	}
 }
