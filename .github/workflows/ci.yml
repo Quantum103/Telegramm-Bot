@@ -6,6 +6,7 @@ on:
       - main
       - "stage-2/**"
       - "stage-3/**"
+      - "stage-4/**"
   pull_request:
     branches:
       - main
