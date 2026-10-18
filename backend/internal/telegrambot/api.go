@@ -111,7 +111,8 @@ func (c *APIClient) call(ctx context.Context, method string, payload any, result
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("send Telegram method %s: %w", method, err)
+		// Ошибка транспорта может содержать исходный URL с токеном бота, поэтому её текст не логируем.
+		return fmt.Errorf("send Telegram method %s: network request failed (%T)", method, err)
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
