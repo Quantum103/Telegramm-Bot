@@ -18,10 +18,10 @@ import (
 )
 
 type sentMessage struct {
-	chatID  int64
+	chatID    int64
 	messageID int64
-	text    string
-	markup  *InlineKeyboardMarkup
+	text      string
+	markup    *InlineKeyboardMarkup
 }
 
 type editedMessage struct {
@@ -147,14 +147,14 @@ func (f *fakeStudents) EnsureByTelegramID(_ context.Context, params domain.Ensur
 }
 
 type fakeCatalog struct {
-	courses       []domain.Course
-	lessons       map[int64][]domain.Lesson
-	details       map[int64]domain.LessonDetail
-	listErr       error
-	courseErr     error
-	lessonsErr    error
-	detailErr     error
-	detailCalls   []int64
+	courses     []domain.Course
+	lessons     map[int64][]domain.Lesson
+	details     map[int64]domain.LessonDetail
+	listErr     error
+	courseErr   error
+	lessonsErr  error
+	detailErr   error
+	detailCalls []int64
 }
 
 func (f *fakeCatalog) ListCourses(context.Context) ([]domain.Course, error) {
@@ -398,7 +398,7 @@ func fixture() (*fakeCatalog, *fakeLearning) {
 	catalog.lessons[20] = []domain.Lesson{{ID: 200, CourseID: 20, LessonVersionID: 601, Title: "Молитва", QuestionCount: 1}}
 	catalog.details[100] = domain.LessonDetail{Lesson: lesson, Questions: questions}
 	catalog.details[200] = domain.LessonDetail{
-		Lesson: catalog.lessons[20][0],
+		Lesson:    catalog.lessons[20][0],
 		Questions: []domain.LessonQuestion{{ID: 2001, LessonVersionID: 601, QuestionNumber: 1, Prompt: "Что такое молитва?", AnswerType: "text"}},
 	}
 	return catalog, newFakeLearning(catalog)
@@ -426,10 +426,10 @@ func testUpdate(updateID int64, command string, user User) Update {
 
 func testCallback(data string, user User, messageID int64) CallbackQuery {
 	return CallbackQuery{
-		ID: "callback-test",
-		From: &user,
+		ID:      "callback-test",
+		From:    &user,
 		Message: &Message{MessageID: messageID, Chat: Chat{ID: user.ID, Type: "private"}},
-		Data: data,
+		Data:    data,
 	}
 }
 
