@@ -119,6 +119,34 @@ func (r *CatalogRepository) ListPublishedLessonsByCourseID(ctx context.Context, 
 	return lessons, nil
 }
 
+
+func (r *CatalogRepository) GetPublishedLessonInCourse(ctx context.Context, courseID, lessonID int64) (domain.Lesson, error) {
+	if courseID <= 0 || lessonID <= 0 {
+		return domain.Lesson{}, ErrInvalidInput
+	}
+	lesson, err := scanLesson(r.pool.QueryRow(ctx, `
+		SELECT c.id, c.title, cl.position, l.id, lv.id, lv.version_number,
+		       lv.title, lv.description, lv.published_at,
+		       (
+		           SELECT count(*)
+		           FROM lesson_questions q
+		           WHERE q.lesson_version_id = lv.id
+		       ) AS question_count
+		FROM courses c
+		JOIN course_lessons cl ON cl.course_id = c.id
+		JOIN lessons l ON l.id = cl.lesson_id
+		JOIN lesson_versions lv ON lv.lesson_id = l.id AND lv.status = 'published'
+		WHERE c.id = $1 AND c.status = 'published' AND l.id = $2
+	`, courseID, lessonID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Lesson{}, ErrNotFound
+		}
+		return domain.Lesson{}, mapDatabaseError("получить урок указанного курса", err)
+	}
+	return lesson, nil
+}
+
 func (r *CatalogRepository) GetPublishedLessonByID(ctx context.Context, lessonID int64) (domain.Lesson, error) {
 	if lessonID <= 0 {
 		return domain.Lesson{}, ErrInvalidInput
