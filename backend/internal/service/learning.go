@@ -97,10 +97,16 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 
 // GetProgress восстанавливает состояние прохождения исключительно из PostgreSQL.
 func (s *LearningService) GetProgress(ctx context.Context, studentID, enrollmentID int64) (domain.Progress, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.Progress{}, err
+	}
 	return s.enrollments.GetProgress(ctx, studentID, enrollmentID)
 }
 
 func (s *LearningService) FirstQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return NavigationState{}, err
+	}
 	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		return NavigationState{}, err
@@ -114,6 +120,9 @@ func (s *LearningService) FirstQuestion(ctx context.Context, studentID, enrollme
 func (s *LearningService) OpenQuestion(ctx context.Context, studentID, enrollmentID, questionID int64) (NavigationState, error) {
 	if studentID <= 0 || enrollmentID <= 0 || questionID <= 0 {
 		return NavigationState{}, domain.ErrInvalidInput
+	}
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return NavigationState{}, err
 	}
 	enrollment, err := s.enrollments.GetByIDForStudent(ctx, studentID, enrollmentID)
 	if err != nil {
@@ -152,6 +161,9 @@ func (s *LearningService) PreviousQuestion(ctx context.Context, studentID, enrol
 }
 
 func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID int64, step int) (NavigationState, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return NavigationState{}, err
+	}
 	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		return NavigationState{}, err
@@ -300,6 +312,23 @@ func validateSubmission(question domain.LessonQuestion, params domain.AnswerSubm
 }
 
 func (s *LearningService) CompleteLesson(ctx context.Context, studentID, enrollmentID int64) (domain.Enrollment, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.Enrollment{}, err
+	}
 	return s.enrollments.Complete(ctx, studentID, enrollmentID)
+}
+
+func (s *LearningService) requireActiveStudent(ctx context.Context, studentID int64) error {
+	if studentID <= 0 {
+		return domain.ErrInvalidInput
+	}
+	student, err := s.students.GetByID(ctx, studentID)
+	if err != nil {
+		return err
+	}
+	if student.AccountStatus != "active" {
+		return domain.ErrInvalidState
+	}
+	return nil
 }
 
