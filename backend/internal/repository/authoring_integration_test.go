@@ -17,7 +17,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 
 	repo := NewCatalogRepository(pool)
 	course, err := repo.CreateDraftCourse(ctx, domain.CreateCourseParams{
-		Slug: fmt.Sprintf("authoring-%d", time.Now().UnixNano()),
+		Slug:  fmt.Sprintf("authoring-%d", time.Now().UnixNano()),
 		Title: "Черновой тестовый курс",
 	})
 	if err != nil {
@@ -31,11 +31,11 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 	}
 	required := true
 	question, err := repo.CreateQuestionWithMaterials(ctx, domain.CreateQuestionParams{
-		LessonVersionID: lesson.LessonVersionID,
-		QuestionNumber: 1,
-		Prompt: "Какой вариант указан в тексте?",
-		ExpectedAnswer: "Предполагаемый ответ для внутренней проверки",
-		AnswerType: "single_choice",
+		LessonVersionID:     lesson.LessonVersionID,
+		QuestionNumber:      1,
+		Prompt:              "Какой вариант указан в тексте?",
+		ExpectedAnswer:      "Предполагаемый ответ для внутренней проверки",
+		AnswerType:          "single_choice",
 		ExpectedExplanation: stringPtr("Внутреннее пояснение"),
 		Criteria: []domain.QuestionCriterionInput{{
 			Key: "central_point", Description: "Смысловой критерий", Weight: 1,
@@ -51,7 +51,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 		BiblePassages: []domain.BiblePassageInput{{
 			BookName: "Иоанна", Chapter: 3, StartVerse: 16, EndVerse: 17,
 			TranslationName: stringPtr("Тестовый перевод"),
-			PassageText: stringPtr("Тестовый текст отрывка"),
+			PassageText:     stringPtr("Тестовый текст отрывка"),
 		}},
 	})
 	if err != nil {
