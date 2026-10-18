@@ -179,6 +179,9 @@ func (b *Bot) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	b.logger.Info("Telegram-бот авторизован", "telegram_bot_id", me.ID, "username", me.Username)
 
 	var offset int64
