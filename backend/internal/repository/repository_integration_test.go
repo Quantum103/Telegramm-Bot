@@ -70,7 +70,7 @@ func TestStudentCreateLookupAndUniqueTelegramID(t *testing.T) {
 	}
 
 	_, err = repo.Create(ctx, CreateStudentParams{
-		TelegramID: telegramID,
+		TelegramID:  telegramID,
 		DisplayName: "duplicate",
 	})
 	if !errors.Is(err, ErrConflict) {
@@ -84,7 +84,7 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	defer cancel()
 
 	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
-		TelegramID: time.Now().UnixNano(),
+		TelegramID:  time.Now().UnixNano(),
 		DisplayName: fmt.Sprintf("test-answer-%d", time.Now().UnixNano()),
 	})
 	if err != nil {
