@@ -225,18 +225,18 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 					label = "☐ " + label
 				}
 				if question.AnswerType == "single_choice" {
-					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("pick:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
+					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("p:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
 				} else {
-					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("multi-toggle:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
+					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("t:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
 				}
 			}
 			if question.AnswerType == "multiple_choice" {
-				rows = append(rows, []InlineKeyboardButton{button("Подтвердить выбор", fmt.Sprintf("multi-submit:%d:%d", progress.Enrollment.ID, question.ID))})
+				rows = append(rows, []InlineKeyboardButton{button("Подтвердить выбор", fmt.Sprintf("s:%d:%d", progress.Enrollment.ID, question.ID))})
 			}
 		} else if hasSaved {
 			text += "\n\nСохранённый выбор: " + truncate(optionSummary(question.Options, state.SavedAnswer.SelectedOptionIDs), 650)
 			text += "\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена."
-			rows = append(rows, []InlineKeyboardButton{button("Изменить ответ", fmt.Sprintf("pick-edit:%d:%d", progress.Enrollment.ID, question.ID))})
+			rows = append(rows, []InlineKeyboardButton{button("Изменить ответ", fmt.Sprintf("e:%d:%d", progress.Enrollment.ID, question.ID))})
 		}
 	default:
 		text += "\n\nЭтот тип вопроса пока не поддерживается ботом."
@@ -328,7 +328,7 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 			return
 		}
 		b.openLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
-	case len(parts) > 0 && (parts[0] == "pick-edit" || parts[0] == "pick" || parts[0] == "multi-toggle" || parts[0] == "multi-submit"):
+	case len(parts) > 0 && (parts[0] == "e" || parts[0] == "p" || parts[0] == "t" || parts[0] == "s" || parts[0] == "pick-edit" || parts[0] == "pick" || parts[0] == "multi-toggle" || parts[0] == "multi-submit"):
 		b.handleAnswerCallback(ctx, updateID, chatID, student.ID, messageID, parts)
 	case (len(parts) == 4 || len(parts) == 5) && parts[0] == "nav" && (parts[1] == "prev" || parts[1] == "next"):
 		enrollmentID, okEnrollment := parsePositiveID(parts[2])
