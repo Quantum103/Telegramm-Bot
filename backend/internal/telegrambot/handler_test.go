@@ -145,6 +145,73 @@ func TestLessonMustBelongToSelectedCourse(t *testing.T) {
 	}
 }
 
+func TestCourseAndLessonListsUseCatalogData(t *testing.T) {
+	h, api, _, _, _, _ := newHarness([]domain.LessonQuestion{textQuestion(1)})
+	if err := h.HandleUpdate(context.Background(), messageUpdate(1, 900, "/start")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(2, 900, api.lastMessageID, "courses")); err != nil {
+		t.Fatal(err)
+	}
+	if !keyboardHasCallback(api.lastMarkup, "course:10") {
+		t.Fatalf("course list does not include the catalog course: %+v", api.lastMarkup)
+	}
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(3, 900, api.lastMessageID, "course:10")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(api.lastText, "Test course") || !keyboardHasCallback(api.lastMarkup, "lesson:10:20") {
+		t.Fatalf("lesson list does not reflect the selected course: text=%q markup=%+v", api.lastText, api.lastMarkup)
+	}
+}
+
+func TestEmptyCourseLessonAndQuestionListsAreHandled(t *testing.T) {
+	t.Run("empty course catalog", func(t *testing.T) {
+		h, api, _, _, catalog, _ := newHarness([]domain.LessonQuestion{textQuestion(1)})
+		catalog.emptyCourses = true
+		if err := h.HandleUpdate(context.Background(), messageUpdate(1, 900, "/start")); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.HandleUpdate(context.Background(), callbackUpdate(2, 900, api.lastMessageID, "courses")); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(api.lastText, "Пока нет опубликованных курсов") {
+			t.Fatalf("empty catalog message missing: %q", api.lastText)
+		}
+	})
+	t.Run("course without lessons", func(t *testing.T) {
+		h, api, _, _, catalog, _ := newHarness([]domain.LessonQuestion{textQuestion(1)})
+		catalog.emptyLessons = true
+		if err := h.HandleUpdate(context.Background(), messageUpdate(1, 900, "/start")); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.HandleUpdate(context.Background(), callbackUpdate(2, 900, api.lastMessageID, "course:10")); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(api.lastText, "пока нет опубликованных уроков") {
+			t.Fatalf("empty lessons message missing: %q", api.lastText)
+		}
+	})
+	t.Run("lesson without questions", func(t *testing.T) {
+		h, api, _, _, _, states := newHarness(nil)
+		if err := h.HandleUpdate(context.Background(), messageUpdate(1, 900, "/start")); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.HandleUpdate(context.Background(), callbackUpdate(2, 900, api.lastMessageID, "course:10")); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.HandleUpdate(context.Background(), callbackUpdate(3, 900, api.lastMessageID, "lesson:10:20")); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(api.lastText, "пока нет вопросов") {
+			t.Fatalf("empty question message missing: %q", api.lastText)
+		}
+		state, err := states.Get(context.Background(), 42)
+		if err != nil || state.EnrollmentID != nil {
+			t.Fatalf("empty lesson should not create an enrollment: state=%+v err=%v", state, err)
+		}
+	})
+}
+
 func TestStaleCallbackCannotAnswerAnotherQuestion(t *testing.T) {
 	q1 := choiceQuestion(1, "single_choice", 101, 102)
 	q2 := choiceQuestion(2, "single_choice", 201, 202)
@@ -360,6 +427,20 @@ func startLesson(t *testing.T, h *Handler, api *fakeBotAPI) {
 	}
 }
 
+func keyboardHasCallback(markup *InlineKeyboardMarkup, wanted string) bool {
+	if markup == nil {
+		return false
+	}
+	for _, row := range markup.InlineKeyboard {
+		for _, item := range row {
+			if item.CallbackData == wanted {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func messageUpdate(updateID, telegramID int64, text string) Update {
 	user := &User{ID: telegramID, FirstName: "Test", LastName: "Student"}
 	return Update{UpdateID: updateID, Message: &Message{
@@ -406,6 +487,7 @@ type fakeBotAPI struct {
 	sends, edits, callbackAnswers, deleteCalls int
 	lastMessageID                              int64
 	lastText                                   string
+	lastMarkup                                 *InlineKeyboardMarkup
 	deleteErr                                  error
 }
 
@@ -413,15 +495,17 @@ func (a *fakeBotAPI) GetMe(context.Context) (User, error) {
 	return User{ID: 1, Username: "test_bot"}, nil
 }
 func (a *fakeBotAPI) GetUpdates(context.Context, int64, int) ([]Update, error) { return nil, nil }
-func (a *fakeBotAPI) SendMessage(_ context.Context, _ int64, text string, _ *InlineKeyboardMarkup) (Message, error) {
+func (a *fakeBotAPI) SendMessage(_ context.Context, _ int64, text string, markup *InlineKeyboardMarkup) (Message, error) {
 	a.sends++
 	a.lastMessageID++
 	a.lastText = text
+	a.lastMarkup = markup
 	return Message{MessageID: a.lastMessageID}, nil
 }
-func (a *fakeBotAPI) EditMessageText(_ context.Context, _ int64, _ int64, text string, _ *InlineKeyboardMarkup) error {
+func (a *fakeBotAPI) EditMessageText(_ context.Context, _ int64, _ int64, text string, markup *InlineKeyboardMarkup) error {
 	a.edits++
 	a.lastText = text
+	a.lastMarkup = markup
 	return nil
 }
 func (a *fakeBotAPI) AnswerCallbackQuery(context.Context, string, string) error {
@@ -458,12 +542,17 @@ func (s *fakeStudentService) GetByTelegramID(_ context.Context, telegramID int64
 }
 
 type fakeCatalogService struct {
-	course    domain.Course
-	lesson    domain.Lesson
-	questions []domain.LessonQuestion
+	course       domain.Course
+	lesson       domain.Lesson
+	questions    []domain.LessonQuestion
+	emptyCourses bool
+	emptyLessons bool
 }
 
 func (c *fakeCatalogService) ListCourses(context.Context) ([]domain.Course, error) {
+	if c.emptyCourses {
+		return []domain.Course{}, nil
+	}
 	return []domain.Course{c.course}, nil
 }
 func (c *fakeCatalogService) GetCourse(_ context.Context, id int64) (domain.Course, error) {
@@ -475,6 +564,9 @@ func (c *fakeCatalogService) GetCourse(_ context.Context, id int64) (domain.Cour
 func (c *fakeCatalogService) ListCourseLessons(_ context.Context, id int64) ([]domain.Lesson, error) {
 	if id != c.course.ID {
 		return nil, domain.ErrNotFound
+	}
+	if c.emptyLessons {
+		return []domain.Lesson{}, nil
 	}
 	return []domain.Lesson{c.lesson}, nil
 }
