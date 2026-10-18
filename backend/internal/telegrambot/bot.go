@@ -135,7 +135,7 @@ func (c *HTTPClient) GetUpdates(ctx context.Context, offset int64, timeout int) 
 	payload := map[string]any{
 		"offset":          offset,
 		"timeout":         timeout,
-		"allowed_updates": []string{"message"},
+		"allowed_updates": []string{"message", "callback_query"},
 	}
 	err := c.call(ctx, "getUpdates", payload, &updates)
 	return updates, err
