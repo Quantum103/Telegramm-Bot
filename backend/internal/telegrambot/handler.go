@@ -152,7 +152,7 @@ func (h *Handler) handleStart(ctx context.Context, message Message) error {
 	state, err := h.loadOrNewState(ctx, student.ID, message.Chat.ID)
 	if err != nil {
 		h.logger.Error("не удалось загрузить состояние Telegram-диалога", "student_id", student.ID, "error", err)
-		return err
+		return h.apiErrorMessage(ctx, message.Chat.ID, 0, "Не удалось восстановить состояние обучения. Попробуйте ещё раз немного позже.")
 	}
 	state.Screen = "home"
 	text, markup := h.homeScreen(ctx, student.ID, state, user.FirstName)
@@ -165,7 +165,8 @@ func (h *Handler) handleHelp(ctx context.Context, telegramID, chatID int64) erro
 		if errors.Is(err, domain.ErrNotFound) {
 			return h.apiErrorMessage(ctx, chatID, 0, "Сначала выполните /start, чтобы зарегистрироваться.")
 		}
-		return err
+		h.logger.Error("не удалось загрузить состояние для /help", "telegram_id", telegramID, "error", err)
+		return h.apiErrorMessage(ctx, chatID, 0, "Не удалось загрузить состояние обучения. Попробуйте позже.")
 	}
 	state.Screen = "help"
 	state.AwaitingText = false
@@ -181,7 +182,8 @@ func (h *Handler) handleCancel(ctx context.Context, telegramID, chatID int64) er
 		if errors.Is(err, domain.ErrNotFound) {
 			return h.apiErrorMessage(ctx, chatID, 0, "Нет активного ввода. Выполните /start, чтобы начать.")
 		}
-		return err
+		h.logger.Error("не удалось загрузить состояние для /cancel", "telegram_id", telegramID, "error", err)
+		return h.apiErrorMessage(ctx, chatID, 0, "Не удалось загрузить состояние обучения. Сохранённые ответы не изменены.")
 	}
 	state.AwaitingText = false
 	state.SelectedOptionIDs = []int64{}
@@ -202,7 +204,8 @@ func (h *Handler) handleTextAnswer(ctx context.Context, message Message, updateI
 		if errors.Is(err, domain.ErrNotFound) {
 			return h.apiErrorMessage(ctx, message.Chat.ID, 0, "Чтобы начать обучение, выполните /start.")
 		}
-		return err
+		h.logger.Error("не удалось загрузить состояние перед обработкой текста", "telegram_id", message.From.ID, "error", err)
+		return h.apiErrorMessage(ctx, message.Chat.ID, 0, "Не удалось проверить состояние ответа. Текст не был сохранён как ответ — попробуйте позже.")
 	}
 	answer := strings.TrimSpace(message.Text)
 	if state.Screen != "question" || !state.AwaitingText || state.EnrollmentID == nil || state.QuestionID == nil {
@@ -252,7 +255,8 @@ func (h *Handler) handleCallback(ctx context.Context, callback CallbackQuery, up
 		if errors.Is(err, domain.ErrNotFound) {
 			return h.apiErrorMessage(ctx, callback.Message.Chat.ID, callback.Message.MessageID, "Сначала выполните /start.")
 		}
-		return err
+		h.logger.Error("не удалось загрузить состояние для callback", "telegram_id", callback.From.ID, "error", err)
+		return h.apiErrorMessage(ctx, callback.Message.Chat.ID, callback.Message.MessageID, "Не удалось проверить состояние обучения. Попробуйте ещё раз.")
 	}
 	// Актуальный message ID заменяется лишь после подтверждённой отправки/редактирования.
 	if state.MessageID == nil {
