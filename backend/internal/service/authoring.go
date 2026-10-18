@@ -10,6 +10,7 @@ import (
 type AuthoringStore interface {
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
+	CreateDraftRevision(context.Context, int64) (domain.Lesson, error)
 	CreateQuestionWithMaterials(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64) error
 	PublishCourse(context.Context, int64) error
@@ -40,6 +41,14 @@ func (s *AuthoringService) CreateDraftLesson(ctx context.Context, params domain.
 		return domain.Lesson{}, domain.ErrInvalidInput
 	}
 	return s.store.CreateDraftLesson(ctx, params)
+}
+
+
+func (s *AuthoringService) CreateDraftRevision(ctx context.Context, lessonID int64) (domain.Lesson, error) {
+	if lessonID <= 0 {
+		return domain.Lesson{}, domain.ErrInvalidInput
+	}
+	return s.store.CreateDraftRevision(ctx, lessonID)
 }
 
 func (s *AuthoringService) CreateQuestion(ctx context.Context, params domain.CreateQuestionParams) (domain.LessonQuestion, error) {
