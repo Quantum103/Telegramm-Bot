@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      test: ["CMD-SHELL", "pg_isready -U \\"$$${POSTGRES_USER}\\" -d \\"$$${POSTGRES_DB}\\""]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -37,6 +37,7 @@ services:
       DATABASE_CONNECT_TIMEOUT: "${DATABASE_CONNECT_TIMEOUT:-5s}"
       DATABASE_MAX_CONNS: "${DATABASE_MAX_CONNS:-10}"
       DATABASE_MIN_CONNS: "${DATABASE_MIN_CONNS:-1}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
@@ -47,8 +48,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        VITE_API_BASE_URL: "${VITE_API_BASE_URL:-}"
+    args:
+      VITE_API_BASE_URL: "${VITE_API_BASE_URL:-}"
     restart: unless-stopped
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-8081}:80"
