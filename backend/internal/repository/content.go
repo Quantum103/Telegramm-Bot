@@ -41,7 +41,23 @@ type QuestionOption struct {
 	IsCorrect bool   `json:"-"`
 }
 
-type PublishedQuestion struct {
+type CommonMistake struct {
+	Text        string `json:"text"`
+	Explanation string `json:"explanation"`
+}
+
+type BiblePassage struct {
+	ID              int64   `json:"id"`
+	BookName        string  `json:"book_name"`
+	Chapter         int     `json:"chapter"`
+	StartVerse      int     `json:"start_verse"`
+	EndVerse        int     `json:"end_verse"`
+	TranslationName *string `json:"translation_name"`
+	PassageText     *string `json:"passage_text"`
+	SourceNote      *string `json:"source_note"`
+}
+
+type LessonQuestion struct {
 	ID                  int64
 	LessonVersionID     int64
 	QuestionNumber      int
@@ -50,6 +66,8 @@ type PublishedQuestion struct {
 	AnswerType          string
 	ExpectedExplanation *string            `json:"-"`
 	Criteria            []QuestionCriterion `json:"-"`
+	CommonMistakes      []CommonMistake    `json:"-"`
+	BiblePassages       []BiblePassage     `json:"-"`
 	Options             []QuestionOption
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -93,7 +111,7 @@ func (r *ContentRepository) ListPublishedLessonsByCourse(ctx context.Context, co
 	return lessons, nil
 }
 
-func (r *ContentRepository) ListPublishedQuestions(ctx context.Context, lessonVersionID int64) ([]PublishedQuestion, error) {
+func (r *ContentRepository) ListQuestionsForVersion(ctx context.Context, lessonVersionID int64) ([]LessonQuestion, error) {
 	if lessonVersionID <= 0 {
 		return nil, ErrInvalidInput
 	}
@@ -131,29 +149,57 @@ func (r *ContentRepository) ListPublishedQuestions(ctx context.Context, lessonVe
 				FROM question_options o
 				WHERE o.question_id = q.id
 			), '[]'::JSONB) AS options,
+			COALESCE((
+				SELECT jsonb_agg(
+					jsonb_build_object(
+						'text', mistake.mistake_text,
+						'explanation', mistake.explanation
+					) ORDER BY mistake.sort_order
+				)
+				FROM question_common_mistakes mistake
+				WHERE mistake.question_id = q.id
+			), '[]'::JSONB) AS common_mistakes,
+			COALESCE((
+				SELECT jsonb_agg(
+					jsonb_build_object(
+						'id', passage.id,
+						'book_name', passage.book_name,
+						'chapter', passage.chapter,
+						'start_verse', passage.start_verse,
+						'end_verse', passage.end_verse,
+						'translation_name', passage.translation_name,
+						'passage_text', passage.passage_text,
+						'source_note', passage.source_note
+					) ORDER BY link.sort_order
+				)
+				FROM question_bible_passages link
+				JOIN bible_passages passage ON passage.id = link.passage_id
+				WHERE link.question_id = q.id
+			), '[]'::JSONB) AS bible_passages,
 			q.created_at,
 			q.updated_at
 		FROM lesson_questions q
 		JOIN lesson_versions lv ON lv.id = q.lesson_version_id
-		WHERE q.lesson_version_id = $1 AND lv.status = 'published'
+		WHERE q.lesson_version_id = $1 AND lv.status IN ('published', 'archived')
 		ORDER BY q.question_number
 	`
 
 	rows, err := r.pool.Query(ctx, query, lessonVersionID)
 	if err != nil {
-		return nil, mapDatabaseError("получить вопросы опубликованного урока", err)
+		return nil, mapDatabaseError("получить вопросы версии урока", err)
 	}
 	defer rows.Close()
 
-	questions := make([]PublishedQuestion, 0)
+	questions := make([]LessonQuestion, 0)
 	for rows.Next() {
-		var question PublishedQuestion
+		var question LessonQuestion
 		var explanation pgtype.Text
-		var criteriaJSON, optionsJSON []byte
+		var criteriaJSON, optionsJSON, mistakesJSON, passagesJSON []byte
 		if err := rows.Scan(
 			&question.ID, &question.LessonVersionID, &question.QuestionNumber,
 			&question.Prompt, &question.ExpectedAnswer, &question.AnswerType,
-			&explanation, &criteriaJSON, &optionsJSON, &question.CreatedAt, &question.UpdatedAt,
+			&explanation, &criteriaJSON, &optionsJSON, &mistakesJSON, &passagesJSON,
+			&question.CreatedAt, &question.UpdatedAt,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать вопрос урока", err)
 		}
@@ -167,6 +213,12 @@ func (r *ContentRepository) ListPublishedQuestions(ctx context.Context, lessonVe
 		if err := json.Unmarshal(optionsJSON, &question.Options); err != nil {
 			return nil, mapDatabaseError("разобрать варианты ответа", err)
 		}
+		if err := json.Unmarshal(mistakesJSON, &question.CommonMistakes); err != nil {
+			return nil, mapDatabaseError("разобрать распространённые ошибки", err)
+		}
+		if err := json.Unmarshal(passagesJSON, &question.BiblePassages); err != nil {
+			return nil, mapDatabaseError("разобрать библейские отрывки", err)
+		}
 		questions = append(questions, question)
 	}
 	if err := rows.Err(); err != nil {
@@ -175,7 +227,7 @@ func (r *ContentRepository) ListPublishedQuestions(ctx context.Context, lessonVe
 	if len(questions) == 0 {
 		var published bool
 		if err := r.pool.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM lesson_versions WHERE id = $1 AND status = 'published')`,
+			`SELECT EXISTS (SELECT 1 FROM lesson_versions WHERE id = $1 AND status IN ('published', 'archived'))`,
 			lessonVersionID,
 		).Scan(&published); err != nil {
 			return nil, mapDatabaseError("проверить версию урока", err)
