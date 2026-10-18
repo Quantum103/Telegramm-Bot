@@ -198,6 +198,54 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 		t.Fatalf("сохранить техническую ошибку ИИ: %v", err)
 	}
 
+	// Смоделированная ошибка в конце транзакции проверяет, что текущий ответ и прогресс откатываются вместе.
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION test_reject_answer_attempt() RETURNS TRIGGER
+		LANGUAGE plpgsql AS $
+		BEGIN
+			RAISE EXCEPTION 'ошибка, созданная integration test';
+		END;
+		$
+	`); err != nil {
+		t.Fatalf("создать тестовую функцию отказа: %v", err)
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, "DROP TRIGGER IF EXISTS test_reject_answer_attempt_trg ON answer_attempts")
+		_, _ = pool.Exec(cleanupCtx, "DROP FUNCTION IF EXISTS test_reject_answer_attempt()")
+	}()
+	if _, err := pool.Exec(ctx, `
+		CREATE TRIGGER test_reject_answer_attempt_trg
+		BEFORE INSERT ON answer_attempts
+		FOR EACH ROW EXECUTE FUNCTION test_reject_answer_attempt()
+	`); err != nil {
+		t.Fatalf("создать тестовый триггер отказа: %v", err)
+	}
+
+	_, err = answers.SaveTextAnswer(ctx, SaveTextAnswerParams{
+		StudentID: student.ID, EnrollmentID: enrollmentID, QuestionID: questionID,
+		AnswerText: "Этот ответ не должен сохраниться",
+		IdempotencyKey: "902b71df-0e63-4ed4-b1c2-b8bb5b38e004",
+	})
+	if err == nil {
+		t.Fatal("ожидалась ошибка вставки попытки, но транзакция прошла")
+	}
+	savedAfterRollback, err := answers.GetSavedTextAnswer(ctx, student.ID, enrollmentID, questionID)
+	if err != nil {
+		t.Fatalf("получить текущий ответ после отката: %v", err)
+	}
+	if savedAfterRollback.AnswerText != "Ответ сохранён до вызова ИИ" {
+		t.Fatalf("транзакция не откатила изменение текущего ответа: %q", savedAfterRollback.AnswerText)
+	}
+	progressAfterRollback, err := NewEnrollmentRepository(pool).GetByStudentAndVersion(ctx, student.ID, versionID, "ai")
+	if err != nil {
+		t.Fatalf("получить прогресс после отката: %v", err)
+	}
+	if progressAfterRollback.CurrentQuestionID == nil || *progressAfterRollback.CurrentQuestionID != questionID {
+		t.Fatalf("неожиданный прогресс после отката: %+v", progressAfterRollback)
+	}
+
 	history, err := answers.ListAttemptHistory(ctx, student.ID, enrollmentID, questionID)
 	if err != nil {
 		t.Fatalf("получить историю попыток: %v", err)
