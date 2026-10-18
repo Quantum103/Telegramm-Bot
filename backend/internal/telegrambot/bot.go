@@ -375,7 +375,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) {
 	case "/help":
 		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки.\n\n/start — открыть каталог курсов\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. В вопросах с вариантами используйте кнопки.")
 	case "/cancel":
-		b.send(ctx, message.Chat.ID, "Команда /cancel не сохраняется как учебный ответ. Чтобы вернуться к уроку, откройте /start и выберите его в каталоге.")
+		b.send(ctx, message.Chat.ID, "Сейчас нет активного действия для отмены.")
 	default:
 		b.send(ctx, message.Chat.ID, "Пока доступны команды /start, /help и /cancel.")
 	}
