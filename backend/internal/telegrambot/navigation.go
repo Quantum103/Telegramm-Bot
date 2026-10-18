@@ -150,6 +150,11 @@ func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, en
 }
 
 func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64) {
+	key := answerStateKey{studentID: studentID, enrollmentID: state.Progress.Enrollment.ID, questionID: state.Question.ID}
+	b.renderQuestionMode(ctx, chatID, studentID, messageID, state, lesson, contextCourseID, b.isChoiceEditing(key))
+}
+
+func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64, choiceEditing bool) {
 	if lesson == nil {
 		detail, err := b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID)
 		if err == nil {
@@ -178,18 +183,70 @@ func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID i
 	if total <= 0 {
 		total = number
 	}
-	text := fmt.Sprintf("📖 %s\nВопрос %d из %d\n\n%s\n\nОтправка учебных ответов будет подключена следующим подэтапом.",
+	text := fmt.Sprintf("📖 %s\nВопрос %d из %d\n\n%s",
 		truncate(lessonTitle, 180), number, total, question.Prompt)
-	text = truncate(text, 3900)
 
 	var rows [][]InlineKeyboardButton
-	currentQuestionID := question.ID
-	enrollmentID := progress.Enrollment.ID
+	key := answerStateKey{studentID: studentID, enrollmentID: progress.Enrollment.ID, questionID: question.ID}
+	hasSaved := state.SavedAnswer != nil
+	isChoice := question.AnswerType == "single_choice" || question.AnswerType == "multiple_choice"
+	showOptions := isChoice && (!hasSaved || choiceEditing)
+
+	switch question.AnswerType {
+	case "text":
+		if hasSaved {
+			text += "\n\nВаш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650)
+			text += "\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ."
+		} else {
+			text += "\n\nОтправьте ответ следующим сообщением."
+		}
+	case "single_choice", "multiple_choice":
+		if showOptions {
+			if len(question.Options) == 0 {
+				text += "\n\nДля этого вопроса пока нет доступных вариантов ответа."
+			} else if question.AnswerType == "single_choice" {
+				text += "\n\nВыберите один вариант ответа:"
+			} else {
+				text += "\n\nОтметьте подходящие варианты и нажмите «Подтвердить выбор»:"
+			}
+			selected := b.multiDraftSelection(key)
+			if question.AnswerType == "single_choice" && hasSaved {
+				selected = append([]int64(nil), state.SavedAnswer.SelectedOptionIDs...)
+			}
+			selectedSet := make(map[int64]struct{}, len(selected))
+			for _, id := range selected {
+				selectedSet[id] = struct{}{}
+			}
+			for _, option := range question.Options {
+				label := option.Text
+				if _, ok := selectedSet[option.ID]; ok {
+					label = "✅ " + label
+				} else if question.AnswerType == "multiple_choice" {
+					label = "☐ " + label
+				}
+				if question.AnswerType == "single_choice" {
+					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("p:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
+				} else {
+					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("t:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
+				}
+			}
+			if question.AnswerType == "multiple_choice" {
+				rows = append(rows, []InlineKeyboardButton{button("Подтвердить выбор", fmt.Sprintf("s:%d:%d", progress.Enrollment.ID, question.ID))})
+			}
+		} else if hasSaved {
+			text += "\n\nСохранённый выбор: " + truncate(optionSummary(question.Options, state.SavedAnswer.SelectedOptionIDs), 650)
+			text += "\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена."
+			rows = append(rows, []InlineKeyboardButton{button("Изменить ответ", fmt.Sprintf("e:%d:%d", progress.Enrollment.ID, question.ID))})
+		}
+	default:
+		text += "\n\nЭтот тип вопроса пока не поддерживается ботом."
+	}
+
 	if progress.PreviousQuestionID != nil {
-		rows = append(rows, []InlineKeyboardButton{button("← Назад", navigationCallback("prev", enrollmentID, currentQuestionID, courseID))})
+		rows = append(rows, []InlineKeyboardButton{button("← Назад", navigationCallback("prev", progress.Enrollment.ID, question.ID, courseID))})
 	}
 	if progress.NextQuestionID != nil {
-		next := button("Далее →", navigationCallback("next", enrollmentID, currentQuestionID, courseID))
+		next := button("Далее →", navigationCallback("next", progress.Enrollment.ID, question.ID, courseID))
 		if len(rows) > 0 && progress.PreviousQuestionID != nil {
 			rows[len(rows)-1] = append(rows[len(rows)-1], next)
 		} else {
@@ -201,10 +258,31 @@ func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID i
 	} else {
 		rows = append(rows, []InlineKeyboardButton{button("К курсам", "courses")})
 	}
-	b.render(ctx, chatID, messageID, text, markup(rows))
+	b.render(ctx, chatID, messageID, truncate(text, 3900), markup(rows))
+}
+
+func optionSummary(options []domain.QuestionOption, selectedIDs []int64) string {
+	selected := make(map[int64]struct{}, len(selectedIDs))
+	for _, id := range selectedIDs {
+		selected[id] = struct{}{}
+	}
+	labels := make([]string, 0, len(selectedIDs))
+	for _, option := range options {
+		if _, ok := selected[option.ID]; ok {
+			labels = append(labels, option.Text)
+		}
+	}
+	if len(labels) == 0 {
+		return "варианты не найдены"
+	}
+	return strings.Join(labels, "; ")
 }
 
 func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
+	b.handleCallbackWithUpdateID(ctx, 0, callback)
+}
+
+func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, callback CallbackQuery) {
 	if callback.ID != "" {
 		if err := b.api.AnswerCallbackQuery(ctx, callback.ID, ""); err != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось подтвердить callback Telegram", "error", err)
@@ -250,6 +328,8 @@ func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
 			return
 		}
 		b.openLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
+	case len(parts) > 0 && (parts[0] == "e" || parts[0] == "p" || parts[0] == "t" || parts[0] == "s" || parts[0] == "pick-edit" || parts[0] == "pick" || parts[0] == "multi-toggle" || parts[0] == "multi-submit"):
+		b.handleAnswerCallback(ctx, updateID, chatID, student.ID, messageID, parts)
 	case (len(parts) == 4 || len(parts) == 5) && parts[0] == "nav" && (parts[1] == "prev" || parts[1] == "next"):
 		enrollmentID, okEnrollment := parsePositiveID(parts[2])
 		expectedQuestionID, okQuestion := parsePositiveID(parts[3])
@@ -283,6 +363,7 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 		b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
 		return
 	}
+	b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: expectedQuestionID})
 
 	var state service.NavigationState
 	if direction == "prev" {
@@ -308,19 +389,27 @@ func (b *Bot) showStaleCallback(ctx context.Context, chatID, studentID, messageI
 
 func (b *Bot) render(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup) {
 	if messageID <= 0 {
-		if _, err := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup); err != nil && ctx.Err() == nil {
+		sentID, err := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		if err != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить экран Telegram", "chat_id", chatID, "error", err)
+		} else if err == nil {
+			b.rememberMainMessage(chatID, sentID)
 		}
 		return
 	}
 	if err := b.api.EditMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil {
+		b.rememberMainMessage(chatID, messageID)
 		return
 	} else if isMessageNotModified(err) {
+		b.rememberMainMessage(chatID, messageID)
 		return
 	} else if ctx.Err() == nil {
 		b.logger.Warn("не удалось изменить основное сообщение Telegram; создаём новое", "chat_id", chatID, "message_id", messageID, "error", err)
-		if _, sendErr := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup); sendErr != nil && ctx.Err() == nil {
+		sentID, sendErr := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		if sendErr != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить новое основное сообщение Telegram", "chat_id", chatID, "error", sendErr)
+		} else if sendErr == nil {
+			b.rememberMainMessage(chatID, sentID)
 		}
 	}
 }

@@ -8,11 +8,13 @@ on:
       - "stage-3/**"
       - "stage-4.1/**"
       - "stage-4.2/**"
+      - "stage-4.3/**"
   pull_request:
     branches:
       - main
       - "stage-3/**"
       - "stage-4.1/**"
+      - "stage-4.3/**"
   workflow_dispatch:
 
 permissions:

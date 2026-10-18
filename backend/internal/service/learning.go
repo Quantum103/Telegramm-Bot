@@ -99,6 +99,27 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 	return progress, nil
 }
 
+// CurrentQuestion восстанавливает активный вопрос ученика из PostgreSQL, не полагаясь на память процесса.
+func (s *LearningService) CurrentQuestion(ctx context.Context, studentID int64) (NavigationState, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return NavigationState{}, err
+	}
+	store, ok := s.enrollments.(interface {
+		GetCurrentForStudent(context.Context, int64) (domain.Enrollment, error)
+	})
+	if !ok {
+		return NavigationState{}, domain.ErrInvalidState
+	}
+	enrollment, err := store.GetCurrentForStudent(ctx, studentID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	if enrollment.Status != "in_progress" || enrollment.CurrentQuestionID == nil {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	return s.OpenQuestion(ctx, studentID, enrollment.ID, *enrollment.CurrentQuestionID)
+}
+
 // GetProgress восстанавливает состояние прохождения исключительно из PostgreSQL.
 func (s *LearningService) GetProgress(ctx context.Context, studentID, enrollmentID int64) (domain.Progress, error) {
 	if err := s.requireActiveStudent(ctx, studentID); err != nil {

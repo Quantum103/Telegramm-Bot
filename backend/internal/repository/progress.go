@@ -9,6 +9,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// GetCurrentForStudent находит последнее активное прохождение с сохранённым текущим вопросом.
+func (r *EnrollmentRepository) GetCurrentForStudent(ctx context.Context, studentID int64) (Enrollment, error) {
+	if studentID <= 0 {
+		return Enrollment{}, ErrInvalidInput
+	}
+	enrollment, err := scanEnrollment(r.pool.QueryRow(ctx, `
+		SELECT id, student_id, lesson_id, lesson_version_id, mode,
+		       current_question_id, status, started_at, completed_at,
+		       last_activity_at, created_at, updated_at
+		FROM lesson_enrollments
+		WHERE student_id = $1
+		  AND status = 'in_progress'
+		  AND current_question_id IS NOT NULL
+		ORDER BY last_activity_at DESC NULLS LAST, updated_at DESC, id DESC
+		LIMIT 1
+	`, studentID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Enrollment{}, ErrNotFound
+		}
+		return Enrollment{}, mapDatabaseError("получить текущий вопрос ученика", err)
+	}
+	return enrollment, nil
+}
+
 func (r *EnrollmentRepository) GetByIDForStudent(ctx context.Context, studentID, enrollmentID int64) (Enrollment, error) {
 	if studentID <= 0 || enrollmentID <= 0 {
 		return Enrollment{}, ErrInvalidInput
