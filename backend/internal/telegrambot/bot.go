@@ -147,7 +147,6 @@ func (c *HTTPClient) SendMessage(ctx context.Context, chatID int64, text string)
 	}, nil)
 }
 
-
 func (c *HTTPClient) SendMessageWithKeyboard(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup) (int64, error) {
 	payload := map[string]any{"chat_id": chatID, "text": text}
 	if replyMarkup != nil {
