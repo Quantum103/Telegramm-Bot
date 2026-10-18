@@ -43,7 +43,6 @@ func (s *AuthoringService) CreateDraftLesson(ctx context.Context, params domain.
 	return s.store.CreateDraftLesson(ctx, params)
 }
 
-
 func (s *AuthoringService) CreateDraftRevision(ctx context.Context, lessonID int64) (domain.Lesson, error) {
 	if lessonID <= 0 {
 		return domain.Lesson{}, domain.ErrInvalidInput
