@@ -39,7 +39,6 @@ func (s *CatalogService) ListCourseLessons(ctx context.Context, courseID int64) 
 	return s.courses.ListPublishedLessonsByCourseID(ctx, courseID)
 }
 
-
 func (s *CatalogService) GetLessonDetailInCourse(ctx context.Context, courseID, lessonID int64) (domain.LessonDetail, error) {
 	lesson, err := s.courses.GetPublishedLessonInCourse(ctx, courseID, lessonID)
 	if err != nil {
