@@ -194,6 +194,7 @@ func (h *Handler) handleCancel(ctx context.Context, telegramID, chatID int64) er
 		}
 		return h.showNavigation(ctx, student.ID, state, nav, "Ввод отменён. Сохранённые ответы не удалены.")
 	}
+	state.Screen = "home"
 	text, markup := h.homeScreen(ctx, student.ID, state, student.DisplayName)
 	return h.render(ctx, state, "Ожидающий ввод отменён.\n\n"+text, markup)
 }
@@ -474,6 +475,8 @@ func (h *Handler) openLesson(ctx context.Context, studentID int64, state domain.
 	}
 	state.CourseID = int64Pointer(courseID)
 	state.LessonID = int64Pointer(lessonID)
+	state.QuestionID = nil
+	state.SelectedOptionIDs = []int64{}
 	state.AwaitingText = false
 	if len(detail.Questions) == 0 {
 		state.Screen = "lessons"
@@ -526,6 +529,10 @@ func (h *Handler) continueLearning(ctx context.Context, studentID int64, state d
 	if err != nil {
 		return h.showOperationError(ctx, state, "восстановить текущий вопрос", err)
 	}
+	if nav.Question.AnswerType == "text" && nav.SavedAnswer == nil {
+		state.QuestionID = nil
+		state.AwaitingText = false
+	}
 	return h.showNavigation(ctx, studentID, state, nav, "")
 }
 
@@ -537,10 +544,10 @@ func (h *Handler) showNavigation(ctx context.Context, studentID int64, state dom
 	state.LessonID = int64Pointer(nav.Progress.Enrollment.LessonID)
 	state.EnrollmentID = int64Pointer(nav.Progress.Enrollment.ID)
 	state.QuestionID = int64Pointer(question.ID)
-	if question.AnswerType != "text" || nav.SavedAnswer != nil {
+	if question.AnswerType != "text" {
 		state.AwaitingText = false
 	} else if !sameQuestion {
-		state.AwaitingText = true
+		state.AwaitingText = nav.SavedAnswer == nil
 	}
 	if sameQuestion && state.SelectedOptionIDs != nil {
 		state.SelectedOptionIDs = orderedOptions(question, state.SelectedOptionIDs)
@@ -553,10 +560,14 @@ func (h *Handler) showNavigation(ctx context.Context, studentID int64, state dom
 	var text strings.Builder
 	fmt.Fprintf(&text, "Вопрос %d из %d\n\n%s", question.QuestionNumber, nav.Progress.TotalQuestions, question.Prompt)
 	if question.AnswerType == "text" {
-		if nav.SavedAnswer != nil {
+		if nav.SavedAnswer != nil && state.AwaitingText {
+			text.WriteString("\n\nПредыдущий ответ сохранён. Напишите новый ответ отдельным сообщением.")
+		} else if nav.SavedAnswer != nil {
 			text.WriteString("\n\nВаш ответ сохранён. Можно оставить его или изменить.")
-		} else {
+		} else if state.AwaitingText {
 			text.WriteString("\n\nНапишите ответ отдельным сообщением.")
+		} else {
+			text.WriteString("\n\nНажмите «Ответить текстом», чтобы начать ввод.")
 		}
 	} else if nav.SavedAnswer != nil {
 		text.WriteString("\n\nВаш выбор сохранён. Автоматическая проверка пока не выполнена.")
