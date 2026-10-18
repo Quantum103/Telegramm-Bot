@@ -120,13 +120,13 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	`, versionID); err != nil {
 		t.Fatalf("опубликовать тестовую версию урока: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO lesson_enrollments (student_id, lesson_id, lesson_version_id, mode)
-		VALUES ($1, $2, $3, 'ai')
-		RETURNING id
-	`, student.ID, lessonID, versionID).Scan(&enrollmentID); err != nil {
+	enrollment, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
+		StudentID: student.ID, LessonID: lessonID, LessonVersionID: versionID, Mode: "ai",
+	})
+	if err != nil {
 		t.Fatalf("создать прохождение: %v", err)
 	}
+	enrollmentID = enrollment.ID
 
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -176,6 +176,15 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 	if saved.AnswerText != "Первый сохранённый ответ" {
 		t.Fatalf("повтор запроса изменил сохранённый ответ: %q", saved.AnswerText)
+	}
+
+	progress, err := NewEnrollmentRepository(pool).GetByStudentAndVersion(ctx, student.ID, versionID, "ai")
+	if err != nil {
+		t.Fatalf("получить сохранённый прогресс: %v", err)
+	}
+	if progress.ID != enrollmentID || progress.Status != "in_progress" ||
+		progress.CurrentQuestionID == nil || *progress.CurrentQuestionID != questionID {
+		t.Fatalf("прогресс прохождения не сохранён: %+v", progress)
 	}
 
 	explanation := "Смысл ответа верен."
