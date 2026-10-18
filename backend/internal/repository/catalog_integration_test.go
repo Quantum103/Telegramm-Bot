@@ -165,7 +165,7 @@ func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
 	firstSubmission := AnswerSubmission{
 		StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: firstQuestionID,
 		SelectedOptionIDs: []int64{optionOneID},
-		IdempotencyKey: "d7541e96-2f4c-407e-a8ef-241db4850001",
+		IdempotencyKey:    "d7541e96-2f4c-407e-a8ef-241db4850001",
 	}
 	saved, err := answers.Submit(ctx, firstSubmission)
 	if err != nil {
