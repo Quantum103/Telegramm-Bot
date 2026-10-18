@@ -28,180 +28,18 @@ type EvaluationParams = domain.EvaluationParams
 type AttemptFailureParams = domain.AttemptFailureParams
 type AnswerAttempt = domain.AnswerAttempt
 
-// SaveTextAnswer записывает текущий ответ и новую попытку одной транзакцией.
-// Блокировка прохождения сериализует повторные запросы с одним idempotency key.
+// SaveTextAnswer сохраняет свободный текст через общий путь отправки ответа.
 func (r *AnswerRepository) SaveTextAnswer(ctx context.Context, params SaveTextAnswerParams) (SavedAnswer, error) {
-	if params.StudentID <= 0 || params.EnrollmentID <= 0 || params.QuestionID <= 0 ||
-		strings.TrimSpace(params.AnswerText) == "" {
-		return SavedAnswer{}, ErrInvalidInput
-	}
-	if params.IdempotencyKey != "" && !isCanonicalUUID(params.IdempotencyKey) {
-		return SavedAnswer{}, fmt.Errorf("%w: idempotency key должен быть UUID", ErrInvalidInput)
-	}
-
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return SavedAnswer{}, mapDatabaseError("начать транзакцию сохранения ответа", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var lessonVersionID int64
-	var enrollmentStatus string
-	err = tx.QueryRow(ctx, `
-		SELECT lesson_version_id, status
-		FROM lesson_enrollments
-		WHERE id = $1 AND student_id = $2
-		FOR UPDATE
-	`, params.EnrollmentID, params.StudentID).Scan(&lessonVersionID, &enrollmentStatus)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return SavedAnswer{}, ErrNotFound
-		}
-		return SavedAnswer{}, mapDatabaseError("проверить прохождение ученика", err)
-	}
-	if enrollmentStatus == "cancelled" {
-		return SavedAnswer{}, ErrInvalidState
-	}
-
-	var questionExists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM lesson_questions
-			WHERE id = $1 AND lesson_version_id = $2
-		)
-	`, params.QuestionID, lessonVersionID).Scan(&questionExists); err != nil {
-		return SavedAnswer{}, mapDatabaseError("проверить вопрос прохождения", err)
-	}
-	if !questionExists {
-		return SavedAnswer{}, ErrNotFound
-	}
-
-	if params.IdempotencyKey != "" {
-		var replay SavedAnswer
-		var previousQuestionID int64
-		err := tx.QueryRow(ctx, `
-			SELECT aa.id, aa.answer_id, aa.question_id, aa.submitted_answer_text,
-			       aa.processing_status, sa.updated_at
-			FROM answer_attempts aa
-			JOIN student_answers sa ON sa.id = aa.answer_id
-			WHERE aa.enrollment_id = $1 AND aa.idempotency_key = $2::uuid
-		`, params.EnrollmentID, params.IdempotencyKey).Scan(
-			&replay.AttemptID, &replay.AnswerID, &previousQuestionID, &replay.AnswerText,
-			&replay.ProcessingStatus, &replay.UpdatedAt,
-		)
-		switch {
-		case err == nil:
-			if previousQuestionID != params.QuestionID {
-				return SavedAnswer{}, ErrConflict
-			}
-			if err := tx.Commit(ctx); err != nil {
-				return SavedAnswer{}, mapDatabaseError("завершить транзакцию повторного запроса", err)
-			}
-			replay.Replayed = true
-			return replay, nil
-		case err != pgx.ErrNoRows:
-			return SavedAnswer{}, mapDatabaseError("проверить ключ идемпотентности", err)
-		}
-	}
-
-	var answerID int64
-	var answerUpdatedAt time.Time
-	err = tx.QueryRow(ctx, `
-		INSERT INTO student_answers (
-			enrollment_id, lesson_version_id, question_id, answer_text
-		)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (enrollment_id, question_id)
-		DO UPDATE SET answer_text = EXCLUDED.answer_text, updated_at = now()
-		RETURNING id, updated_at
-	`, params.EnrollmentID, lessonVersionID, params.QuestionID, params.AnswerText).Scan(&answerID, &answerUpdatedAt)
-	if err != nil {
-		return SavedAnswer{}, mapDatabaseError("сохранить текущий ответ", err)
-	}
-
-	// При смене типа ответа со вариантов на текст старые выборы не должны оставаться.
-	if _, err := tx.Exec(ctx, `DELETE FROM student_answer_options WHERE answer_id = $1`, answerID); err != nil {
-		return SavedAnswer{}, mapDatabaseError("обновить выбранные варианты ответа", err)
-	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE lesson_enrollments
-		SET current_question_id = $2,
-		    status = CASE WHEN status IN ('not_started', 'paused') THEN 'in_progress' ELSE status END,
-		    started_at = COALESCE(started_at, now()),
-		    last_activity_at = now(),
-		    updated_at = now()
-		WHERE id = $1
-	`, params.EnrollmentID, params.QuestionID); err != nil {
-		return SavedAnswer{}, mapDatabaseError("обновить прогресс прохождения", err)
-	}
-
-	var idempotencyKey any
-	if params.IdempotencyKey != "" {
-		idempotencyKey = params.IdempotencyKey
-	}
-	var attemptID int64
-	err = tx.QueryRow(ctx, `
-		INSERT INTO answer_attempts (
-			answer_id, enrollment_id, lesson_version_id, question_id,
-			idempotency_key, submitted_answer_text, processing_status
-		)
-		VALUES ($1, $2, $3, $4, $5::uuid, $6, 'pending')
-		RETURNING id
-	`, answerID, params.EnrollmentID, lessonVersionID, params.QuestionID,
-		idempotencyKey, params.AnswerText).Scan(&attemptID)
-	if err != nil {
-		return SavedAnswer{}, mapDatabaseError("создать историю попыток ответа", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return SavedAnswer{}, mapDatabaseError("зафиксировать ответ и прогресс", err)
-	}
-	return SavedAnswer{
-		AnswerID: answerID, AttemptID: attemptID, AnswerText: params.AnswerText,
-		ProcessingStatus: "pending", UpdatedAt: answerUpdatedAt,
-	}, nil
+	return r.Submit(ctx, AnswerSubmission{
+		StudentID: params.StudentID, EnrollmentID: params.EnrollmentID,
+		QuestionID: params.QuestionID, AnswerText: params.AnswerText,
+		IdempotencyKey: params.IdempotencyKey,
+	})
 }
 
+// GetSavedTextAnswer сохраняет совместимость с ранними вызовами репозитория.
 func (r *AnswerRepository) GetSavedTextAnswer(ctx context.Context, studentID, enrollmentID, questionID int64) (SavedAnswer, error) {
-	if studentID <= 0 || enrollmentID <= 0 || questionID <= 0 {
-		return SavedAnswer{}, ErrInvalidInput
-	}
-
-	var answer SavedAnswer
-	var latestAttemptID pgtype.Int8
-	var latestStatus pgtype.Text
-	err := r.pool.QueryRow(ctx, `
-		SELECT sa.id, sa.answer_text, sa.updated_at,
-		       latest_attempt.id, latest_attempt.processing_status
-		FROM student_answers sa
-		JOIN lesson_enrollments le
-		  ON le.id = sa.enrollment_id AND le.lesson_version_id = sa.lesson_version_id
-		LEFT JOIN LATERAL (
-			SELECT id, processing_status
-			FROM answer_attempts
-			WHERE answer_id = sa.id
-			ORDER BY created_at DESC, id DESC
-			LIMIT 1
-		) latest_attempt ON TRUE
-		WHERE le.student_id = $1 AND le.id = $2 AND sa.question_id = $3
-	`, studentID, enrollmentID, questionID).Scan(
-		&answer.AnswerID, &answer.AnswerText, &answer.UpdatedAt,
-		&latestAttemptID, &latestStatus,
-	)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return SavedAnswer{}, ErrNotFound
-		}
-		return SavedAnswer{}, mapDatabaseError("получить сохранённый ответ", err)
-	}
-	if latestAttemptID.Valid {
-		answer.AttemptID = latestAttemptID.Int64
-	}
-	if latestStatus.Valid {
-		answer.ProcessingStatus = latestStatus.String
-	}
-	return answer, nil
+	return r.GetSavedAnswer(ctx, studentID, enrollmentID, questionID)
 }
 
 func (r *AnswerRepository) MarkAttemptRunning(ctx context.Context, attemptID int64) error {
