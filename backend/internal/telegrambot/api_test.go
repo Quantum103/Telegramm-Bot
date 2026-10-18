@@ -53,7 +53,7 @@ func TestAPIClientErrorDoesNotExposeToken(t *testing.T) {
 		t.Fatalf("token leaked in error: %v", err)
 	}
 	var apiErr *APIError
-	if !errorsAs(err, &apiErr) || apiErr.Code != http.StatusUnauthorized {
+	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusUnauthorized {
 		t.Fatalf("unexpected error: %#v", err)
 	}
 }
@@ -103,7 +103,3 @@ func (*testAPI) EditMessageText(context.Context, int64, int64, string, *InlineKe
 func (*testAPI) AnswerCallbackQuery(context.Context, string, string) error { return nil }
 func (*testAPI) DeleteMessage(context.Context, int64, int64) error { return nil }
 
-// errorsAs оставляет тестовый файл независимым от внутренней реализации API клиента.
-func errorsAs(err error, target any) bool {
-	return errors.As(err, target)
-}
