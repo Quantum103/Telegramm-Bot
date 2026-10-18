@@ -50,7 +50,7 @@ type Student struct {
 	AccountStatus    string     `json:"account_status"`
 	RegisteredAt     time.Time  `json:"registered_at"`
 	LastActiveAt     *time.Time `json:"last_active_at,omitempty"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type CreateStudentParams struct {
@@ -202,9 +202,9 @@ type AttemptFailureParams struct {
 
 type AnswerAttempt struct {
 	ID               int64      `json:"id"`
-	AnswerID          int64      `json:"answer_id"`
+	AnswerID         int64      `json:"answer_id"`
 	SubmittedAnswer  string     `json:"submitted_answer"`
-	ProcessingStatus  string     `json:"processing_status"`
+	ProcessingStatus string     `json:"processing_status"`
 	EvaluationResult *string    `json:"evaluation_result,omitempty"`
 	Explanation      *string    `json:"explanation,omitempty"`
 	MissingPoints    []string   `json:"missing_points"`
