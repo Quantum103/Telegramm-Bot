@@ -27,21 +27,32 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 		if err != nil {
 			t.Fatalf("прочитать %s: %v", upPath, err)
 		}
-		for _, required := range []string{
-			"CREATE TABLE students",
-			"CREATE TABLE lesson_versions",
-			"CREATE TABLE lesson_questions",
-			"CREATE TABLE lesson_enrollments",
-			"CREATE TABLE student_answers",
-			"CREATE TABLE answer_attempts",
-			"CREATE TABLE conversations",
-			"CREATE TABLE ai_operations",
-			"CREATE TABLE audit_events",
-			"FOREIGN KEY",
-			"UNIQUE",
-		} {
-			if !strings.Contains(string(content), required) {
-				t.Errorf("%s не содержит обязательный элемент %q", filepath.Base(upPath), required)
+		required := []string{}
+		switch {
+		case strings.HasPrefix(filepath.Base(upPath), "000001_"):
+			required = []string{
+				"CREATE TABLE students",
+				"CREATE TABLE lesson_versions",
+				"CREATE TABLE lesson_questions",
+				"CREATE TABLE lesson_enrollments",
+				"CREATE TABLE student_answers",
+				"CREATE TABLE answer_attempts",
+				"CREATE TABLE conversations",
+				"CREATE TABLE ai_operations",
+				"CREATE TABLE audit_events",
+				"FOREIGN KEY",
+				"UNIQUE",
+			}
+		case strings.HasPrefix(filepath.Base(upPath), "000002_"):
+			required = []string{
+				"ALTER TABLE answer_attempts",
+				"evaluation_result",
+				"uncertain",
+			}
+		}
+		for _, item := range required {
+			if !strings.Contains(string(content), item) {
+				t.Errorf("%s не содержит обязательный элемент %q", filepath.Base(upPath), item)
 			}
 		}
 	}
