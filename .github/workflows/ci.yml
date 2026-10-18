@@ -11,6 +11,7 @@ on:
     branches:
       - main
       - "stage-3/**"
+      - "stage-4.1/**"
   workflow_dispatch:
 
 permissions:
