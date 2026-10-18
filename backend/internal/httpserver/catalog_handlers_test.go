@@ -11,11 +11,11 @@ import (
 )
 
 type fakeCatalogAPI struct {
-	courses  []domain.Course
-	course   domain.Course
-	lessons  []domain.Lesson
-	detail   domain.LessonDetail
-	err      error
+	courses []domain.Course
+	course  domain.Course
+	lessons []domain.Lesson
+	detail  domain.LessonDetail
+	err     error
 }
 
 func (f fakeCatalogAPI) ListCourses(context.Context) ([]domain.Course, error) {
@@ -41,11 +41,11 @@ func TestLessonEndpointDoesNotExposeInternalGradingData(t *testing.T) {
 		Questions: []domain.LessonQuestion{{
 			ID: 21, LessonVersionID: 12, QuestionNumber: 1,
 			Prompt: "Почему важно изучать Писание?", AnswerType: "single_choice",
-			ExpectedAnswer: "expected-answer-secret",
+			ExpectedAnswer:      "expected-answer-secret",
 			ExpectedExplanation: stringPointer("explanation-secret"),
-			Criteria: []domain.QuestionCriterion{{Key: "secret", Description: "criterion-secret"}},
-			CommonMistakes: []domain.CommonMistake{{Text: "mistake-secret", Explanation: "mistake-explanation-secret"}},
-			BiblePassages: []domain.BiblePassage{{ID: 5, BookName: "Иоанна", Chapter: 3, StartVerse: 16, EndVerse: 16, SourceNote: stringPointer("source-note-secret")}},
+			Criteria:            []domain.QuestionCriterion{{Key: "secret", Description: "criterion-secret"}},
+			CommonMistakes:      []domain.CommonMistake{{Text: "mistake-secret", Explanation: "mistake-explanation-secret"}},
+			BiblePassages:       []domain.BiblePassage{{ID: 5, BookName: "Иоанна", Chapter: 3, StartVerse: 16, EndVerse: 16, SourceNote: stringPointer("source-note-secret")}},
 			Options: []domain.QuestionOption{
 				{ID: 30, Key: "A", Text: "Первый вариант", IsCorrect: true},
 				{ID: 31, Key: "B", Text: "Второй вариант"},
@@ -125,4 +125,3 @@ func TestCourseListReturnsEmptyArrayRatherThanNull(t *testing.T) {
 }
 
 func stringPointer(value string) *string { return &value }
-
