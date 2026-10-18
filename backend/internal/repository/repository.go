@@ -9,12 +9,12 @@ import (
 )
 
 var (
-	ErrNotFound             = domain.ErrNotFound
-	ErrConflict             = domain.ErrConflict
-	ErrInvalidInput         = domain.ErrInvalidInput
-	ErrInvalidState         = domain.ErrInvalidState
-	ErrNoPreviousQuestion   = domain.ErrNoPreviousQuestion
-	ErrNoNextQuestion       = domain.ErrNoNextQuestion
+	ErrNotFound           = domain.ErrNotFound
+	ErrConflict           = domain.ErrConflict
+	ErrInvalidInput       = domain.ErrInvalidInput
+	ErrInvalidState       = domain.ErrInvalidState
+	ErrNoPreviousQuestion = domain.ErrNoPreviousQuestion
+	ErrNoNextQuestion     = domain.ErrNoNextQuestion
 )
 
 func mapDatabaseError(operation string, err error) error {
