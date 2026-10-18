@@ -72,11 +72,11 @@ func (f *fakeAPI) SendMessage(_ context.Context, chatID int64, text string) erro
 }
 
 type fakeStudents struct {
-	mu      sync.Mutex
-	calls   int
-	byID    map[int64]domain.Student
-	params  []domain.EnsureStudentParams
-	err     error
+	mu     sync.Mutex
+	calls  int
+	byID   map[int64]domain.Student
+	params []domain.EnsureStudentParams
+	err    error
 }
 
 func (f *fakeStudents) EnsureByTelegramID(_ context.Context, params domain.EnsureStudentParams) (domain.Student, error) {
@@ -96,9 +96,9 @@ func (f *fakeStudents) EnsureByTelegramID(_ context.Context, params domain.Ensur
 		return student, nil
 	}
 	student := domain.Student{
-		ID:          int64(len(f.byID) + 1),
-		TelegramID:  params.TelegramID,
-		DisplayName: params.DisplayName,
+		ID:            int64(len(f.byID) + 1),
+		TelegramID:    params.TelegramID,
+		DisplayName:   params.DisplayName,
 		AccountStatus: "active",
 	}
 	f.byID[params.TelegramID] = student
