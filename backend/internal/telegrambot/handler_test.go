@@ -113,7 +113,10 @@ func TestMultipleChoicePersistsSelectionsAndDoesNotDuplicateReplay(t *testing.T)
 	q := choiceQuestion(1, "multiple_choice", 101, 102)
 	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{q})
 	startLesson(t, h, api)
-	for _, item := range []struct{ updateID int64; data string }{
+	for _, item := range []struct {
+		updateID int64
+		data     string
+	}{
 		{4, "toggle:1:101"}, {5, "toggle:1:102"}, {6, "submit:1"},
 	} {
 		if err := h.HandleUpdate(context.Background(), callbackUpdate(item.updateID, 900, api.lastMessageID, item.data)); err != nil {
@@ -260,8 +263,8 @@ func newHarness(questions []domain.LessonQuestion) (*Handler, *fakeBotAPI, *fake
 	api := &fakeBotAPI{}
 	students := &fakeStudentService{byTelegramID: make(map[int64]domain.Student)}
 	catalog := &fakeCatalogService{
-		course: domain.Course{ID: 10, Slug: "test-course", Title: "Test course", Status: "published", LessonCount: 1},
-		lesson: domain.Lesson{ID: 20, CourseID: 10, CourseTitle: "Test course", LessonVersionID: 30, Title: "Test lesson", QuestionCount: len(questions)},
+		course:    domain.Course{ID: 10, Slug: "test-course", Title: "Test course", Status: "published", LessonCount: 1},
+		lesson:    domain.Lesson{ID: 20, CourseID: 10, CourseTitle: "Test course", LessonVersionID: 30, Title: "Test lesson", QuestionCount: len(questions)},
 		questions: questions,
 	}
 	learning := &fakeLearningService{questions: questions, saved: make(map[int64]domain.SavedAnswer), keys: make(map[string]domain.SavedAnswer)}
@@ -274,12 +277,14 @@ func slogOrNil() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, 
 
 type fakeBotAPI struct {
 	sends, edits, callbackAnswers, deleteCalls int
-	lastMessageID int64
-	lastText string
-	deleteErr error
+	lastMessageID                              int64
+	lastText                                   string
+	deleteErr                                  error
 }
 
-func (a *fakeBotAPI) GetMe(context.Context) (User, error) { return User{ID: 1, Username: "test_bot"}, nil }
+func (a *fakeBotAPI) GetMe(context.Context) (User, error) {
+	return User{ID: 1, Username: "test_bot"}, nil
+}
 func (a *fakeBotAPI) GetUpdates(context.Context, int64, int) ([]Update, error) { return nil, nil }
 func (a *fakeBotAPI) SendMessage(_ context.Context, _ int64, text string, _ *InlineKeyboardMarkup) (Message, error) {
 	a.sends++
@@ -303,7 +308,7 @@ func (a *fakeBotAPI) DeleteMessage(context.Context, int64, int64) error {
 
 type fakeStudentService struct {
 	byTelegramID map[int64]domain.Student
-	ensureCalls int
+	ensureCalls  int
 }
 func (s *fakeStudentService) EnsureByTelegramID(_ context.Context, params domain.EnsureStudentParams) (domain.Student, error) {
 	s.ensureCalls++
@@ -318,103 +323,154 @@ func (s *fakeStudentService) EnsureByTelegramID(_ context.Context, params domain
 }
 func (s *fakeStudentService) GetByTelegramID(_ context.Context, telegramID int64) (domain.Student, error) {
 	student, ok := s.byTelegramID[telegramID]
-	if !ok { return domain.Student{}, domain.ErrNotFound }
+	if !ok {
+		return domain.Student{}, domain.ErrNotFound
+	}
 	return student, nil
 }
 
 type fakeCatalogService struct {
-	course domain.Course
-	lesson domain.Lesson
+	course    domain.Course
+	lesson    domain.Lesson
 	questions []domain.LessonQuestion
 }
-func (c *fakeCatalogService) ListCourses(context.Context) ([]domain.Course, error) { return []domain.Course{c.course}, nil }
+
+func (c *fakeCatalogService) ListCourses(context.Context) ([]domain.Course, error) {
+	return []domain.Course{c.course}, nil
+}
 func (c *fakeCatalogService) GetCourse(_ context.Context, id int64) (domain.Course, error) {
-	if id != c.course.ID { return domain.Course{}, domain.ErrNotFound }
+	if id != c.course.ID {
+		return domain.Course{}, domain.ErrNotFound
+	}
 	return c.course, nil
 }
 func (c *fakeCatalogService) ListCourseLessons(_ context.Context, id int64) ([]domain.Lesson, error) {
-	if id != c.course.ID { return nil, domain.ErrNotFound }
+	if id != c.course.ID {
+		return nil, domain.ErrNotFound
+	}
 	return []domain.Lesson{c.lesson}, nil
 }
 func (c *fakeCatalogService) GetLessonDetailInCourse(_ context.Context, courseID, lessonID int64) (domain.LessonDetail, error) {
-	if courseID != c.course.ID || lessonID != c.lesson.ID { return domain.LessonDetail{}, domain.ErrNotFound }
+	if courseID != c.course.ID || lessonID != c.lesson.ID {
+		return domain.LessonDetail{}, domain.ErrNotFound
+	}
 	return domain.LessonDetail{Lesson: c.lesson, Questions: c.questions}, nil
 }
 
 type fakeLearningService struct {
 	questions []domain.LessonQuestion
-	saved map[int64]domain.SavedAnswer
-	keys map[string]domain.SavedAnswer
+	saved     map[int64]domain.SavedAnswer
+	keys      map[string]domain.SavedAnswer
 	currentID int64
-	attempts int
+	attempts  int
 	submitErr error
 	completed bool
 }
 func (l *fakeLearningService) StartLesson(ctx context.Context, studentID, lessonID int64, mode string) (domain.Progress, error) {
-	if studentID != 42 || lessonID != 20 { return domain.Progress{}, domain.ErrNotFound }
-	if l.currentID == 0 && len(l.questions)>0 { l.currentID = l.questions[0].ID }
+	if studentID != 42 || lessonID != 20 {
+		return domain.Progress{}, domain.ErrNotFound
+	}
+	if l.currentID == 0 && len(l.questions) > 0 {
+		l.currentID = l.questions[0].ID
+	}
 	return l.progress(studentID), nil
 }
 func (l *fakeLearningService) GetProgress(_ context.Context, studentID, enrollmentID int64) (domain.Progress, error) {
-	if studentID != 42 || enrollmentID != 50 { return domain.Progress{}, domain.ErrNotFound }
+	if studentID != 42 || enrollmentID != 50 {
+		return domain.Progress{}, domain.ErrNotFound
+	}
 	return l.progress(studentID), nil
 }
 func (l *fakeLearningService) FirstQuestion(ctx context.Context, studentID, enrollmentID int64) (service.NavigationState, error) {
-	if len(l.questions)==0 { return service.NavigationState{}, domain.ErrInvalidState }
+	if len(l.questions) == 0 {
+		return service.NavigationState{}, domain.ErrInvalidState
+	}
 	return l.OpenQuestion(ctx, studentID, enrollmentID, l.questions[0].ID)
 }
 func (l *fakeLearningService) OpenQuestion(_ context.Context, studentID, enrollmentID, questionID int64) (service.NavigationState, error) {
-	if studentID != 42 || enrollmentID != 50 { return service.NavigationState{}, domain.ErrNotFound }
+	if studentID != 42 || enrollmentID != 50 {
+		return service.NavigationState{}, domain.ErrNotFound
+	}
 	var question *domain.LessonQuestion
-	for i := range l.questions { if l.questions[i].ID == questionID { question = &l.questions[i]; break } }
-	if question == nil { return service.NavigationState{}, domain.ErrNotFound }
+	for i := range l.questions {
+		if l.questions[i].ID == questionID {
+			question = &l.questions[i]
+			break
+		}
+	}
+	if question == nil {
+		return service.NavigationState{}, domain.ErrNotFound
+	}
 	l.currentID = questionID
 	progress := l.progress(studentID)
 	nav := service.NavigationState{Question: *question, Progress: progress}
-	if answer, ok := l.saved[questionID]; ok { copyAnswer:=answer; nav.SavedAnswer=&copyAnswer }
+	if answer, ok := l.saved[questionID]; ok {
+		copyAnswer := answer
+		nav.SavedAnswer = &copyAnswer
+	}
 	return nav, nil
 }
 func (l *fakeLearningService) NextQuestion(ctx context.Context, studentID, enrollmentID int64) (service.NavigationState, error) {
 	p, _ := l.GetProgress(ctx, studentID, enrollmentID)
-	if p.NextQuestionID == nil { return service.NavigationState{}, domain.ErrNoNextQuestion }
+	if p.NextQuestionID == nil {
+		return service.NavigationState{}, domain.ErrNoNextQuestion
+	}
 	return l.OpenQuestion(ctx, studentID, enrollmentID, *p.NextQuestionID)
 }
 func (l *fakeLearningService) PreviousQuestion(ctx context.Context, studentID, enrollmentID int64) (service.NavigationState, error) {
 	p, _ := l.GetProgress(ctx, studentID, enrollmentID)
-	if p.PreviousQuestionID == nil { return service.NavigationState{}, domain.ErrNoPreviousQuestion }
+	if p.PreviousQuestionID == nil {
+		return service.NavigationState{}, domain.ErrNoPreviousQuestion
+	}
 	return l.OpenQuestion(ctx, studentID, enrollmentID, *p.PreviousQuestionID)
 }
 func (l *fakeLearningService) SubmitAnswer(_ context.Context, params domain.AnswerSubmission) (service.SubmissionResult, error) {
-	if l.submitErr != nil { return service.SubmissionResult{}, l.submitErr }
+	if l.submitErr != nil {
+		return service.SubmissionResult{}, l.submitErr
+	}
 	if result, ok := l.keys[params.IdempotencyKey]; ok {
-		result.Replayed=true
+		result.Replayed = true
 		return service.SubmissionResult{Answer: result, Progress: l.progress(params.StudentID)}, nil
 	}
 	l.attempts++
 	result := domain.SavedAnswer{AnswerID: 70, AttemptID: int64(l.attempts), AnswerText: params.AnswerText, SelectedOptionIDs: append([]int64{}, params.SelectedOptionIDs...), ProcessingStatus: "pending", UpdatedAt: time.Now()}
-	l.keys[params.IdempotencyKey]=result
-	l.saved[params.QuestionID]=result
-	return service.SubmissionResult{Answer:result, Progress:l.progress(params.StudentID)}, nil
+	l.keys[params.IdempotencyKey] = result
+	l.saved[params.QuestionID] = result
+	return service.SubmissionResult{Answer: result, Progress: l.progress(params.StudentID)}, nil
 }
 func (l *fakeLearningService) CompleteLesson(_ context.Context, studentID, enrollmentID int64) (domain.Enrollment, error) {
-	if studentID != 42 || enrollmentID != 50 || len(l.saved) != len(l.questions) || len(l.questions)==0 {
+	if studentID != 42 || enrollmentID != 50 || len(l.saved) != len(l.questions) || len(l.questions) == 0 {
 		return domain.Enrollment{}, domain.ErrInvalidState
 	}
-	l.completed=true
-	p:=l.progress(studentID)
-	return p.Enrollment,nil
+	l.completed = true
+	p := l.progress(studentID)
+	return p.Enrollment, nil
 }
 func (l *fakeLearningService) progress(studentID int64) domain.Progress {
 	var current *int64
-	if l.currentID>0 { current=int64PtrTest(l.currentID) }
-	p:=domain.Progress{Enrollment:domain.Enrollment{ID:50,StudentID:studentID,LessonID:20,LessonVersionID:30,Mode:"ai",CurrentQuestionID:current,Status:"in_progress"},TotalQuestions:len(l.questions),AnsweredQuestions:len(l.saved)}
-	p.RemainingQuestions=p.TotalQuestions-p.AnsweredQuestions
-	if l.completed {p.Enrollment.Status="completed";p.IsComplete=true}
-	for i,q:=range l.questions {
-		if i==0 { v:=q.ID;p.FirstQuestionID=&v }
-		if q.ID==l.currentID {
-			if i>0 {v:=l.questions[i-1].ID;p.PreviousQuestionID=&v}
-			if i+1<len(l.questions) {v:=l.questions[i+1].ID;p.NextQuestionID=&v}
+	if l.currentID > 0 {
+		current = int64PtrTest(l.currentID)
+	}
+	p := domain.Progress{Enrollment: domain.Enrollment{ID: 50, StudentID: studentID, LessonID: 20, LessonVersionID: 30, Mode: "ai", CurrentQuestionID: current, Status: "in_progress"}, TotalQuestions: len(l.questions), AnsweredQuestions: len(l.saved)}
+	p.RemainingQuestions = p.TotalQuestions - p.AnsweredQuestions
+	if l.completed {
+		p.Enrollment.Status = "completed"
+		p.IsComplete = true
+	}
+	for i, q := range l.questions {
+		if i == 0 {
+			v := q.ID
+			p.FirstQuestionID = &v
+		}
+		if q.ID == l.currentID {
+			if i > 0 {
+				v := l.questions[i-1].ID
+				p.PreviousQuestionID = &v
+			}
+			if i+1 < len(l.questions) {
+				v := l.questions[i+1].ID
+				p.NextQuestionID = &v
+			}
 		}
 	}
 	return p
@@ -422,25 +478,37 @@ func (l *fakeLearningService) progress(studentID int64) domain.Progress {
 func int64PtrTest(v int64) *int64 { return &v }
 
 type memoryStateStore struct {
-	states map[int64]domain.TelegramDialogState
+	states    map[int64]domain.TelegramDialogState
 	processed map[int64]bool
-	getErr error
+	getErr    error
 }
 func (s *memoryStateStore) Get(_ context.Context, id int64) (domain.TelegramDialogState, error) {
-	if s.getErr != nil { return domain.TelegramDialogState{}, s.getErr }
-	state, ok:=s.states[id]
-	if !ok { return domain.TelegramDialogState{}, domain.ErrNotFound }
-	state.SelectedOptionIDs=append([]int64{},state.SelectedOptionIDs...)
-	return state,nil
+	if s.getErr != nil {
+		return domain.TelegramDialogState{}, s.getErr
+	}
+	state, ok := s.states[id]
+	if !ok {
+		return domain.TelegramDialogState{}, domain.ErrNotFound
+	}
+	state.SelectedOptionIDs = append([]int64{}, state.SelectedOptionIDs...)
+	return state, nil
 }
 func (s *memoryStateStore) Save(_ context.Context, state domain.TelegramDialogState) error {
-	state.SelectedOptionIDs=append([]int64{},state.SelectedOptionIDs...)
-	s.states[state.StudentID]=state
+	state.SelectedOptionIDs = append([]int64{}, state.SelectedOptionIDs...)
+	s.states[state.StudentID] = state
 	return nil
 }
-func (s *memoryStateStore) BeginUpdate(_ context.Context, id int64) (bool,error) {
-	if s.processed[id] {return false,nil}
-	return true,nil
+
+func (s *memoryStateStore) BeginUpdate(_ context.Context, id int64) (bool, error) {
+	if s.processed[id] {
+		return false, nil
+	}
+	return true, nil
 }
-func (s *memoryStateStore) CompleteUpdate(_ context.Context, id int64) error {s.processed[id]=true;return nil}
-func (s *memoryStateStore) FailUpdate(context.Context, int64) error {return nil}
+
+func (s *memoryStateStore) CompleteUpdate(_ context.Context, id int64) error {
+	s.processed[id] = true
+	return nil
+}
+
+func (s *memoryStateStore) FailUpdate(context.Context, int64) error { return nil }
