@@ -121,17 +121,22 @@ func (r *AnswerRepository) SaveTextAnswer(ctx context.Context, params SaveTextAn
 
 	if params.IdempotencyKey != "" {
 		var replay SavedAnswer
+		var previousQuestionID int64
 		err := tx.QueryRow(ctx, `
-			SELECT aa.id, aa.answer_id, aa.submitted_answer_text, aa.processing_status, sa.updated_at
+			SELECT aa.id, aa.answer_id, aa.question_id, aa.submitted_answer_text,
+			       aa.processing_status, sa.updated_at
 			FROM answer_attempts aa
 			JOIN student_answers sa ON sa.id = aa.answer_id
 			WHERE aa.enrollment_id = $1 AND aa.idempotency_key = $2::uuid
 		`, params.EnrollmentID, params.IdempotencyKey).Scan(
-			&replay.AttemptID, &replay.AnswerID, &replay.AnswerText,
+			&replay.AttemptID, &replay.AnswerID, &previousQuestionID, &replay.AnswerText,
 			&replay.ProcessingStatus, &replay.UpdatedAt,
 		)
 		switch {
 		case err == nil:
+			if previousQuestionID != params.QuestionID {
+				return SavedAnswer{}, ErrConflict
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return SavedAnswer{}, mapDatabaseError("завершить транзакцию повторного запроса", err)
 			}
