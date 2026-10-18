@@ -53,6 +53,17 @@ jobs:
           -database "$TEST_DATABASE_URL"
           up
 
+      - name: Check Go formatting
+        working-directory: backend
+        run: |
+          files="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$files" ]; then
+            echo "Go files need gofmt:"
+            echo "$files"
+            gofmt -d ./cmd ./internal
+            exit 1
+          fi
+
       - name: Run Go tests
         working-directory: backend
         run: go test ./...
