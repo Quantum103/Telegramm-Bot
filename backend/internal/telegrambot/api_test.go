@@ -58,6 +58,24 @@ func TestAPIClientErrorDoesNotExposeToken(t *testing.T) {
 	}
 }
 
+func TestAPIClientPreservesTelegramEditErrorDescription(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: message is not modified"}`))
+	}))
+	defer server.Close()
+
+	client := newAPIClient("test-token", server.URL, &http.Client{Timeout: time.Second})
+	err := client.EditMessageText(context.Background(), 10, 20, "same text", nil)
+	if err == nil {
+		t.Fatal("EditMessageText should expose the Bot API error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !isMessageNotModified(err) {
+		t.Fatalf("message-not-modified error was not preserved: %v", err)
+	}
+}
+
 func TestAPIClientTransportErrorDoesNotExposeToken(t *testing.T) {
 	const secret = "very-secret-bot-token"
 	client := newAPIClient(secret, "https://telegram.test", &http.Client{
