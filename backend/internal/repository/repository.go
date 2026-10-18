@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("запись не найдена")
-	ErrConflict    = errors.New("конфликт уникальности")
+	ErrNotFound     = errors.New("запись не найдена")
+	ErrConflict     = errors.New("конфликт уникальности")
 	ErrInvalidInput = errors.New("некорректные входные данные")
 	ErrInvalidState = errors.New("операция недопустима в текущем состоянии")
 )
