@@ -169,9 +169,6 @@ func (b *Bot) deleteIncomingMessage(ctx context.Context, message Message) {
 }
 
 func telegramUpdateIdempotencyKey(updateID int64) string {
-	if updateID <= 0 {
-		return ""
-	}
 	digest := sha256.Sum256([]byte(fmt.Sprintf("telegram-update:%d", updateID)))
 	value := append([]byte(nil), digest[:16]...)
 	value[6] = (value[6] & 0x0f) | 0x50
@@ -181,6 +178,16 @@ func telegramUpdateIdempotencyKey(updateID int64) string {
 
 func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studentID, messageID int64, parts []string) {
 	action := parts[0]
+	switch action {
+	case "e":
+		action = "pick-edit"
+	case "p":
+		action = "pick"
+	case "t":
+		action = "multi-toggle"
+	case "s":
+		action = "multi-submit"
+	}
 	need := 0
 	switch action {
 	case "pick-edit":
