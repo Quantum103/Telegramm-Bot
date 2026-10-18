@@ -1,7 +1,8 @@
 package repository
 
 import (
-		"fmt"
+	"errors"
+	"fmt"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgconn"
