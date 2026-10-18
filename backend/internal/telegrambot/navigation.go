@@ -292,7 +292,7 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNoPreviousQuestion) || errors.Is(err, domain.ErrNoNextQuestion) {
-			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID)
+			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
 			return
 		}
 		b.logger.Warn("не удалось переместиться между вопросами", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
