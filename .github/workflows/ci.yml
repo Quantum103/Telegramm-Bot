@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "stage-2/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Go tests and PostgreSQL migration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: bible_platform_test
+          POSTGRES_USER: bible_app
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bible_app -d bible_platform_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://bible_app:ci-only-password@127.0.0.1:5432/bible_platform_test?sslmode=disable
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Apply SQL migrations to the test database
+        run: >-
+          docker run --rm --network host
+          -v "$GITHUB_WORKSPACE/backend/db/migrations:/migrations:ro"
+          migrate/migrate:v4.20.1
+          -path=/migrations
+          -database "$TEST_DATABASE_URL"
+          up
+
+      - name: Check Go formatting
+        working-directory: backend
+        run: |
+          files="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$files" ]; then
+            echo "Go files need gofmt:"
+            echo "$files"
+            gofmt -d ./cmd ./internal
+            exit 1
+          fi
+
+      - name: Run Go tests
+        working-directory: backend
+        run: go test ./...
+
+      - name: Run go vet
+        working-directory: backend
+        run: go vet ./...
+
+  frontend:
+    name: Frontend checks and Compose configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Check TypeScript
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Build frontend for production
+        working-directory: frontend
+        run: npm run build
+
+      - name: Create local environment file
+        run: cp .env.example .env
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet
