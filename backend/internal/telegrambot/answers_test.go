@@ -76,9 +76,9 @@ func (f *answerTestLearning) OpenQuestion(ctx context.Context, studentID, enroll
 
 func (f *answerTestLearning) addSavedAnswer(state *service.NavigationState) {
 	key := answerStateKey{
-		studentID: state.Progress.Enrollment.StudentID,
+		studentID:    state.Progress.Enrollment.StudentID,
 		enrollmentID: state.Progress.Enrollment.ID,
-		questionID: state.Question.ID,
+		questionID:   state.Question.ID,
 	}
 	if answer, ok := f.saved[key]; ok {
 		copy := answer
@@ -156,11 +156,11 @@ func (f *answerTestLearning) SubmitAnswer(_ context.Context, params domain.Answe
 	progress.Enrollment.UpdatedAt = time.Now()
 	f.fakeLearning.progress[params.EnrollmentID] = progress
 	answer := domain.SavedAnswer{
-		AnswerID: params.EnrollmentID*100000 + params.QuestionID,
-		AttemptID: int64(len(f.attempts) + 1),
-		AnswerText: strings.TrimSpace(params.AnswerText),
+		AnswerID:          params.EnrollmentID*100000 + params.QuestionID,
+		AttemptID:         int64(len(f.attempts) + 1),
+		AnswerText:        strings.TrimSpace(params.AnswerText),
 		SelectedOptionIDs: append([]int64(nil), params.SelectedOptionIDs...),
-		ProcessingStatus: "pending", UpdatedAt: time.Now(),
+		ProcessingStatus:  "pending", UpdatedAt: time.Now(),
 	}
 	f.attempts = append(f.attempts, params)
 	f.saved[answerKey] = answer
