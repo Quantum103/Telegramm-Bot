@@ -173,6 +173,70 @@ func TestTextAnswerIsStoredEvenWhenTelegramCannotDeleteMessage(t *testing.T) {
 	}
 }
 
+func TestSavedTextAnswerCanBeEdited(t *testing.T) {
+	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{textQuestion(1)})
+	startLesson(t, h, api)
+	if err := h.HandleUpdate(context.Background(), messageUpdate(4, 900, "first answer")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(5, 900, api.lastMessageID, "text:1")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := states.Get(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.AwaitingText {
+		t.Fatal("pressing «Изменить ответ» did not enable text input")
+	}
+	if err := h.HandleUpdate(context.Background(), messageUpdate(6, 900, "edited answer")); err != nil {
+		t.Fatal(err)
+	}
+	if learning.attempts != 2 || learning.saved[1].AnswerText != "edited answer" {
+		t.Fatalf("edited response was not saved as a new attempt: attempts=%d answer=%q", learning.attempts, learning.saved[1].AnswerText)
+	}
+}
+
+func TestDialogStateCanBeRestoredByANewHandler(t *testing.T) {
+	h, api, students, learning, catalog, states := newHarness([]domain.LessonQuestion{textQuestion(1)})
+	startLesson(t, h, api)
+	restored := NewHandler(api, students, catalog, learning, states, slogOrNil())
+	if err := restored.HandleUpdate(context.Background(), messageUpdate(4, 900, "/start")); err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.HandleUpdate(context.Background(), callbackUpdate(5, 900, api.lastMessageID, "continue")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := states.Get(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Screen != "question" || state.QuestionID == nil || *state.QuestionID != 1 {
+		t.Fatalf("new handler did not restore persisted question state: %+v", state)
+	}
+	if !state.AwaitingText {
+		t.Fatal("text input for an unanswered free-text question was not restored")
+	}
+}
+
+func TestFailedAnswerSaveDoesNotConfirmSuccess(t *testing.T) {
+	h, api, _, learning, _, _ := newHarness([]domain.LessonQuestion{textQuestion(1)})
+	startLesson(t, h, api)
+	learning.submitErr = errors.New("private database error")
+	if err := h.HandleUpdate(context.Background(), messageUpdate(4, 900, "answer not persisted")); err != nil {
+		t.Fatal(err)
+	}
+	if learning.attempts != 0 {
+		t.Fatalf("failed save unexpectedly created an attempt: %d", learning.attempts)
+	}
+	if strings.Contains(api.lastText, "Ответ сохранён") || !strings.Contains(api.lastText, "Не удалось сохранить ответ") {
+		t.Fatalf("wrong message after failed save: %q", api.lastText)
+	}
+	if strings.Contains(api.lastText, "private database error") {
+		t.Fatalf("database error leaked to student: %q", api.lastText)
+	}
+}
+
 func TestCancelStopsWaitingForTextWithoutChangingSavedAnswers(t *testing.T) {
 	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{textQuestion(1)})
 	startLesson(t, h, api)
