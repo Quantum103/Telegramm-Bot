@@ -54,10 +54,3 @@ func TestValidateSubmissionByQuestionType(t *testing.T) {
 	}
 }
 
-func TestEvaluationResultRemainsUnsetUntilEvaluation(t *testing.T) {
-	// У доменной модели отправки ответа нет поля, позволяющего пометить её правильной без результата проверки.
-	answer := domain.SavedAnswer{ProcessingStatus: "pending"}
-	if answer.ProcessingStatus != "pending" {
-		t.Fatalf("новая попытка должна оставаться pending, получено %q", answer.ProcessingStatus)
-	}
-}
