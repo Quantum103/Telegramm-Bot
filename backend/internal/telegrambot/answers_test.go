@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func (f *answerTestLearning) SubmitAnswer(_ context.Context, params domain.Answe
 	}
 	idemKey := ""
 	if params.IdempotencyKey != "" {
-		idemKey = strings.Join([]string{strings.TrimSpace(time.Unix(0, 0).UTC().Format(time.RFC3339Nano)), params.IdempotencyKey, itoa(params.EnrollmentID)}, "|")
+		idemKey = strings.Join([]string{strings.TrimSpace(time.Unix(0, 0).UTC().Format(time.RFC3339Nano)), params.IdempotencyKey, strconv.FormatInt(params.EnrollmentID, 10)}, "|")
 		if previous, exists := f.idempotency[idemKey]; exists {
 			previous.Replayed = true
 			return service.SubmissionResult{Answer: previous, Progress: progress}, nil
