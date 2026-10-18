@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
