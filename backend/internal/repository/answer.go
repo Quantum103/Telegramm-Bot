@@ -212,6 +212,8 @@ func (r *AnswerRepository) GetSavedTextAnswer(ctx context.Context, studentID, en
 	}
 
 	var answer SavedAnswer
+	var latestAttemptID pgtype.Int8
+	var latestStatus pgtype.Text
 	err := r.pool.QueryRow(ctx, `
 		SELECT sa.id, sa.answer_text, sa.updated_at,
 		       latest_attempt.id, latest_attempt.processing_status
@@ -228,13 +230,19 @@ func (r *AnswerRepository) GetSavedTextAnswer(ctx context.Context, studentID, en
 		WHERE le.student_id = $1 AND le.id = $2 AND sa.question_id = $3
 	`, studentID, enrollmentID, questionID).Scan(
 		&answer.AnswerID, &answer.AnswerText, &answer.UpdatedAt,
-		&answer.AttemptID, &answer.ProcessingStatus,
+		&latestAttemptID, &latestStatus,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return SavedAnswer{}, ErrNotFound
 		}
 		return SavedAnswer{}, mapDatabaseError("получить сохранённый ответ", err)
+	}
+	if latestAttemptID.Valid {
+		answer.AttemptID = latestAttemptID.Int64
+	}
+	if latestStatus.Valid {
+		answer.ProcessingStatus = latestStatus.String
 	}
 	return answer, nil
 }
