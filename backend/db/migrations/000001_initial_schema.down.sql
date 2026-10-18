@@ -24,3 +24,8 @@ DROP TABLE IF EXISTS staff_role_assignments;
 DROP TABLE IF EXISTS staff_roles;
 DROP TABLE IF EXISTS staff_accounts;
 DROP TABLE IF EXISTS students;
+
+DROP FUNCTION IF EXISTS guard_referenced_bible_passage_mutation();
+DROP FUNCTION IF EXISTS guard_question_content_mutation();
+DROP FUNCTION IF EXISTS guard_lesson_version_mutation();
+DROP FUNCTION IF EXISTS assert_lesson_version_is_draft(BIGINT);
