@@ -527,7 +527,7 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 		!strings.Contains(last.text, "Кто написал Евангелие от Марка?") {
 		t.Fatalf("question screen was not rendered correctly: %q", last.text)
 	}
-	if !hasButton(last.markup, "nav:next:701:1001") {
+	if !hasButton(last.markup, "nav:next:701:1001:10") {
 		t.Fatalf("first question should have a next button: %+v", last.markup)
 	}
 	if hasButtonPrefix(last.markup, "nav:prev:") {
@@ -551,7 +551,7 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 	messageID := api.messages[0].messageID
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
-	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 	last := lastEdit(t, api)
 	if !strings.Contains(last.text, "Вопрос 2 из 2") || !strings.Contains(last.text, "Как начинается повествование?") {
 		t.Fatalf("next question not shown: %q", last.text)
@@ -559,11 +559,11 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 	if hasButtonPrefix(last.markup, "nav:next:") {
 		t.Fatal("last question must not have a next button")
 	}
-	if !hasButton(last.markup, "nav:prev:701:1002") {
+	if !hasButton(last.markup, "nav:prev:701:1002:10") {
 		t.Fatal("last question should have a previous button")
 	}
 
-	bot.handleCallback(context.Background(), testCallback("nav:prev:701:1002", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("nav:prev:701:1002:10", user, messageID))
 	last = lastEdit(t, api)
 	if !strings.Contains(last.text, "Вопрос 1 из 2") {
 		t.Fatalf("previous question not shown: %q", last.text)
@@ -671,10 +671,10 @@ func TestStaleNavigationDoesNotSkipQuestion(t *testing.T) {
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
-	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 
 	// Повторно доставленная старая кнопка не должна переводить ученика с вопроса 2 на другой вопрос.
-	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 	if !strings.Contains(lastEdit(t, api).text, "Вопрос 2 из 2") {
 		t.Fatalf("stale callback changed the saved position: %q", lastEdit(t, api).text)
 	}
@@ -689,7 +689,7 @@ func TestProgressPositionRestoredAfterNewBotInstance(t *testing.T) {
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
-	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 
 	// Новый обработчик получает тот же сервис состояния, как после перезапуска приложения с общей PostgreSQL.
 	restartedBot := newTestBot(api, students, catalog, learning)
