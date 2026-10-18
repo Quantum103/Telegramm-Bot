@@ -92,7 +92,7 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	var courseID, lessonID, versionID, questionID, enrollmentID int64
+	var courseID, lessonID, versionID, questionID, secondQuestionID, enrollmentID int64
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO courses (slug, title, status, published_at)
 		VALUES ($1, 'Тестовый курс', 'published', now())
@@ -119,6 +119,13 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 		RETURNING id
 	`, versionID).Scan(&questionID); err != nil {
 		t.Fatalf("создать вопрос: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO lesson_questions (lesson_version_id, question_number, prompt, expected_answer)
+		VALUES ($1, 2, 'Второй тестовый вопрос?', 'Предполагаемый ответ на второй вопрос.')
+		RETURNING id
+	`, versionID).Scan(&secondQuestionID); err != nil {
+		t.Fatalf("создать второй вопрос: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE lesson_versions SET status = 'published', published_at = now() WHERE id = $1
@@ -224,7 +231,7 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 
 	_, err = answers.SaveTextAnswer(ctx, SaveTextAnswerParams{
-		StudentID: student.ID, EnrollmentID: enrollmentID, QuestionID: questionID,
+		StudentID: student.ID, EnrollmentID: enrollmentID, QuestionID: secondQuestionID,
 		AnswerText: "Этот ответ не должен сохраниться",
 		IdempotencyKey: "902b71df-0e63-4ed4-b1c2-b8bb5b38e004",
 	})
@@ -267,6 +274,32 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 	if !failedFound || !completedFound {
 		t.Fatalf("история не различает результат и ошибку провайдера: %+v", history)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE lesson_versions SET status = 'archived' WHERE id = $1
+	`, versionID); err != nil {
+		t.Fatalf("архивировать версию для теста истории: %v", err)
+	}
+	questions, err := NewContentRepository(pool).ListQuestionsForVersion(ctx, versionID)
+	if err != nil {
+		t.Fatalf("прочитать вопросы архивной версии: %v", err)
+	}
+	if len(questions) != 2 || questions[0].ID != questionID || questions[1].ID != secondQuestionID {
+		t.Fatalf("архивная версия недоступна для восстановления: %+v", questions)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE lesson_questions SET prompt = 'Подменённый вопрос' WHERE id = $1
+	`, questionID); err == nil {
+		t.Fatal("опубликованную/архивную версию удалось изменить")
+	}
+	questions, err = NewContentRepository(pool).ListQuestionsForVersion(ctx, versionID)
+	if err != nil {
+		t.Fatalf("повторно прочитать архивную версию: %v", err)
+	}
+	if questions[0].Prompt != "Тестовый вопрос?" {
+		t.Fatalf("триггер не сохранил содержимое архивного вопроса: %q", questions[0].Prompt)
 	}
 }
 
