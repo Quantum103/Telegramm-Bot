@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 type ConnectionState = 'idle' | 'checking' | 'connected' | 'error'
 
-const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\\/+$/, '')
+const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 
 async function checkBackend(): Promise<void> {
   const response = await fetch(`${apiBaseURL}/health/ready`, {
