@@ -23,6 +23,7 @@ type CatalogAPI interface {
 	GetCourse(context.Context, int64) (domain.Course, error)
 	ListCourseLessons(context.Context, int64) ([]domain.Lesson, error)
 	GetLessonDetail(context.Context, int64) (domain.LessonDetail, error)
+	GetLessonDetailInCourse(context.Context, int64, int64) (domain.LessonDetail, error)
 }
 
 type healthResponse struct {
@@ -51,6 +52,7 @@ func NewHandler(database databasePinger, logger *slog.Logger, catalogs ...Catalo
 		mux.HandleFunc("GET /api/v1/courses", h.listCourses)
 		mux.HandleFunc("GET /api/v1/courses/{courseID}", h.getCourse)
 		mux.HandleFunc("GET /api/v1/courses/{courseID}/lessons", h.listCourseLessons)
+		mux.HandleFunc("GET /api/v1/courses/{courseID}/lessons/{lessonID}", h.getLessonInCourse)
 		mux.HandleFunc("GET /api/v1/lessons/{lessonID}", h.getLesson)
 	}
 	return mux
@@ -192,6 +194,29 @@ func (h handlers) getLesson(w http.ResponseWriter, r *http.Request) {
 	detail, err := h.catalog.GetLessonDetail(r.Context(), lessonID)
 	if err != nil {
 		h.writeAPIError(w, err, "получить урок")
+		return
+	}
+	response := toLessonResponse(detail.Lesson)
+	response.Questions = make([]questionResponse, 0, len(detail.Questions))
+	for _, question := range detail.Questions {
+		response.Questions = append(response.Questions, toQuestionResponse(question))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+
+func (h handlers) getLessonInCourse(w http.ResponseWriter, r *http.Request) {
+	courseID, ok := parsePositiveID(w, r.PathValue("courseID"))
+	if !ok {
+		return
+	}
+	lessonID, ok := parsePositiveID(w, r.PathValue("lessonID"))
+	if !ok {
+		return
+	}
+	detail, err := h.catalog.GetLessonDetailInCourse(r.Context(), courseID, lessonID)
+	if err != nil {
+		h.writeAPIError(w, err, "получить урок в рамках курса")
 		return
 	}
 	response := toLessonResponse(detail.Lesson)
