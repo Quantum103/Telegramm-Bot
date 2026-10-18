@@ -68,8 +68,9 @@ type TelegramAPI interface {
 	DeleteWebhook(context.Context) error
 	GetUpdates(context.Context, int64, int) ([]Update, error)
 	SendMessage(context.Context, int64, string) error
-	SendMessageWithKeyboard(context.Context, int64, string, InlineKeyboardMarkup) (int64, error)
-	EditMessageText(context.Context, int64, int64, string, InlineKeyboardMarkup) error
+	SendMessageWithKeyboard(context.Context, int64, string, *InlineKeyboardMarkup) (int64, error)
+	EditMessageText(context.Context, int64, int64, string, *InlineKeyboardMarkup) error
+	AnswerCallbackQuery(context.Context, string, string) error
 	AnswerCallbackQuery(context.Context, string, string) error
 }
 
@@ -79,6 +80,7 @@ type StudentRegistrar interface {
 
 type CourseCatalog interface {
 	ListCourses(context.Context) ([]domain.Course, error)
+	GetCourse(context.Context, int64) (domain.Course, error)
 	ListCourseLessons(context.Context, int64) ([]domain.Lesson, error)
 	GetLessonDetailInCourse(context.Context, int64, int64) (domain.LessonDetail, error)
 	GetLessonDetail(context.Context, int64) (domain.LessonDetail, error)
@@ -86,6 +88,7 @@ type CourseCatalog interface {
 
 type LearningNavigator interface {
 	StartLesson(context.Context, int64, int64, string) (domain.Progress, error)
+	GetProgress(context.Context, int64, int64) (domain.Progress, error)
 	OpenQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
 	PreviousQuestion(context.Context, int64, int64) (service.NavigationState, error)
 	NextQuestion(context.Context, int64, int64) (service.NavigationState, error)
@@ -143,6 +146,37 @@ func (c *HTTPClient) SendMessage(ctx context.Context, chatID int64, text string)
 		"chat_id": chatID,
 		"text":    text,
 	}, nil)
+}
+
+
+func (c *HTTPClient) SendMessageWithKeyboard(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup) (int64, error) {
+	payload := map[string]any{"chat_id": chatID, "text": text}
+	if replyMarkup != nil {
+		payload["reply_markup"] = replyMarkup
+	}
+	var sent struct {
+		MessageID int64 `json:"message_id"`
+	}
+	if err := c.call(ctx, "sendMessage", payload, &sent); err != nil {
+		return 0, err
+	}
+	return sent.MessageID, nil
+}
+
+func (c *HTTPClient) EditMessageText(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup) error {
+	payload := map[string]any{"chat_id": chatID, "message_id": messageID, "text": text}
+	if replyMarkup != nil {
+		payload["reply_markup"] = replyMarkup
+	}
+	return c.call(ctx, "editMessageText", payload, nil)
+}
+
+func (c *HTTPClient) AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string) error {
+	payload := map[string]any{"callback_query_id": callbackQueryID}
+	if text != "" {
+		payload["text"] = text
+	}
+	return c.call(ctx, "answerCallbackQuery", payload, nil)
 }
 
 func (c *HTTPClient) call(ctx context.Context, method string, payload any, result any) error {
