@@ -109,6 +109,36 @@ func TestStaleCallbackCannotAnswerAnotherQuestion(t *testing.T) {
 	}
 }
 
+func TestMultipleChoicePersistsSelectionsAndDoesNotDuplicateReplay(t *testing.T) {
+	q := choiceQuestion(1, "multiple_choice", 101, 102)
+	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{q})
+	startLesson(t, h, api)
+	for _, item := range []struct{ updateID int64; data string }{
+		{4, "toggle:1:101"}, {5, "toggle:1:102"}, {6, "submit:1"},
+	} {
+		if err := h.HandleUpdate(context.Background(), callbackUpdate(item.updateID, 900, api.lastMessageID, item.data)); err != nil {
+			t.Fatalf("callback %s: %v", item.data, err)
+		}
+	}
+	if learning.attempts != 1 {
+		t.Fatalf("multiple choice attempts = %d, want 1", learning.attempts)
+	}
+	saved := learning.saved[1]
+	if !sameIDs(saved.SelectedOptionIDs, []int64{101, 102}) || saved.ProcessingStatus != "pending" {
+		t.Fatalf("wrong multiple choice answer stored: %+v", saved)
+	}
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(6, 900, api.lastMessageID, "submit:1")); err != nil {
+		t.Fatal(err)
+	}
+	if learning.attempts != 1 {
+		t.Fatalf("replayed confirmation created another attempt: %d", learning.attempts)
+	}
+	state, err := states.Get(context.Background(), 42)
+	if err != nil || !sameIDs(state.SelectedOptionIDs, []int64{101, 102}) {
+		t.Fatalf("selected options were not persisted: state=%+v err=%v", state, err)
+	}
+}
+
 func TestTextAnswerIsStoredEvenWhenTelegramCannotDeleteMessage(t *testing.T) {
 	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{textQuestion(1)})
 	api.deleteErr = errors.New("Telegram deletion not permitted")
