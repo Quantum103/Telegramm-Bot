@@ -309,9 +309,11 @@ func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID,
 	enrollmentID := state.Progress.Enrollment.ID
 	questionID := state.Question.ID
 	result, err := answerService.SubmitAnswer(ctx, domain.AnswerSubmission{
-		StudentID: studentID, EnrollmentID: enrollmentID, QuestionID: questionID,
+		StudentID:         studentID,
+		EnrollmentID:      enrollmentID,
+		QuestionID:        questionID,
 		SelectedOptionIDs: append([]int64(nil), selected...),
-		IdempotencyKey: telegramUpdateIdempotencyKey(updateID),
+		IdempotencyKey:    telegramUpdateIdempotencyKey(updateID),
 	})
 	if err != nil {
 		b.logger.Warn("не удалось сохранить выбор ответа", "student_id", studentID,
