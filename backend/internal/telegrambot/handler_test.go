@@ -82,6 +82,69 @@ func TestCourseAndLessonCallbacksOpenFirstQuestion(t *testing.T) {
 	}
 }
 
+func TestSingleChoiceStoresOnlyTheSelectedOption(t *testing.T) {
+	q := choiceQuestion(1, "single_choice", 101, 102)
+	h, api, _, learning, _, _ := newHarness([]domain.LessonQuestion{q})
+	startLesson(t, h, api)
+	update := callbackUpdate(4, 900, api.lastMessageID, "answer:1:102")
+	if err := h.HandleUpdate(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	saved := learning.saved[1]
+	if learning.attempts != 1 || len(saved.SelectedOptionIDs) != 1 || saved.SelectedOptionIDs[0] != 102 {
+		t.Fatalf("single-choice answer not stored correctly: attempts=%d answer=%+v", learning.attempts, saved)
+	}
+	if saved.ProcessingStatus != "pending" {
+		t.Fatalf("answer should await AI evaluation, got status %q", saved.ProcessingStatus)
+	}
+	if strings.Contains(api.lastText, "правильно") || strings.Contains(api.lastText, "неправильно") {
+		t.Fatalf("bot invented an evaluation result: %q", api.lastText)
+	}
+	if err := h.HandleUpdate(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	if learning.attempts != 1 {
+		t.Fatalf("replay created a second single-choice attempt: %d", learning.attempts)
+	}
+}
+
+func TestBackAndForwardNavigationTracksQuestionPosition(t *testing.T) {
+	h, api, _, _, _, states := newHarness([]domain.LessonQuestion{textQuestion(1), textQuestion(2)})
+	startLesson(t, h, api)
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(4, 900, api.lastMessageID, "next:1")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := states.Get(context.Background(), 42)
+	if err != nil || state.QuestionID == nil || *state.QuestionID != 2 {
+		t.Fatalf("next did not open question 2: state=%+v err=%v", state, err)
+	}
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(5, 900, api.lastMessageID, "prev:2")); err != nil {
+		t.Fatal(err)
+	}
+	state, err = states.Get(context.Background(), 42)
+	if err != nil || state.QuestionID == nil || *state.QuestionID != 1 {
+		t.Fatalf("back did not return to question 1: state=%+v err=%v", state, err)
+	}
+}
+
+func TestLessonMustBelongToSelectedCourse(t *testing.T) {
+	h, api, _, learning, _, states := newHarness([]domain.LessonQuestion{textQuestion(1)})
+	startLesson(t, h, api)
+	if err := h.HandleUpdate(context.Background(), callbackUpdate(4, 900, api.lastMessageID, "lesson:999:20")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := states.Get(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LessonID == nil || *state.LessonID != 20 || learning.attempts != 0 {
+		t.Fatalf("callback opened a lesson from a different course or changed current state: state=%+v attempts=%d", state, learning.attempts)
+	}
+	if !strings.Contains(api.lastText, "Не удалось выполнить действие") {
+		t.Fatalf("user did not receive a safe resource-unavailable message: %q", api.lastText)
+	}
+}
+
 func TestStaleCallbackCannotAnswerAnotherQuestion(t *testing.T) {
 	q1 := choiceQuestion(1, "single_choice", 101, 102)
 	q2 := choiceQuestion(2, "single_choice", 201, 202)
