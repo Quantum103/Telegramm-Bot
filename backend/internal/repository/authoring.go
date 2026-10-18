@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (r *CatalogRepository) CreateDraftCourse(ctx context.Context, params domain.CreateCourseParams) (domain.Course, error) {
@@ -286,14 +287,13 @@ func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID in
 	var baseVersionID int64
 	var baseTitle string
 	var baseDescription pgtype.Text
-	var baseVersionNumber int
 	if err := tx.QueryRow(ctx, `
-		SELECT id, version_number, title, description
+		SELECT id, title, description
 		FROM lesson_versions
 		WHERE lesson_id = $1 AND status IN ('published', 'archived')
 		ORDER BY version_number DESC
 		LIMIT 1
-	`, lessonID).Scan(&baseVersionID, &baseVersionNumber, &baseTitle, &baseDescription); err != nil {
+	`, lessonID).Scan(&baseVersionID, &baseTitle, &baseDescription); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.Lesson{}, ErrInvalidState
 		}
