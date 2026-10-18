@@ -148,6 +148,7 @@ func (r *AnswerRepository) SaveTextAnswer(ctx context.Context, params SaveTextAn
 	}
 
 	var answerID int64
+	var answerUpdatedAt time.Time
 	err = tx.QueryRow(ctx, `
 		INSERT INTO student_answers (
 			enrollment_id, lesson_version_id, question_id, answer_text
@@ -155,8 +156,8 @@ func (r *AnswerRepository) SaveTextAnswer(ctx context.Context, params SaveTextAn
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (enrollment_id, question_id)
 		DO UPDATE SET answer_text = EXCLUDED.answer_text, updated_at = now()
-		RETURNING id
-	`, params.EnrollmentID, lessonVersionID, params.QuestionID, params.AnswerText).Scan(&answerID)
+		RETURNING id, updated_at
+	`, params.EnrollmentID, lessonVersionID, params.QuestionID, params.AnswerText).Scan(&answerID, &answerUpdatedAt)
 	if err != nil {
 		return SavedAnswer{}, mapDatabaseError("сохранить текущий ответ", err)
 	}
@@ -201,7 +202,7 @@ func (r *AnswerRepository) SaveTextAnswer(ctx context.Context, params SaveTextAn
 	}
 	return SavedAnswer{
 		AnswerID: answerID, AttemptID: attemptID, AnswerText: params.AnswerText,
-		ProcessingStatus: "pending",
+		ProcessingStatus: "pending", UpdatedAt: answerUpdatedAt,
 	}, nil
 }
 
@@ -212,12 +213,23 @@ func (r *AnswerRepository) GetSavedTextAnswer(ctx context.Context, studentID, en
 
 	var answer SavedAnswer
 	err := r.pool.QueryRow(ctx, `
-		SELECT sa.id, sa.answer_text, sa.updated_at
+		SELECT sa.id, sa.answer_text, sa.updated_at,
+		       latest_attempt.id, latest_attempt.processing_status
 		FROM student_answers sa
 		JOIN lesson_enrollments le
 		  ON le.id = sa.enrollment_id AND le.lesson_version_id = sa.lesson_version_id
+		LEFT JOIN LATERAL (
+			SELECT id, processing_status
+			FROM answer_attempts
+			WHERE answer_id = sa.id
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		) latest_attempt ON TRUE
 		WHERE le.student_id = $1 AND le.id = $2 AND sa.question_id = $3
-	`, studentID, enrollmentID, questionID).Scan(&answer.AnswerID, &answer.AnswerText, &answer.UpdatedAt)
+	`, studentID, enrollmentID, questionID).Scan(
+		&answer.AnswerID, &answer.AnswerText, &answer.UpdatedAt,
+		&answer.AttemptID, &answer.ProcessingStatus,
+	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return SavedAnswer{}, ErrNotFound
@@ -250,6 +262,9 @@ func (r *AnswerRepository) CompleteEvaluation(ctx context.Context, params Evalua
 		strings.TrimSpace(params.Provider) == "" || strings.TrimSpace(params.Model) == "" ||
 		params.Duration < 0 {
 		return ErrInvalidInput
+	}
+	if params.MissingPoints == nil {
+		params.MissingPoints = []string{}
 	}
 	missingJSON, err := json.Marshal(params.MissingPoints)
 	if err != nil {
