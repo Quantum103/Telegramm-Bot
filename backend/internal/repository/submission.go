@@ -199,7 +199,7 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	return SavedAnswer{
 		AnswerID: answerID, AttemptID: attemptID, AnswerText: answerText,
 		SelectedOptionIDs: append([]int64{}, params.SelectedOptionIDs...),
-		ProcessingStatus: "pending", UpdatedAt: answerUpdatedAt.Time,
+		ProcessingStatus:  "pending", UpdatedAt: answerUpdatedAt.Time,
 	}, nil
 }
 
@@ -264,4 +264,3 @@ func (r *AnswerRepository) GetSavedAnswer(ctx context.Context, studentID, enroll
 	}
 	return answer, nil
 }
-
