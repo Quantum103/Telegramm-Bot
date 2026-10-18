@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
@@ -16,21 +17,22 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 	defer cancel()
 
 	repo := NewCatalogRepository(pool)
-	course, err := repo.CreateDraftCourse(ctx, domain.CreateCourseParams{
+	authoring := service.NewAuthoringService(repo)
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
 		Slug:  fmt.Sprintf("authoring-%d", time.Now().UnixNano()),
 		Title: "Черновой тестовый курс",
 	})
 	if err != nil {
 		t.Fatalf("создать черновой курс: %v", err)
 	}
-	lesson, err := repo.CreateDraftLesson(ctx, domain.CreateLessonParams{
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
 		CourseID: course.ID, Title: "Первый тестовый урок",
 	})
 	if err != nil {
 		t.Fatalf("создать черновой урок: %v", err)
 	}
 	required := true
-	question, err := repo.CreateQuestionWithMaterials(ctx, domain.CreateQuestionParams{
+	question, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
 		LessonVersionID:     lesson.LessonVersionID,
 		QuestionNumber:      1,
 		Prompt:              "Какой вариант указан в тексте?",
@@ -70,10 +72,10 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 			t.Fatal("черновой курс виден в ученическом каталоге")
 		}
 	}
-	if err := repo.PublishLessonVersion(ctx, lesson.LessonVersionID); err != nil {
+	if err := authoring.PublishLessonVersion(ctx, lesson.LessonVersionID); err != nil {
 		t.Fatalf("опубликовать версию урока: %v", err)
 	}
-	if err := repo.PublishCourse(ctx, course.ID); err != nil {
+	if err := authoring.PublishCourse(ctx, course.ID); err != nil {
 		t.Fatalf("опубликовать курс: %v", err)
 	}
 	courses, err = repo.ListPublishedCourses(ctx)
@@ -111,7 +113,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 	if !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("нельзя менять опубликованную версию, получено %v", err)
 	}
-	if err := repo.PublishCourse(ctx, course.ID); err != nil {
+	if err := authoring.PublishCourse(ctx, course.ID); err != nil {
 		t.Fatalf("повторная публикация курса должна быть идемпотентной: %v", err)
 	}
 }
