@@ -119,19 +119,35 @@ func (c *APIClient) call(ctx context.Context, method string, payload any, result
 	if err != nil {
 		return fmt.Errorf("read Telegram response for %s: %w", method, err)
 	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		description := "HTTP request failed"
-		switch response.StatusCode {
-		case http.StatusUnauthorized:
-			description = "unauthorized; проверьте TELEGRAM_BOT_TOKEN"
-		case http.StatusConflict:
-			description = "conflict; вероятно, другой процесс использует long polling для этого токена"
-		}
-		return &APIError{Method: method, Code: response.StatusCode, Description: description}
-	}
 	var envelope apiEnvelope
-	if err := json.Unmarshal(responseBody, &envelope); err != nil {
-		return fmt.Errorf("decode Telegram response for %s: %w", method, err)
+	decodeErr := json.Unmarshal(responseBody, &envelope)
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		code := response.StatusCode
+		description := "HTTP request failed"
+		if decodeErr == nil {
+			if envelope.ErrorCode > 0 {
+				code = envelope.ErrorCode
+			}
+			if strings.TrimSpace(envelope.Description) != "" {
+				description = envelope.Description
+			}
+		}
+		switch code {
+		case http.StatusUnauthorized:
+			if !strings.Contains(strings.ToLower(description), "unauthorized") {
+				description = "unauthorized; проверьте TELEGRAM_BOT_TOKEN: " + description
+			} else {
+				description += "; проверьте TELEGRAM_BOT_TOKEN"
+			}
+		case http.StatusConflict:
+			if !strings.Contains(strings.ToLower(description), "conflict") {
+				description = "conflict: " + description
+			}
+		}
+		return &APIError{Method: method, Code: code, Description: description}
+	}
+	if decodeErr != nil {
+		return fmt.Errorf("decode Telegram response for %s: %w", method, decodeErr)
 	}
 	if !envelope.OK {
 		return &APIError{Method: method, Code: envelope.ErrorCode, Description: envelope.Description}
