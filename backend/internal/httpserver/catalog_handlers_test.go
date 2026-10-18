@@ -30,6 +30,9 @@ func (f fakeCatalogAPI) ListCourseLessons(context.Context, int64) ([]domain.Less
 func (f fakeCatalogAPI) GetLessonDetail(context.Context, int64) (domain.LessonDetail, error) {
 	return f.detail, f.err
 }
+func (f fakeCatalogAPI) GetLessonDetailInCourse(context.Context, int64, int64) (domain.LessonDetail, error) {
+	return f.detail, f.err
+}
 
 func TestLessonEndpointDoesNotExposeInternalGradingData(t *testing.T) {
 	lesson := domain.Lesson{
@@ -94,6 +97,7 @@ func TestCatalogRoutesValidateIDsAndHideMissingResources(t *testing.T) {
 		{name: "bad course id", path: "/api/v1/courses/not-a-number", wantStatus: http.StatusBadRequest, wantBody: "invalid_id"},
 		{name: "course not found", path: "/api/v1/courses/123", wantStatus: http.StatusNotFound, wantBody: "not_found"},
 		{name: "lesson not found", path: "/api/v1/lessons/444", wantStatus: http.StatusNotFound, wantBody: "not_found"},
+		{name: "lesson is not in course", path: "/api/v1/courses/3/lessons/444", wantStatus: http.StatusNotFound, wantBody: "not_found"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
