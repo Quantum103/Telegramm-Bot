@@ -3,11 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
 func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
@@ -124,8 +124,8 @@ func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("получить уроки курса: %v", err)
 	}
-	if len(lessons) != 2 || lessons[0].LessonID != secondLessonID || lessons[0].Position != 1 ||
-		lessons[1].LessonID != firstLessonID || lessons[1].Position != 2 {
+	if len(lessons) != 2 || lessons[0].ID != secondLessonID || lessons[0].Position != 1 ||
+		lessons[1].ID != firstLessonID || lessons[1].Position != 2 {
 		t.Fatalf("уроки возвращены не в заданном порядке: %+v", lessons)
 	}
 	detailLesson, err := catalog.GetPublishedLessonByID(ctx, firstLessonID)
@@ -162,6 +162,13 @@ func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
 	}
 
 	answers := NewAnswerRepository(pool)
+	_, err = answers.Submit(ctx, AnswerSubmission{
+		StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: otherQuestionID,
+		AnswerText: "Вопрос из другого урока",
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("вопрос из другой версии урока должен быть недоступен, получено %v", err)
+	}
 	firstSubmission := AnswerSubmission{
 		StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: firstQuestionID,
 		SelectedOptionIDs: []int64{optionOneID},
