@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"\n\t"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
