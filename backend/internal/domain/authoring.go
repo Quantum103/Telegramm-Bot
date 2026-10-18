@@ -39,14 +39,14 @@ type BiblePassageInput struct {
 
 // CreateQuestionParams описывает только входные материалы, предоставленные автором.
 type CreateQuestionParams struct {
-	LessonVersionID   int64
-	QuestionNumber    int
-	Prompt            string
-	ExpectedAnswer    string
-	AnswerType        string
+	LessonVersionID     int64
+	QuestionNumber      int
+	Prompt              string
+	ExpectedAnswer      string
+	AnswerType          string
 	ExpectedExplanation *string
-	Criteria          []QuestionCriterionInput
-	Options           []QuestionOptionInput
-	CommonMistakes    []CommonMistake
-	BiblePassages     []BiblePassageInput
+	Criteria            []QuestionCriterionInput
+	Options             []QuestionOptionInput
+	CommonMistakes      []CommonMistake
+	BiblePassages       []BiblePassageInput
 }
