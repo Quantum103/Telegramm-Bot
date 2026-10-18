@@ -145,6 +145,7 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	question.ExpectedExplanation = cleanOptionalString(params.ExpectedExplanation)
 
 	batch := &pgx.Batch{}
+	batchCount := len(params.Options) + len(params.Criteria) + len(params.CommonMistakes)
 	for index, option := range params.Options {
 		batch.Queue(`
 			INSERT INTO question_options (question_id, option_key, option_text, sort_order, is_correct)
