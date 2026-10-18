@@ -44,10 +44,10 @@ func NewLearningService(
 }
 
 type NavigationState struct {
-	Question     domain.LessonQuestion
-	SavedAnswer  *domain.SavedAnswer
+	Question      domain.LessonQuestion
+	SavedAnswer   *domain.SavedAnswer
 	LatestAttempt *domain.AnswerAttempt
-	Progress     domain.Progress
+	Progress      domain.Progress
 }
 
 type SubmissionResult struct {
@@ -331,4 +331,3 @@ func (s *LearningService) requireActiveStudent(ctx context.Context, studentID in
 	}
 	return nil
 }
-
