@@ -14,6 +14,11 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
+type deletedTelegramMessage struct {
+	chatID    int64
+	messageID int64
+}
+
 type answerTestAPI struct {
 	*fakeAPI
 	deleteErr error
