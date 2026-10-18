@@ -53,4 +53,3 @@ func TestValidateSubmissionByQuestionType(t *testing.T) {
 		})
 	}
 }
-
