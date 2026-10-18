@@ -365,6 +365,8 @@ CREATE TABLE conversation_participants (
     joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     left_at TIMESTAMPTZ,
     last_read_at TIMESTAMPTZ,
+    FOREIGN KEY (conversation_id, student_id)
+        REFERENCES conversations (id, student_id) ON DELETE RESTRICT,
     CHECK (
         (student_id IS NOT NULL AND staff_id IS NULL)
         OR (student_id IS NULL AND staff_id IS NOT NULL)
@@ -400,6 +402,7 @@ CREATE TABLE conversation_messages (
     edited_at TIMESTAMPTZ,
     FOREIGN KEY (sender_participant_id, conversation_id)
         REFERENCES conversation_participants (id, conversation_id) ON DELETE RESTRICT,
+    UNIQUE (id, conversation_id),
     CHECK (message_type <> 'text' OR body_text IS NOT NULL),
     CHECK (message_type <> 'voice' OR telegram_file_id IS NOT NULL),
     CHECK (
@@ -440,6 +443,7 @@ CREATE TABLE ai_operations (
     input_tokens BIGINT CHECK (input_tokens IS NULL OR input_tokens >= 0),
     output_tokens BIGINT CHECK (output_tokens IS NULL OR output_tokens >= 0),
     cost_amount NUMERIC(14, 6) CHECK (cost_amount IS NULL OR cost_amount >= 0),
+    cost_currency TEXT CHECK (cost_currency IS NULL OR length(btrim(cost_currency)) > 0),
     duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
     error_code TEXT,
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
