@@ -9,13 +9,14 @@ import (
 	"time"
 )
 
-// Config содержит настройки HTTP-сервера и подключения к PostgreSQL.
+// Config содержит настройки HTTP-сервера, Telegram-бота и подключения к PostgreSQL.
 type Config struct {
 	HTTPAddr              string
 	HTTPReadTimeout       time.Duration
 	HTTPReadHeaderTimeout time.Duration
 	HTTPWriteTimeout      time.Duration
 	HTTPIdleTimeout       time.Duration
+	TelegramBotToken      string
 	Database              DatabaseConfig
 }
 
@@ -58,6 +59,8 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.HTTPIdleTimeout, err = durationValue(lookup, "HTTP_IDLE_TIMEOUT", 60*time.Second); err != nil {
 		return Config{}, err
 	}
+
+	cfg.TelegramBotToken = strings.TrimSpace(stringValue(lookup, "TELEGRAM_BOT_TOKEN", ""))
 
 	cfg.Database.Host = strings.TrimSpace(stringValue(lookup, "DATABASE_HOST", ""))
 	cfg.Database.Name = strings.TrimSpace(stringValue(lookup, "DATABASE_NAME", ""))
