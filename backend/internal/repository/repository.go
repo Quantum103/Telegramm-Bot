@@ -1,17 +1,19 @@
 package repository
 
 import (
-	"errors"
-	"fmt"
+		"fmt"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
-	ErrNotFound     = errors.New("запись не найдена")
-	ErrConflict     = errors.New("конфликт уникальности")
-	ErrInvalidInput = errors.New("некорректные входные данные")
-	ErrInvalidState = errors.New("операция недопустима в текущем состоянии")
+	ErrNotFound             = domain.ErrNotFound
+	ErrConflict             = domain.ErrConflict
+	ErrInvalidInput         = domain.ErrInvalidInput
+	ErrInvalidState         = domain.ErrInvalidState
+	ErrNoPreviousQuestion   = domain.ErrNoPreviousQuestion
+	ErrNoNextQuestion       = domain.ErrNoNextQuestion
 )
 
 func mapDatabaseError(operation string, err error) error {
