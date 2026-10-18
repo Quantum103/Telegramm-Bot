@@ -58,6 +58,18 @@ func TestAPIClientErrorDoesNotExposeToken(t *testing.T) {
 	}
 }
 
+func TestAPIClientInvalidTokenDoesNotLeakIntoRequestError(t *testing.T) {
+	const secret = "private-token\nsecond-line"
+	client := newAPIClient(secret, "https://telegram.test", &http.Client{Timeout: time.Second})
+	_, err := client.GetMe(context.Background())
+	if err == nil {
+		t.Fatal("GetMe should reject a token containing a URL control character")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "second-line") {
+		t.Fatalf("request construction error leaked token material: %v", err)
+	}
+}
+
 func TestAPIClientPreservesTelegramEditErrorDescription(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
