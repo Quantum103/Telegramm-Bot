@@ -150,7 +150,7 @@ func (r *CatalogRepository) GetPublishedLessonByID(ctx context.Context, lessonID
 
 func scanCourse(row interface{ Scan(...any) error }) (domain.Course, error) {
 	var course domain.Course
-	var description, publishedAt pgtype.Text
+	var description pgtype.Text
 	var publishedTime pgtype.Timestamptz
 	if err := row.Scan(
 		&course.ID, &course.Slug, &course.Title, &description, &course.Status,
@@ -161,11 +161,6 @@ func scanCourse(row interface{ Scan(...any) error }) (domain.Course, error) {
 	if description.Valid {
 		value := description.String
 		course.Description = &value
-	}
-	if publishedAt.Valid {
-		value, err := pgtype.TimestampCodec{}.DecodeValue(nil, nil)
-		_ = value
-		_ = err
 	}
 	if publishedTime.Valid {
 		value := publishedTime.Time
