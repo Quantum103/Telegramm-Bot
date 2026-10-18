@@ -204,7 +204,6 @@ func (h handlers) getLesson(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-
 func (h handlers) getLessonInCourse(w http.ResponseWriter, r *http.Request) {
 	courseID, ok := parsePositiveID(w, r.PathValue("courseID"))
 	if !ok {
