@@ -71,14 +71,15 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 	if err != nil {
 		return domain.Progress{}, err
 	}
-	if _, err := s.enrollments.Start(ctx, domain.StartEnrollmentParams{
+	enrollment, err := s.enrollments.Start(ctx, domain.StartEnrollmentParams{
 		StudentID: studentID, LessonID: lesson.ID,
 		LessonVersionID: lesson.LessonVersionID, Mode: mode,
-	}); err != nil {
+	})
+	if err != nil {
 		return domain.Progress{}, err
 	}
 
-	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentIDForVersion(ctx, s.enrollments, studentID, lesson.LessonVersionID, mode))
+	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollment.ID)
 	if err != nil {
 		return domain.Progress{}, err
 	}
@@ -302,13 +303,3 @@ func (s *LearningService) CompleteLesson(ctx context.Context, studentID, enrollm
 	return s.enrollments.Complete(ctx, studentID, enrollmentID)
 }
 
-// enrollmentIDForVersion находит стабильный ID уже созданного прохождения.
-func enrollmentIDForVersion(ctx context.Context, store interface {
-	GetByStudentAndVersion(context.Context, int64, int64, string) (domain.Enrollment, error)
-}, studentID, lessonVersionID int64, mode string) int64 {
-	enrollment, err := store.GetByStudentAndVersion(ctx, studentID, lessonVersionID, mode)
-	if err != nil {
-		return 0
-	}
-	return enrollment.ID
-}
