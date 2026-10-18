@@ -151,15 +151,14 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var enrollment Enrollment
-	err = scanEnrollment(tx.QueryRow(ctx, `
+	enrollment, err := scanEnrollment(tx.QueryRow(ctx, `
 		SELECT id, student_id, lesson_id, lesson_version_id, mode,
 		       current_question_id, status, started_at, completed_at,
 		       last_activity_at, created_at, updated_at
 		FROM lesson_enrollments
 		WHERE id = $2 AND student_id = $1
 		FOR UPDATE
-	`, studentID, enrollmentID)).assign(&enrollment)
+	`, studentID, enrollmentID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Enrollment{}, ErrNotFound
@@ -209,19 +208,6 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 		return Enrollment{}, mapDatabaseError("зафиксировать завершение урока", err)
 	}
 	return enrollment, nil
-}
-
-type enrollmentScanner struct {
-	row pgx.Row
-}
-
-func (s enrollmentScanner) assign(target *Enrollment) error {
-	value, err := scanEnrollment(s.row)
-	if err != nil {
-		return err
-	}
-	*target = value
-	return nil
 }
 
 func setNullableInt64(target **int64, value pgtype.Int8) {
