@@ -109,16 +109,16 @@ type staffCreateDraftLessonRequest struct {
 type staffCreateDraftRevisionRequest struct{}
 
 type staffDraftRevisionResponse struct {
-	ID              int64      `json:"id"`
-	CourseID        int64      `json:"course_id"`
-	CourseTitle     string     `json:"course_title"`
-	Position        int        `json:"position"`
-	LessonVersionID int64      `json:"lesson_version_id"`
-	VersionNumber   int        `json:"version_number"`
-	VersionStatus   string     `json:"version_status"`
-	Title           string     `json:"title"`
-	Description     *string    `json:"description,omitempty"`
-	QuestionCount   int        `json:"question_count"`
+	ID              int64   `json:"id"`
+	CourseID        int64   `json:"course_id"`
+	CourseTitle     string  `json:"course_title"`
+	Position        int     `json:"position"`
+	LessonVersionID int64   `json:"lesson_version_id"`
+	VersionNumber   int     `json:"version_number"`
+	VersionStatus   string  `json:"version_status"`
+	Title           string  `json:"title"`
+	Description     *string `json:"description,omitempty"`
+	QuestionCount   int     `json:"question_count"`
 }
 
 type staffCreateQuestionRequest struct {

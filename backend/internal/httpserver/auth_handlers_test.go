@@ -413,15 +413,15 @@ type fakeStaffAuthoringAPI struct {
 	createCourseParams     domain.CreateCourseParams
 	createCourseResult     domain.Course
 	createCourseErr        error
-	createLessonCalls      int
-	createLessonParams     domain.CreateLessonParams
-	createLessonResult    domain.Lesson
-	createLessonErr       error
-	createRevisionCalls   int
-	createRevisionLessonID int64
-	createRevisionStaffID int64
-	createRevisionResult  domain.Lesson
-	createRevisionErr     error
+	createLessonCalls       int
+	createLessonParams      domain.CreateLessonParams
+	createLessonResult      domain.Lesson
+	createLessonErr         error
+	createRevisionCalls     int
+	createRevisionLessonID  int64
+	createRevisionStaffID   int64
+	createRevisionResult    domain.Lesson
+	createRevisionErr       error
 	createQuestionCalls    int
 	createQuestionParams   domain.CreateQuestionParams
 	createQuestionResult   domain.LessonQuestion
@@ -801,7 +801,6 @@ func TestStaffListQuestionsForVersionRequiresSessionAndReturnsInternalAuthoringD
 		t.Fatal("invalid version ID reached the authoring service")
 	}
 }
-
 
 func TestStaffCreateDraftRevisionUsesAuthenticatedActorAndCSRF(t *testing.T) {
 	csrfToken := "csrf-revision-test-token-0123456789"

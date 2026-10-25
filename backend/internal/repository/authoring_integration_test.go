@@ -514,7 +514,6 @@ func TestListQuestionsForStaffIncludesDraftQuestionAndMaterials(t *testing.T) {
 	}
 }
 
-
 func TestCreateDraftRevisionStoresStaffActorAndAuditEvent(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
