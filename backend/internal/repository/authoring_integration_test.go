@@ -960,7 +960,7 @@ func TestUpdateDraftLessonVersionValidatesAuditsAndProtectsPublishedContent(t *t
 		t.Fatalf("unexpected update audit event: actor=%d action=%q entity=%q id=%d version=%q status=%q",
 			actorID, action, entityType, entityID, auditedVersion, auditedStatus)
 	}
-	if err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+	if _, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
 		LessonVersionID: versionID, QuestionNumber: 1,
 		Prompt: "Question for publication", ExpectedAnswer: "Expected answer",
 		AnswerType: "text", CreatedByStaffID: staffID,
