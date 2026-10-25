@@ -388,8 +388,8 @@ func TestCreateQuestionStoresStaffActorAndAuditEvent(t *testing.T) {
 	}
 	questionID = question.ID
 
-	var actorID, entityID, auditedVersionID int64
-	var action, entityType, number, answerType string
+	var actorID, entityID int64
+	var action, entityType, auditedVersionID, number, answerType string
 	if err := pool.QueryRow(ctx, `
 		SELECT actor_staff_id, action, entity_type, entity_id,
 		       details->>'lesson_version_id', details->>'question_number', details->>'answer_type'
@@ -400,7 +400,7 @@ func TestCreateQuestionStoresStaffActorAndAuditEvent(t *testing.T) {
 		t.Fatalf("read question audit event: %v", err)
 	}
 	if actorID != staffID || action != "question.draft.create" || entityType != "question" ||
-		entityID != question.ID || auditedVersionID != versionID || number != "1" || answerType != "text" {
+		entityID != question.ID || auditedVersionID != fmt.Sprint(versionID) || number != "1" || answerType != "text" {
 		t.Fatalf("unexpected question audit event: actor=%d action=%q entity=%q id=%d version=%d number=%q type=%q",
 			actorID, action, entityType, entityID, auditedVersionID, number, answerType)
 	}
