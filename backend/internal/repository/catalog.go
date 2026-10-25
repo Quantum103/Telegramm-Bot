@@ -80,7 +80,6 @@ func (r *CatalogRepository) ListCoursesForStaff(ctx context.Context) ([]domain.C
 	return courses, nil
 }
 
-
 func (r *CatalogRepository) ListLessonsForStaffByCourseID(ctx context.Context, courseID int64) ([]domain.StaffLesson, error) {
 	if courseID <= 0 {
 		return nil, ErrInvalidInput
