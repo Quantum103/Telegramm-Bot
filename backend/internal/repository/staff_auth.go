@@ -122,3 +122,18 @@ func (r *StaffAuthRepository) GetActiveSessionByTokenHash(
 	copy(identity.CSRFTokenHash[:], csrfHash)
 	return identity, nil
 }
+
+// RevokeSessionByTokenHash invalidates a session without requiring the caller
+// to know whether the token exists. Repeated logout calls are intentionally idempotent.
+func (r *StaffAuthRepository) RevokeSessionByTokenHash(ctx context.Context, tokenHash [32]byte) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE staff_sessions
+		SET revoked_at = now()
+		WHERE token_hash = $1
+			AND revoked_at IS NULL
+	`, tokenHash[:])
+	if err != nil {
+		return mapDatabaseError("отозвать сессию сотрудника", err)
+	}
+	return nil
+}

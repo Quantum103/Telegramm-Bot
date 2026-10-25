@@ -56,7 +56,7 @@ func run(logger *slog.Logger) error {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.NewHandler(pool, logger, catalogService),
+		Handler:           httpserver.NewHandlerWithStaffAuth(pool, logger, catalogService, service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)), true),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,

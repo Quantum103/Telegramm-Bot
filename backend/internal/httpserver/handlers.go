@@ -4,15 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
-const readinessTimeout = 2 * time.Second
+const (
+	readinessTimeout = 2 * time.Second
+	maxStaffLoginBodyBytes = 8 << 10
+	staffSessionCookieName = "staff_session"
+	staffCSRFCookieName = "staff_csrf"
+)
 
 type databasePinger interface {
 	Ping(context.Context) error
@@ -26,24 +36,59 @@ type CatalogAPI interface {
 	GetLessonDetailInCourse(context.Context, int64, int64) (domain.LessonDetail, error)
 }
 
+type StaffAuthAPI interface {
+	Login(context.Context, string, string) (service.StaffLoginResult, error)
+	Logout(context.Context, string) error
+}
+
+type staffLoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type staffIdentityResponse struct {
+	ID          int64  `json:"id"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+}
+
+type staffLoginResponse struct {
+	Staff staffIdentityResponse `json:"staff"`
+}
+
 type healthResponse struct {
 	Status string `json:"status"`
 }
 
 type handlers struct {
-	database databasePinger
-	logger   *slog.Logger
-	catalog  CatalogAPI
+	database     databasePinger
+	logger       *slog.Logger
+	catalog      CatalogAPI
+	staffAuth    StaffAuthAPI
+	cookieSecure bool
 }
 
-// NewHandler собирает маршруты HTTP и сохраняет обратную совместимость health-тестов.
+// NewHandler собирает публичные маршруты и сохраняет обратную совместимость тестов.
 func NewHandler(database databasePinger, logger *slog.Logger, catalogs ...CatalogAPI) http.Handler {
+	var catalog CatalogAPI
+	if len(catalogs) > 0 {
+		catalog = catalogs[0]
+	}
+	return newHandler(database, logger, catalog, nil, false)
+}
+
+// NewHandlerWithStaffAuth adds staff login/logout endpoints. Production should keep cookieSecure enabled.
+func NewHandlerWithStaffAuth(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool) http.Handler {
+	return newHandler(database, logger, catalog, staffAuth, cookieSecure)
+}
+
+func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := handlers{database: database, logger: logger}
-	if len(catalogs) > 0 {
-		h.catalog = catalogs[0]
+	h := handlers{
+		database: database, logger: logger, catalog: catalog,
+		staffAuth: staffAuth, cookieSecure: cookieSecure,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -55,7 +100,145 @@ func NewHandler(database databasePinger, logger *slog.Logger, catalogs ...Catalo
 		mux.HandleFunc("GET /api/v1/courses/{courseID}/lessons/{lessonID}", h.getLessonInCourse)
 		mux.HandleFunc("GET /api/v1/lessons/{lessonID}", h.getLesson)
 	}
+	if h.staffAuth != nil {
+		mux.HandleFunc("POST /api/v1/staff/auth/login", h.staffLogin)
+		mux.HandleFunc("POST /api/v1/staff/auth/logout", h.staffLogout)
+	}
 	return mux
+}
+
+func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	if !sameOriginOrNoOrigin(r) {
+		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "origin_not_allowed"})
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+
+	var input staffLoginRequest
+	if err := decodeJSONBody(w, r, &input); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+
+	result, err := h.staffAuth.Login(r.Context(), input.Email, input.Password)
+	if errors.Is(err, service.ErrInvalidStaffCredentials) {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "invalid_credentials"})
+		return
+	}
+	if err != nil {
+		h.logger.Error("ошибка входа сотрудника", "error", err)
+		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+		return
+	}
+	if result.SessionToken == "" || result.CSRFToken == "" || !result.ExpiresAt.After(time.Now()) {
+		h.logger.Error("сервис авторизации вернул неполные данные сессии")
+		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+		return
+	}
+
+	setStaffAuthCookies(w, result.SessionToken, result.CSRFToken, result.ExpiresAt, h.cookieSecure)
+	writeJSON(w, http.StatusOK, staffLoginResponse{Staff: staffIdentityResponse{
+		ID: result.StaffID, DisplayName: result.DisplayName, Email: result.Email,
+	}})
+}
+
+func (h handlers) staffLogout(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	if !sameOriginOrNoOrigin(r) {
+		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "origin_not_allowed"})
+		return
+	}
+
+	cookie, err := r.Cookie(staffSessionCookieName)
+	var sessionToken string
+	if err == nil {
+		sessionToken = cookie.Value
+	}
+	clearStaffAuthCookies(w, h.cookieSecure)
+	if sessionToken != "" {
+		if err := h.staffAuth.Logout(r.Context(), sessionToken); err != nil {
+			h.logger.Error("ошибка выхода сотрудника", "error", err)
+			writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, destination any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxStaffLoginBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values in request body")
+		}
+		return err
+	}
+	return nil
+}
+
+func sameOriginOrNoOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+func setNoStoreHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+}
+
+func setStaffAuthCookies(w http.ResponseWriter, sessionToken, csrfToken string, expiresAt time.Time, secure bool) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	w.Header().Add("Set-Cookie", (&http.Cookie{
+		Name: staffSessionCookieName, Value: sessionToken, Path: "/",
+		Expires: expiresAt, MaxAge: maxAge, HttpOnly: true,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
+	}).String())
+	w.Header().Add("Set-Cookie", (&http.Cookie{
+		Name: staffCSRFCookieName, Value: csrfToken, Path: "/",
+		Expires: expiresAt, MaxAge: maxAge, HttpOnly: false,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
+	}).String())
+}
+
+func clearStaffAuthCookies(w http.ResponseWriter, secure bool) {
+	expired := time.Unix(1, 0).UTC()
+	w.Header().Add("Set-Cookie", (&http.Cookie{
+		Name: staffSessionCookieName, Value: "", Path: "/",
+		Expires: expired, MaxAge: -1, HttpOnly: true,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
+	}).String())
+	w.Header().Add("Set-Cookie", (&http.Cookie{
+		Name: staffCSRFCookieName, Value: "", Path: "/",
+		Expires: expired, MaxAge: -1, HttpOnly: false,
+		Secure: secure, SameSite: http.SameSiteStrictMode,
+	}).String())
 }
 
 func (h handlers) live(w http.ResponseWriter, _ *http.Request) {

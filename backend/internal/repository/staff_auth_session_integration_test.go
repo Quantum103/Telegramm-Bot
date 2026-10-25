@@ -108,3 +108,46 @@ func TestGetActiveSessionByTokenHash(t *testing.T) {
 		})
 	}
 }
+
+func TestRevokeSessionByTokenHash(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	repo := NewStaffAuthRepository(pool)
+	prefix := fmt.Sprintf("staff-session-revoke-test-%d-", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Session revoke test', $1, 'active')
+		RETURNING id
+	`, prefix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_accounts WHERE id = $1", staffID); err != nil {
+			t.Errorf("cleanup staff account: %v", err)
+		}
+	})
+
+	tokenHash := sha256.Sum256([]byte(prefix + "token"))
+	csrfHash := sha256.Sum256([]byte(prefix + "csrf"))
+	_, err := pool.Exec(ctx, `
+		INSERT INTO staff_sessions (staff_id, token_hash, csrf_token_hash, expires_at)
+		VALUES ($1, $2, $3, now() + INTERVAL '1 hour')
+	`, staffID, tokenHash[:], csrfHash[:])
+	if err != nil {
+		t.Fatalf("create test session: %v", err)
+	}
+	if err := repo.RevokeSessionByTokenHash(ctx, tokenHash); err != nil {
+		t.Fatalf("RevokeSessionByTokenHash(): %v", err)
+	}
+	if _, err := repo.GetActiveSessionByTokenHash(ctx, tokenHash); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoked session lookup error = %v, want ErrNotFound", err)
+	}
+	if err := repo.RevokeSessionByTokenHash(ctx, tokenHash); err != nil {
+		t.Fatalf("repeated revocation should be idempotent, got %v", err)
+	}
+}

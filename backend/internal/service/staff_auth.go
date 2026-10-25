@@ -17,6 +17,7 @@ const staffSessionTTL = 12 * time.Hour
 type StaffAuthStore interface {
 	GetCredentialsByEmail(context.Context, string) (domain.StaffCredentials, error)
 	CreateSession(context.Context, domain.StaffSession) error
+	RevokeSessionByTokenHash(context.Context, [32]byte) error
 }
 
 type StaffLoginResult struct {
@@ -85,4 +86,13 @@ func (s *StaffAuthService) Login(ctx context.Context, email, password string) (S
 		Email: credentials.Email, SessionToken: sessionToken,
 		CSRFToken: csrfToken, ExpiresAt: expiresAt,
 	}, nil
+}
+
+// Logout revokes a server-side session by the hash of its opaque cookie token.
+// Empty or implausibly long tokens are treated as an already-logged-out client.
+func (s *StaffAuthService) Logout(ctx context.Context, sessionToken string) error {
+	if sessionToken == "" || len(sessionToken) > 128 {
+		return nil
+	}
+	return s.store.RevokeSessionByTokenHash(ctx, auth.HashToken(sessionToken))
 }

@@ -15,6 +15,9 @@ type fakeStaffAuthStore struct {
 	getErr      error
 	session     domain.StaffSession
 	createErr   error
+	revokeErr   error
+	revokedHash [32]byte
+	revoked     bool
 	created     bool
 }
 
@@ -27,6 +30,13 @@ func (s *fakeStaffAuthStore) CreateSession(_ context.Context, session domain.Sta
 	s.session = session
 	return s.createErr
 }
+
+func (s *fakeStaffAuthStore) RevokeSessionByTokenHash(_ context.Context, tokenHash [32]byte) error {
+	s.revoked = true
+	s.revokedHash = tokenHash
+	return s.revokeErr
+}
+
 
 func TestStaffLoginCreatesHashedSessionForActiveAccount(t *testing.T) {
 	password := "correct horse battery staple"
@@ -106,5 +116,38 @@ func TestStaffLoginReturnsSessionPersistenceError(t *testing.T) {
 	_, err = NewStaffAuthService(store).Login(context.Background(), "a@example.com", "correct horse battery staple")
 	if !errors.Is(err, store.createErr) {
 		t.Fatalf("Login() error = %v, want persistence error", err)
+	}
+}
+
+func TestStaffLogoutRevokesSessionUsingTokenDigest(t *testing.T) {
+	store := &fakeStaffAuthStore{}
+	svc := NewStaffAuthService(store)
+	token := "opaque-session-token"
+	if err := svc.Logout(context.Background(), token); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if !store.revoked {
+		t.Fatal("Logout() did not request session revocation")
+	}
+	if store.revokedHash != auth.HashToken(token) {
+		t.Fatal("Logout() did not hash the raw token before persistence")
+	}
+}
+
+func TestStaffLogoutWithoutTokenIsIdempotent(t *testing.T) {
+	store := &fakeStaffAuthStore{}
+	if err := NewStaffAuthService(store).Logout(context.Background(), ""); err != nil {
+		t.Fatalf("Logout(empty token) error = %v, want nil", err)
+	}
+	if store.revoked {
+		t.Fatal("Logout(empty token) unexpectedly queried the session store")
+	}
+}
+
+func TestStaffLogoutPropagatesPersistenceError(t *testing.T) {
+	store := &fakeStaffAuthStore{revokeErr: errors.New("database unavailable")}
+	err := NewStaffAuthService(store).Logout(context.Background(), "opaque-session-token")
+	if !errors.Is(err, store.revokeErr) {
+		t.Fatalf("Logout() error = %v, want persistence error", err)
 	}
 }
