@@ -38,7 +38,7 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generate password salt: %w", err)
 	}
-	key, err := pbkdf2.Key(sha256.New, []byte(password), salt, passwordIterations, passwordKeyBytes)
+	key, err := pbkdf2.Key(sha256.New, password, salt, passwordIterations, passwordKeyBytes)
 	if err != nil {
 		return "", fmt.Errorf("derive password hash: %w", err)
 	}
@@ -70,7 +70,7 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	if err != nil || len(expected) != passwordKeyBytes {
 		return false, ErrInvalidHash
 	}
-	actual, err := deriveKey([]byte(password), salt, iterations, len(expected), sha256.New)
+	actual, err := deriveKey(password, salt, iterations, len(expected), sha256.New)
 	if err != nil {
 		return false, fmt.Errorf("derive candidate password hash: %w", err)
 	}
@@ -93,6 +93,6 @@ func HashToken(token string) [32]byte {
 	return sha256.Sum256([]byte(token))
 }
 
-func deriveKey(password, salt []byte, iterations, length int, h func() hash.Hash) ([]byte, error) {
+func deriveKey(password string, salt []byte, iterations, length int, h func() hash.Hash) ([]byte, error) {
 	return pbkdf2.Key(h, password, salt, iterations, length)
 }
