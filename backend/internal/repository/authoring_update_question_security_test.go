@@ -59,6 +59,16 @@ func questionUpdateSecurityFixture(t *testing.T) (context.Context, *pgxpool.Pool
 func TestUpdateDraftQuestionRejectsInvalidDataWithoutMutation(t *testing.T) {
 	ctx, pool, authoring, staffID, versionID, questionID := questionUpdateSecurityFixture(t)
 
+	// Compare against the fixture's baseline so pre-existing audit rows cannot
+	// make this test flaky when the integration database is reused.
+	var baselineUpdateAuditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'question' AND entity_id = $1 AND action = 'question.draft.update'
+	`, questionID).Scan(&baselineUpdateAuditCount); err != nil {
+		t.Fatalf("count baseline question update audit events: %v", err)
+	}
+
 	tests := []struct {
 		name   string
 		mutate func(*domain.CreateQuestionParams)
@@ -154,13 +164,22 @@ func TestUpdateDraftQuestionRejectsInvalidDataWithoutMutation(t *testing.T) {
 	`, questionID).Scan(&updateAuditCount); err != nil {
 		t.Fatalf("count update audit events: %v", err)
 	}
-	if updateAuditCount != 0 {
-		t.Fatalf("invalid updates created %d audit events, want 0", updateAuditCount)
+	if updateAuditCount != baselineUpdateAuditCount {
+		t.Fatalf("invalid updates changed update audit count from %d to %d; want no new audit events",
+			baselineUpdateAuditCount, updateAuditCount)
 	}
 }
 
 func TestUpdateDraftQuestionRollsBackWhenAuditInsertFails(t *testing.T) {
 	ctx, pool, authoring, staffID, versionID, questionID := questionUpdateSecurityFixture(t)
+
+	var baselineUpdateAuditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'question' AND entity_id = $1 AND action = 'question.draft.update'
+	`, questionID).Scan(&baselineUpdateAuditCount); err != nil {
+		t.Fatalf("count baseline question update audit events: %v", err)
+	}
 
 	functionName := fmt.Sprintf("reject_question_update_audit_%d", time.Now().UnixNano())
 	triggerName := functionName + "_trigger"
@@ -231,7 +250,8 @@ func TestUpdateDraftQuestionRollsBackWhenAuditInsertFails(t *testing.T) {
 	`, questionID).Scan(&updateAuditCount); err != nil {
 		t.Fatalf("count update audit events after failure: %v", err)
 	}
-	if updateAuditCount != 0 {
-		t.Fatalf("failed update created %d audit events, want 0", updateAuditCount)
+	if updateAuditCount != baselineUpdateAuditCount {
+		t.Fatalf("failed update changed update audit count from %d to %d; want transaction rollback",
+			baselineUpdateAuditCount, updateAuditCount)
 	}
 }
