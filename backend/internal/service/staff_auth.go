@@ -38,7 +38,7 @@ func NewStaffAuthService(store StaffAuthStore) *StaffAuthService {
 }
 
 // Login verifies credentials and persists a server-side session.
-// The caller must send the raw tokens only through appropriately secured cookies,
+// The caller must send raw tokens only through appropriately secured cookies,
 // must not log them, and must not expose SessionToken in JSON responses.
 func (s *StaffAuthService) Login(ctx context.Context, email, password string) (StaffLoginResult, error) {
 	email = strings.ToLower(strings.TrimSpace(email))

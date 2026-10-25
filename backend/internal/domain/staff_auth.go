@@ -2,16 +2,16 @@ package domain
 
 import "time"
 
-// StaffCredentials содержит минимальные данные для проверки входа сотрудника.
+// StaffCredentials contains only the fields required to verify staff login.
 type StaffCredentials struct {
-	ID           int64
-	DisplayName  string
-	Email        string
-	PasswordHash string
+	ID            int64
+	DisplayName   string
+	Email         string
+	PasswordHash  string
 	AccountStatus string
 }
 
-// StaffSession содержит только хеши секретов, предназначенные для хранения в БД.
+// StaffSession contains token digests intended for persistent storage.
 type StaffSession struct {
 	StaffID       int64
 	TokenHash     [32]byte
