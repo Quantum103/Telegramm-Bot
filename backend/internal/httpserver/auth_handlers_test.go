@@ -964,7 +964,7 @@ func TestStaffPublishLessonVersionRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatal("publication service was called without a valid CSRF token")
 	}
 
-	withUntrustedActor := makeRequest("77", "{"published_by_staff_id":999}", true)
+	withUntrustedActor := makeRequest("77", `{"published_by_staff_id":999}`, true)
 	if withUntrustedActor.Code != http.StatusBadRequest {
 		t.Fatalf("request with caller-supplied actor ID status = %d, want %d; body=%s",
 			withUntrustedActor.Code, http.StatusBadRequest, withUntrustedActor.Body.String())
