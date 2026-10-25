@@ -430,6 +430,10 @@ type fakeStaffAuthoringAPI struct {
 	publishVersionID       int64
 	publishVersionStaffID  int64
 	publishVersionErr      error
+	publishCourseCalls     int
+	publishCourseID        int64
+	publishCourseStaffID   int64
+	publishCourseErr       error
 }
 
 func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
@@ -479,6 +483,13 @@ func (f *fakeStaffAuthoringAPI) PublishLessonVersion(_ context.Context, versionI
 	f.publishVersionID = versionID
 	f.publishVersionStaffID = staffID
 	return f.publishVersionErr
+}
+
+func (f *fakeStaffAuthoringAPI) PublishCourse(_ context.Context, courseID, staffID int64) error {
+	f.publishCourseCalls++
+	f.publishCourseID = courseID
+	f.publishCourseStaffID = staffID
+	return f.publishCourseErr
 }
 
 func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
@@ -995,5 +1006,91 @@ func TestStaffPublishLessonVersionRequiresSessionAndCSRF(t *testing.T) {
 	}
 	if authoring.publishVersionCalls != 1 {
 		t.Fatal("invalid version ID reached the publication service")
+	}
+}
+
+func TestStaffPublishCourseRequiresSessionAndCSRF(t *testing.T) {
+	csrfToken := "csrf-course-publish-test-token-012345"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	authoring := &fakeStaffAuthoringAPI{}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	makeRequest := func(pathID, body string, includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost,
+			"https://admin.example.test/api/v1/staff/admin/courses/"+pathID+"/publish",
+			strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	unauthenticated := httptest.NewRequest(http.MethodPost,
+		"https://admin.example.test/api/v1/staff/admin/courses/77/publish", strings.NewReader("{}"))
+	unauthenticated.Header.Set("Content-Type", "application/json")
+	unauthenticated.Header.Set("Origin", "https://admin.example.test")
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d; body=%s",
+			unauthenticatedResponse.Code, http.StatusUnauthorized, unauthenticatedResponse.Body.String())
+	}
+	if authoring.publishCourseCalls != 0 {
+		t.Fatal("course publication service was called without a staff session")
+	}
+
+	withoutCSRF := makeRequest("77", "{}", false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s",
+			withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.publishCourseCalls != 0 {
+		t.Fatal("course publication service was called without a valid CSRF token")
+	}
+
+	withUntrustedActor := makeRequest("77", "{"published_by_staff_id":999}", true)
+	if withUntrustedActor.Code != http.StatusBadRequest {
+		t.Fatalf("request with caller-supplied actor ID status = %d, want %d; body=%s",
+			withUntrustedActor.Code, http.StatusBadRequest, withUntrustedActor.Body.String())
+	}
+	if authoring.publishCourseCalls != 0 {
+		t.Fatal("caller-supplied actor reached the course publication service")
+	}
+
+	response := makeRequest("77", "{}", true)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("valid request status = %d, want %d; body=%s",
+			response.Code, http.StatusNoContent, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if authoring.publishCourseCalls != 1 || authoring.publishCourseID != 77 ||
+		authoring.publishCourseStaffID != identity.StaffID {
+		t.Fatalf("course publication calls/course/staff = %d/%d/%d, want 1/77/%d",
+			authoring.publishCourseCalls, authoring.publishCourseID,
+			authoring.publishCourseStaffID, identity.StaffID)
+	}
+
+	badID := makeRequest("0", "{}", true)
+	if badID.Code != http.StatusBadRequest {
+		t.Fatalf("zero course ID status = %d, want %d; body=%s",
+			badID.Code, http.StatusBadRequest, badID.Body.String())
+	}
+	if authoring.publishCourseCalls != 1 {
+		t.Fatal("invalid course ID reached the publication service")
 	}
 }

@@ -16,7 +16,7 @@ type AuthoringStore interface {
 	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestionWithMaterials(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64, int64) error
-	PublishCourse(context.Context, int64) error
+	PublishCourse(context.Context, int64, int64) error
 }
 
 // AuthoringService — внутренний сервис для будущей панели и импорта DOCX.
@@ -98,9 +98,9 @@ func (s *AuthoringService) PublishLessonVersion(ctx context.Context, versionID, 
 	return s.store.PublishLessonVersion(ctx, versionID, publishedByStaffID)
 }
 
-func (s *AuthoringService) PublishCourse(ctx context.Context, courseID int64) error {
-	if courseID <= 0 {
+func (s *AuthoringService) PublishCourse(ctx context.Context, courseID, publishedByStaffID int64) error {
+	if courseID <= 0 || publishedByStaffID < 0 {
 		return domain.ErrInvalidInput
 	}
-	return s.store.PublishCourse(ctx, courseID)
+	return s.store.PublishCourse(ctx, courseID, publishedByStaffID)
 }

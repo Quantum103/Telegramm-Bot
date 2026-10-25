@@ -72,10 +72,13 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 			t.Fatal("черновой курс виден в ученическом каталоге")
 		}
 	}
+	if err := authoring.PublishCourse(ctx, course.ID, 0); !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("курс без опубликованных уроков должен отклоняться: %v", err)
+	}
 	if err := authoring.PublishLessonVersion(ctx, lesson.LessonVersionID, 0); err != nil {
 		t.Fatalf("опубликовать версию урока: %v", err)
 	}
-	if err := authoring.PublishCourse(ctx, course.ID); err != nil {
+	if err := authoring.PublishCourse(ctx, course.ID, 0); err != nil {
 		t.Fatalf("опубликовать курс: %v", err)
 	}
 	courses, err = repo.ListPublishedCourses(ctx)
@@ -142,7 +145,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 		len(archivedQuestions[0].BiblePassages) != 1 {
 		t.Fatalf("архивная версия не сохранила прежние материалы: %+v", archivedQuestions)
 	}
-	if err := authoring.PublishCourse(ctx, course.ID); err != nil {
+	if err := authoring.PublishCourse(ctx, course.ID, 0); err != nil {
 		t.Fatalf("повторная публикация курса должна быть идемпотентной: %v", err)
 	}
 }
@@ -640,5 +643,90 @@ func TestCreateDraftRevisionStoresStaffActorAndAuditEvent(t *testing.T) {
 
 	if _, err := authoring.CreateDraftRevision(ctx, lesson.ID, staffID); !errors.Is(err, domain.ErrInvalidState) {
 		t.Fatalf("creating another draft while one exists should fail with invalid state, got %v", err)
+	}
+}
+
+func TestPublishCourseStoresStaffActorAndAuditEvent(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	suffix := fmt.Sprintf("staff-course-publish-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Course publisher', $1, 'active')
+		RETURNING id
+	`, suffix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+
+	repo := NewCatalogRepository(pool)
+	authoring := service.NewAuthoringService(repo)
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: suffix, Title: "Course publication audit", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create course: %v", err)
+	}
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Published lesson", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create lesson: %v", err)
+	}
+	if _, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 1,
+		Prompt: "Question", ExpectedAnswer: "Expected answer", AnswerType: "text",
+		CreatedByStaffID: staffID,
+	}); err != nil {
+		t.Fatalf("create lesson question: %v", err)
+	}
+	if err := authoring.PublishLessonVersion(ctx, lesson.LessonVersionID, staffID); err != nil {
+		t.Fatalf("publish lesson version: %v", err)
+	}
+
+	if err := authoring.PublishCourse(ctx, course.ID, staffID); err != nil {
+		t.Fatalf("publish course: %v", err)
+	}
+	var status string
+	var publishedAt bool
+	if err := pool.QueryRow(ctx,
+		"SELECT status, published_at IS NOT NULL FROM courses WHERE id = $1", course.ID,
+	).Scan(&status, &publishedAt); err != nil {
+		t.Fatalf("read published course state: %v", err)
+	}
+	if status != "published" || !publishedAt {
+		t.Fatalf("published course status/time = %q/%v", status, publishedAt)
+	}
+
+	var actorID, entityID int64
+	var action, entityType, auditedSlug, auditedStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'slug', details->>'status'
+		FROM audit_events
+		WHERE entity_type = 'course' AND entity_id = $1 AND action = 'course.publish'
+	`, course.ID).Scan(&actorID, &action, &entityType, &entityID, &auditedSlug, &auditedStatus); err != nil {
+		t.Fatalf("read course publication audit event: %v", err)
+	}
+	if actorID != staffID || action != "course.publish" || entityType != "course" ||
+		entityID != course.ID || auditedSlug != suffix || auditedStatus != "published" {
+		t.Fatalf("unexpected course publication audit event: actor=%d action=%q entity=%q id=%d slug=%q status=%q",
+			actorID, action, entityType, entityID, auditedSlug, auditedStatus)
+	}
+
+	if err := authoring.PublishCourse(ctx, course.ID, staffID); err != nil {
+		t.Fatalf("repeat course publication should be idempotent: %v", err)
+	}
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'course' AND entity_id = $1 AND action = 'course.publish'
+	`, course.ID).Scan(&auditCount); err != nil {
+		t.Fatalf("count course publication audit events: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("idempotent publication wrote %d audit events, want exactly 1", auditCount)
 	}
 }

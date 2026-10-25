@@ -54,6 +54,7 @@ type StaffAuthoringAPI interface {
 	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64, int64) error
+	PublishCourse(context.Context, int64, int64) error
 }
 
 type staffLoginRequest struct {
@@ -110,6 +111,8 @@ type staffCreateDraftLessonRequest struct {
 type staffCreateDraftRevisionRequest struct{}
 
 type staffPublishLessonVersionRequest struct{}
+
+type staffPublishCourseRequest struct{}
 
 type staffDraftRevisionResponse struct {
 	ID              int64   `json:"id"`
@@ -234,6 +237,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffListQuestionsForVersion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/publish", h.staffPublishCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lessons/{lessonID}/revisions", h.staffCreateDraftRevision)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/publish", h.staffPublishLessonVersion)
@@ -578,6 +582,40 @@ func (h handlers) staffCreateQuestion(w http.ResponseWriter, r *http.Request) {
 		QuestionNumber: question.QuestionNumber, AnswerType: question.AnswerType,
 		CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
 	})
+}
+
+func (h handlers) staffPublishCourse(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	courseID, ok := parsePositiveID(w, r.PathValue("courseID"))
+	if !ok {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input staffPublishCourseRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+
+	if err := h.authoring.PublishCourse(r.Context(), courseID, identity.StaffID); err != nil {
+		h.writeAPIError(w, err, "опубликовать курс")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h handlers) staffPublishLessonVersion(w http.ResponseWriter, r *http.Request) {

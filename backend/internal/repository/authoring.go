@@ -589,8 +589,8 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID,
 	return nil
 }
 
-func (r *CatalogRepository) PublishCourse(ctx context.Context, courseID int64) error {
-	if courseID <= 0 {
+func (r *CatalogRepository) PublishCourse(ctx context.Context, courseID, publishedByStaffID int64) error {
+	if courseID <= 0 || publishedByStaffID < 0 {
 		return ErrInvalidInput
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -599,8 +599,8 @@ func (r *CatalogRepository) PublishCourse(ctx context.Context, courseID int64) e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status string
-	if err := tx.QueryRow(ctx, "SELECT status FROM courses WHERE id = $1 FOR UPDATE", courseID).Scan(&status); err != nil {
+	var slug, status string
+	if err := tx.QueryRow(ctx, "SELECT slug, status FROM courses WHERE id = $1 FOR UPDATE", courseID).Scan(&slug, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -631,6 +631,15 @@ func (r *CatalogRepository) PublishCourse(ctx context.Context, courseID int64) e
 		WHERE id = $1 AND status = 'draft'
 	`, courseID); err != nil {
 		return mapDatabaseError("опубликовать курс", err)
+	}
+	if publishedByStaffID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'course.publish', 'course', $2,
+			        jsonb_build_object('slug', $3::text, 'status', 'published'))
+		`, publishedByStaffID, courseID, slug); err != nil {
+			return mapDatabaseError("записать аудит публикации курса", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать публикацию курса", err)
