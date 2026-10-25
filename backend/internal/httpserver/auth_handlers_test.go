@@ -475,7 +475,6 @@ func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
 	}
 }
 
-
 func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T) {
 	csrfToken := "csrf-lesson-test-token-0123456789"
 	identity := domain.StaffSessionIdentity{
