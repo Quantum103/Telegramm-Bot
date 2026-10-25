@@ -133,6 +133,72 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 	}, nil
 }
 
+// UpdateDraftLessonVersion changes only editable metadata on a draft version.
+// The content update and its audit record commit as a single transaction.
+func (r *CatalogRepository) UpdateDraftLessonVersion(ctx context.Context, versionID int64, title string, description *string, updatedByStaffID int64) error {
+	title = strings.TrimSpace(title)
+	if versionID <= 0 || updatedByStaffID <= 0 || title == "" || len(title) > 200 ||
+		(description != nil && len(*description) > 4000) {
+		return ErrInvalidInput
+	}
+
+	var descriptionValue any
+	if description != nil {
+		trimmed := strings.TrimSpace(*description)
+		if trimmed != "" {
+			descriptionValue = trimmed
+		}
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return mapDatabaseError("начать изменение черновой версии урока", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var lessonID int64
+	var versionNumber int
+	var status string
+	if err := tx.QueryRow(ctx, `
+		SELECT lesson_id, version_number, status
+		FROM lesson_versions
+		WHERE id = $1
+		FOR UPDATE
+	`, versionID).Scan(&lessonID, &versionNumber, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return mapDatabaseError("проверить версию урока перед изменением", err)
+	}
+	if status != "draft" {
+		return ErrInvalidState
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE lesson_versions
+		SET title = $1, description = $2
+		WHERE id = $3 AND status = 'draft'
+	`, title, descriptionValue, versionID); err != nil {
+		return mapDatabaseError("обновить название и описание черновой версии урока", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE lessons SET updated_at = now() WHERE id = $1
+	`, lessonID); err != nil {
+		return mapDatabaseError("обновить время изменения урока", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+		VALUES ($1, 'lesson_version.draft.update', 'lesson_version', $2,
+		        jsonb_build_object('version_number', $3::integer, 'status', 'draft'))
+	`, updatedByStaffID, versionID, versionNumber); err != nil {
+		return mapDatabaseError("записать аудит изменения черновой версии урока", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать изменение черновой версии урока", err)
+	}
+	return nil
+}
+
 func (r *CatalogRepository) ListQuestionsForStaffVersion(ctx context.Context, lessonVersionID int64) ([]domain.LessonQuestion, error) {
 	if lessonVersionID <= 0 {
 		return nil, ErrInvalidInput

@@ -51,6 +51,7 @@ type StaffAuthoringAPI interface {
 	ListQuestionsForStaffVersion(context.Context, int64) ([]domain.LessonQuestion, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
+	UpdateDraftLessonVersion(context.Context, int64, string, *string, int64) error
 	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
 	UpdateQuestion(context.Context, int64, domain.CreateQuestionParams, int64) (domain.LessonQuestion, error)
@@ -105,6 +106,11 @@ type staffCreateDraftCourseRequest struct {
 }
 
 type staffCreateDraftLessonRequest struct {
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+}
+
+type staffUpdateDraftLessonVersionRequest struct {
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 }
@@ -246,6 +252,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffListQuestionsForVersion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
+			staffAdminMux.HandleFunc("PUT /api/v1/staff/admin/lesson-versions/{versionID}", h.staffUpdateDraftLessonVersion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/publish", h.staffPublishCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lessons/{lessonID}/revisions", h.staffCreateDraftRevision)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
@@ -507,6 +514,41 @@ func (h handlers) staffCreateDraftLesson(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toLessonResponse(lesson))
+}
+
+func (h handlers) staffUpdateDraftLessonVersion(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	versionID, ok := parsePositiveID(w, r.PathValue("versionID"))
+	if !ok {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input staffUpdateDraftLessonVersionRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+	if err := h.authoring.UpdateDraftLessonVersion(
+		r.Context(), versionID, input.Title, input.Description, identity.StaffID,
+	); err != nil {
+		h.writeAPIError(w, err, "обновить черновую версию урока")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h handlers) staffCreateDraftRevision(w http.ResponseWriter, r *http.Request) {

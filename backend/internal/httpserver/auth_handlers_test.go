@@ -417,6 +417,12 @@ type fakeStaffAuthoringAPI struct {
 	createLessonParams     domain.CreateLessonParams
 	createLessonResult     domain.Lesson
 	createLessonErr        error
+	updateLessonVersionCalls       int
+	updateLessonVersionID          int64
+	updateLessonVersionTitle       string
+	updateLessonVersionDescription *string
+	updateLessonVersionStaffID     int64
+	updateLessonVersionErr         error
 	createRevisionCalls    int
 	createRevisionLessonID int64
 	createRevisionStaffID  int64
@@ -469,6 +475,15 @@ func (f *fakeStaffAuthoringAPI) CreateDraftLesson(_ context.Context, params doma
 	f.createLessonCalls++
 	f.createLessonParams = params
 	return f.createLessonResult, f.createLessonErr
+}
+
+func (f *fakeStaffAuthoringAPI) UpdateDraftLessonVersion(_ context.Context, versionID int64, title string, description *string, staffID int64) error {
+	f.updateLessonVersionCalls++
+	f.updateLessonVersionID = versionID
+	f.updateLessonVersionTitle = title
+	f.updateLessonVersionDescription = description
+	f.updateLessonVersionStaffID = staffID
+	return f.updateLessonVersionErr
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftRevision(_ context.Context, lessonID, staffID int64) (domain.Lesson, error) {
@@ -623,6 +638,98 @@ func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T)
 	}
 	if strings.Contains(response.Body.String(), csrfToken) || strings.Contains(response.Body.String(), "staff_session") {
 		t.Fatal("lesson creation response leaked authentication material")
+	}
+}
+
+func TestStaffUpdateDraftLessonVersionRequiresSessionAndCSRF(t *testing.T) {
+	csrfToken := "csrf-lesson-update-test-token-012345"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	authoring := &fakeStaffAuthoringAPI{}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+	body := `{"title":"Updated lesson","description":"Updated description"}`
+	makeRequest := func(versionID, payload string, includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPut,
+			"https://admin.example.test/api/v1/staff/admin/lesson-versions/"+versionID,
+			strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	unauthenticated := httptest.NewRequest(http.MethodPut,
+		"https://admin.example.test/api/v1/staff/admin/lesson-versions/77", strings.NewReader(body))
+	unauthenticated.Header.Set("Content-Type", "application/json")
+	unauthenticated.Header.Set("Origin", "https://admin.example.test")
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d; body=%s",
+			unauthenticatedResponse.Code, http.StatusUnauthorized, unauthenticatedResponse.Body.String())
+	}
+	if authoring.updateLessonVersionCalls != 0 {
+		t.Fatal("lesson version update reached the service without a staff session")
+	}
+
+	withoutCSRF := makeRequest("77", body, false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s",
+			withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.updateLessonVersionCalls != 0 {
+		t.Fatal("lesson version update reached the service without a valid CSRF token")
+	}
+
+	withUntrustedActor := makeRequest("77",
+		`{"title":"Updated lesson","description":"Updated description","updated_by_staff_id":999}`, true)
+	if withUntrustedActor.Code != http.StatusBadRequest {
+		t.Fatalf("request with caller-supplied actor ID status = %d, want %d; body=%s",
+			withUntrustedActor.Code, http.StatusBadRequest, withUntrustedActor.Body.String())
+	}
+	if authoring.updateLessonVersionCalls != 0 {
+		t.Fatal("caller-supplied actor ID reached the lesson version update service")
+	}
+
+	badID := makeRequest("0", body, true)
+	if badID.Code != http.StatusBadRequest {
+		t.Fatalf("zero version ID status = %d, want %d; body=%s",
+			badID.Code, http.StatusBadRequest, badID.Body.String())
+	}
+	if authoring.updateLessonVersionCalls != 0 {
+		t.Fatal("invalid version ID reached the lesson version update service")
+	}
+
+	response := makeRequest("77", body, true)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("valid request status = %d, want %d; body=%s",
+			response.Code, http.StatusNoContent, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if authoring.updateLessonVersionCalls != 1 ||
+		authoring.updateLessonVersionID != 77 ||
+		authoring.updateLessonVersionTitle != "Updated lesson" ||
+		authoring.updateLessonVersionDescription == nil ||
+		*authoring.updateLessonVersionDescription != "Updated description" ||
+		authoring.updateLessonVersionStaffID != identity.StaffID {
+		t.Fatalf("unexpected lesson version update call: calls=%d version=%d title=%q description=%v actor=%d",
+			authoring.updateLessonVersionCalls, authoring.updateLessonVersionID,
+			authoring.updateLessonVersionTitle, authoring.updateLessonVersionDescription,
+			authoring.updateLessonVersionStaffID)
 	}
 }
 

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
@@ -852,5 +854,205 @@ func TestUpdateDraftQuestionReplacesMaterialsAuditsAndProtectsPublishedVersion(t
 	}
 	if finalPrompt != "Updated prompt" || finalAnswer != "Updated answer" {
 		t.Fatalf("published content changed after rejected update: prompt=%q answer=%q", finalPrompt, finalAnswer)
+	}
+}
+
+
+func draftLessonVersionUpdateFixture(t *testing.T) (context.Context, *pgxpool.Pool, *service.AuthoringService, int64, int64) {
+	t.Helper()
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+
+	suffix := fmt.Sprintf("lesson-version-update-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Lesson version editor', $1, 'active')
+		RETURNING id
+	`, suffix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+	authoring := service.NewAuthoringService(NewCatalogRepository(pool))
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: suffix, Title: "Lesson version update course", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create draft course: %v", err)
+	}
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Original lesson title", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create draft lesson: %v", err)
+	}
+	return ctx, pool, authoring, staffID, lesson.LessonVersionID
+}
+
+func TestUpdateDraftLessonVersionValidatesAuditsAndProtectsPublishedContent(t *testing.T) {
+	ctx, pool, authoring, staffID, versionID := draftLessonVersionUpdateFixture(t)
+
+	invalidUpdates := []struct {
+		name        string
+		title       string
+		description *string
+	}{
+		{name: "blank title", title: "  "},
+		{name: "oversized title", title: strings.Repeat("x", 201)},
+		{name: "oversized description", title: "Valid title", description: stringPtr(strings.Repeat("x", 4001))},
+	}
+	for _, tt := range invalidUpdates {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := authoring.UpdateDraftLessonVersion(ctx, versionID, tt.title, tt.description, staffID); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("update error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+
+	var title, description string
+	if err := pool.QueryRow(ctx, `
+		SELECT title, COALESCE(description, '')
+		FROM lesson_versions WHERE id = $1
+	`, versionID).Scan(&title, &description); err != nil {
+		t.Fatalf("read version after invalid updates: %v", err)
+	}
+	if title != "Original lesson title" || description != "" {
+		t.Fatalf("invalid updates mutated version: title=%q description=%q", title, description)
+	}
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'lesson_version' AND entity_id = $1
+		  AND action = 'lesson_version.draft.update'
+	`, versionID).Scan(&auditCount); err != nil {
+		t.Fatalf("count audit events after invalid updates: %v", err)
+	}
+	if auditCount != 0 {
+		t.Fatalf("invalid updates created %d audit events, want 0", auditCount)
+	}
+
+	newDescription := "  Updated description  "
+	if err := authoring.UpdateDraftLessonVersion(ctx, versionID, "  Updated lesson title  ", &newDescription, staffID); err != nil {
+		t.Fatalf("update draft lesson version: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT title, COALESCE(description, '')
+		FROM lesson_versions WHERE id = $1
+	`, versionID).Scan(&title, &description); err != nil {
+		t.Fatalf("read updated version: %v", err)
+	}
+	if title != "Updated lesson title" || description != "Updated description" {
+		t.Fatalf("stored metadata was not normalized: title=%q description=%q", title, description)
+	}
+	var actorID, entityID int64
+	var action, entityType, auditedVersion, auditedStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'version_number', details->>'status'
+		FROM audit_events
+		WHERE entity_type = 'lesson_version' AND entity_id = $1
+		  AND action = 'lesson_version.draft.update'
+	`, versionID).Scan(&actorID, &action, &entityType, &entityID, &auditedVersion, &auditedStatus); err != nil {
+		t.Fatalf("read lesson version update audit event: %v", err)
+	}
+	if actorID != staffID || action != "lesson_version.draft.update" ||
+		entityType != "lesson_version" || entityID != versionID ||
+		auditedVersion != "1" || auditedStatus != "draft" {
+		t.Fatalf("unexpected update audit event: actor=%d action=%q entity=%q id=%d version=%q status=%q",
+			actorID, action, entityType, entityID, auditedVersion, auditedStatus)
+	}
+	if err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: versionID, QuestionNumber: 1,
+		Prompt: "Question for publication", ExpectedAnswer: "Expected answer",
+		AnswerType: "text", CreatedByStaffID: staffID,
+	}); err != nil {
+		t.Fatalf("create question before publishing version: %v", err)
+	}
+	if err := authoring.PublishLessonVersion(ctx, versionID, staffID); err != nil {
+		t.Fatalf("publish updated version: %v", err)
+	}
+	if err := authoring.UpdateDraftLessonVersion(ctx, versionID, "Must not change", nil, staffID); !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("editing published lesson version error = %v, want ErrInvalidState", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT title, COALESCE(description, '')
+		FROM lesson_versions WHERE id = $1
+	`, versionID).Scan(&title, &description); err != nil {
+		t.Fatalf("read published version after rejected update: %v", err)
+	}
+	if title != "Updated lesson title" || description != "Updated description" {
+		t.Fatalf("published metadata changed: title=%q description=%q", title, description)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'lesson_version' AND entity_id = $1
+		  AND action = 'lesson_version.draft.update'
+	`, versionID).Scan(&auditCount); err != nil {
+		t.Fatalf("count update audit events after publication: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("rejected update changed draft update audit count to %d, want 1", auditCount)
+	}
+}
+
+func TestUpdateDraftLessonVersionRollsBackWhenAuditInsertFails(t *testing.T) {
+	ctx, pool, authoring, staffID, versionID := draftLessonVersionUpdateFixture(t)
+	functionName := fmt.Sprintf("reject_lesson_version_update_audit_%d", time.Now().UnixNano())
+	triggerName := functionName + "_trigger"
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON audit_events", triggerName)); err != nil {
+			t.Errorf("drop lesson version audit failure trigger: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", functionName)); err != nil {
+			t.Errorf("drop lesson version audit failure function: %v", err)
+		}
+	})
+	functionSQL := fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			IF NEW.action = 'lesson_version.draft.update' THEN
+				RAISE EXCEPTION 'forced lesson version audit insert failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$
+	`, functionName)
+	if _, err := pool.Exec(ctx, functionSQL); err != nil {
+		t.Fatalf("create lesson version audit failure function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(
+		"CREATE TRIGGER %s BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION %s()",
+		triggerName, functionName,
+	)); err != nil {
+		t.Fatalf("create lesson version audit failure trigger: %v", err)
+	}
+
+	if err := authoring.UpdateDraftLessonVersion(ctx, versionID, "Must roll back", stringPtr("Must roll back"), staffID); err == nil {
+		t.Fatal("lesson version update succeeded despite forced audit insert failure")
+	}
+	var title, description string
+	if err := pool.QueryRow(ctx, `
+		SELECT title, COALESCE(description, '')
+		FROM lesson_versions WHERE id = $1
+	`, versionID).Scan(&title, &description); err != nil {
+		t.Fatalf("read version after failed transaction: %v", err)
+	}
+	if title != "Original lesson title" || description != "" {
+		t.Fatalf("failed transaction mutated lesson metadata: title=%q description=%q", title, description)
+	}
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'lesson_version' AND entity_id = $1
+		  AND action = 'lesson_version.draft.update'
+	`, versionID).Scan(&auditCount); err != nil {
+		t.Fatalf("count update audit events after failure: %v", err)
+	}
+	if auditCount != 0 {
+		t.Fatalf("failed update left %d update audit events, want 0", auditCount)
 	}
 }
