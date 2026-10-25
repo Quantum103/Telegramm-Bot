@@ -10,9 +10,10 @@ type CreateCourseParams struct {
 
 // CreateLessonParams создаёт самостоятельный урок и его первую черновую версию.
 type CreateLessonParams struct {
-	CourseID    int64
-	Title       string
-	Description *string
+	CourseID         int64
+	Title            string
+	Description      *string
+	CreatedByStaffID int64
 }
 
 type QuestionCriterionInput struct {

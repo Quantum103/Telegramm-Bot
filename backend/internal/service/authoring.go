@@ -39,7 +39,9 @@ func (s *AuthoringService) CreateDraftCourse(ctx context.Context, params domain.
 
 func (s *AuthoringService) CreateDraftLesson(ctx context.Context, params domain.CreateLessonParams) (domain.Lesson, error) {
 	params.Title = strings.TrimSpace(params.Title)
-	if params.CourseID <= 0 || params.Title == "" {
+	if params.CourseID <= 0 || params.Title == "" || len(params.Title) > 200 ||
+		params.CreatedByStaffID < 0 ||
+		(params.Description != nil && len(*params.Description) > 4000) {
 		return domain.Lesson{}, domain.ErrInvalidInput
 	}
 	return s.store.CreateDraftLesson(ctx, params)

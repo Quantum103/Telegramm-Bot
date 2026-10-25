@@ -402,12 +402,22 @@ type fakeStaffAuthoringAPI struct {
 	createCourseParams domain.CreateCourseParams
 	createCourseResult domain.Course
 	createCourseErr    error
+	createLessonCalls  int
+	createLessonParams domain.CreateLessonParams
+	createLessonResult domain.Lesson
+	createLessonErr    error
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
 	f.createCourseCalls++
 	f.createCourseParams = params
 	return f.createCourseResult, f.createCourseErr
+}
+
+func (f *fakeStaffAuthoringAPI) CreateDraftLesson(_ context.Context, params domain.CreateLessonParams) (domain.Lesson, error) {
+	f.createLessonCalls++
+	f.createLessonParams = params
+	return f.createLessonResult, f.createLessonErr
 }
 
 func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
@@ -462,5 +472,71 @@ func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), csrfToken) || strings.Contains(response.Body.String(), "staff_session") {
 		t.Fatal("course creation response leaked authentication material")
+	}
+}
+
+
+func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T) {
+	csrfToken := "csrf-lesson-test-token-0123456789"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	authoring := &fakeStaffAuthoringAPI{createLessonResult: domain.Lesson{
+		ID: 123, CourseID: 77, CourseTitle: "Draft course", Position: 1,
+		LessonVersionID: 124, VersionNumber: 1, Title: "First lesson",
+	}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	makeRequest := func(body string, includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "https://admin.example.test/api/v1/staff/admin/courses/77/lessons",
+			strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	withoutCSRF := makeRequest(`{"title":"First lesson"}`, false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s", withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.createLessonCalls != 0 {
+		t.Fatal("authoring service was called without a valid CSRF token")
+	}
+
+	withUntrustedCourseID := makeRequest(`{"title":"First lesson","course_id":999}`, true)
+	if withUntrustedCourseID.Code != http.StatusBadRequest {
+		t.Fatalf("request with caller-supplied course_id status = %d, want %d; body=%s", withUntrustedCourseID.Code, http.StatusBadRequest, withUntrustedCourseID.Body.String())
+	}
+	if authoring.createLessonCalls != 0 {
+		t.Fatal("request with unknown course_id field reached the authoring service")
+	}
+
+	response := makeRequest(`{"title":"First lesson","description":"Draft description"}`, true)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("valid request status = %d, want %d; body=%s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	if authoring.createLessonCalls != 1 {
+		t.Fatalf("create lesson calls = %d, want 1", authoring.createLessonCalls)
+	}
+	if authoring.createLessonParams.CourseID != 77 {
+		t.Fatalf("CourseID = %d, want path course ID 77", authoring.createLessonParams.CourseID)
+	}
+	if authoring.createLessonParams.CreatedByStaffID != identity.StaffID {
+		t.Fatalf("CreatedByStaffID = %d, want authenticated staff ID %d", authoring.createLessonParams.CreatedByStaffID, identity.StaffID)
+	}
+	if strings.Contains(response.Body.String(), csrfToken) || strings.Contains(response.Body.String(), "staff_session") {
+		t.Fatal("lesson creation response leaked authentication material")
 	}
 }

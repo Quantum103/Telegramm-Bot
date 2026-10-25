@@ -57,7 +57,9 @@ func (r *CatalogRepository) CreateDraftCourse(ctx context.Context, params domain
 
 func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain.CreateLessonParams) (domain.Lesson, error) {
 	params.Title = strings.TrimSpace(params.Title)
-	if params.CourseID <= 0 || params.Title == "" {
+	if params.CourseID <= 0 || params.Title == "" || len(params.Title) > 200 ||
+		params.CreatedByStaffID < 0 ||
+		(params.Description != nil && len(*params.Description) > 4000) {
 		return domain.Lesson{}, ErrInvalidInput
 	}
 	var description any
@@ -98,10 +100,10 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 		return domain.Lesson{}, mapDatabaseError("создать урок", err)
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO lesson_versions (lesson_id, version_number, title, description, status)
-		VALUES ($1, 1, $2, $3, 'draft')
+		INSERT INTO lesson_versions (lesson_id, version_number, title, description, status, created_by_staff_id)
+		VALUES ($1, 1, $2, $3, 'draft', NULLIF($4, 0))
 		RETURNING id
-	`, lessonID, params.Title, description).Scan(&versionID); err != nil {
+	`, lessonID, params.Title, description, params.CreatedByStaffID).Scan(&versionID); err != nil {
 		return domain.Lesson{}, mapDatabaseError("создать черновую версию урока", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -109,6 +111,15 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 		VALUES ($1, $2, $3)
 	`, params.CourseID, lessonID, position); err != nil {
 		return domain.Lesson{}, mapDatabaseError("добавить урок в курс", err)
+	}
+	if params.CreatedByStaffID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'lesson.draft.create', 'lesson', $2,
+			        jsonb_build_object('course_id', $3::bigint, 'version_number', 1, 'status', 'draft'))
+		`, params.CreatedByStaffID, lessonID, params.CourseID); err != nil {
+			return domain.Lesson{}, mapDatabaseError("записать аудит создания урока", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Lesson{}, mapDatabaseError("зафиксировать создание урока", err)

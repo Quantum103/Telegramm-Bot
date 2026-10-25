@@ -210,3 +210,83 @@ func TestCreateDraftCourseStoresStaffActorAndAuditEvent(t *testing.T) {
 		t.Fatalf("unexpected audit event: actor=%d action=%q entity=%q id=%d slug=%q", actorID, action, entityType, entityID, auditedSlug)
 	}
 }
+
+
+func TestCreateDraftLessonStoresStaffActorAndAuditEvent(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	prefix := fmt.Sprintf("staff-lesson-audit-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Lesson author', $1, 'active')
+		RETURNING id
+	`, prefix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+
+	var courseID, lessonID int64
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		if lessonID > 0 {
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'lesson' AND entity_id = $1", lessonID); err != nil {
+				t.Errorf("cleanup lesson audit event: %v", err)
+			}
+		}
+		if courseID > 0 {
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'course' AND entity_id = $1", courseID); err != nil {
+				t.Errorf("cleanup course audit event: %v", err)
+			}
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM courses WHERE id = $1", courseID); err != nil {
+				t.Errorf("cleanup course: %v", err)
+			}
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_accounts WHERE id = $1", staffID); err != nil {
+			t.Errorf("cleanup staff account: %v", err)
+		}
+	})
+
+	course, err := service.NewAuthoringService(NewCatalogRepository(pool)).CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: prefix, Title: "Lesson audit course", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create audited course: %v", err)
+	}
+	courseID = course.ID
+
+	lesson, err := service.NewAuthoringService(NewCatalogRepository(pool)).CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Staff-created draft lesson", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create audited lesson: %v", err)
+	}
+	lessonID = lesson.ID
+
+	var createdBy int64
+	if err := pool.QueryRow(ctx, "SELECT created_by_staff_id FROM lesson_versions WHERE id = $1", lesson.LessonVersionID).Scan(&createdBy); err != nil {
+		t.Fatalf("read lesson version creator: %v", err)
+	}
+	if createdBy != staffID {
+		t.Fatalf("lesson version creator = %d, want %d", createdBy, staffID)
+	}
+
+	var actorID, entityID int64
+	var action, entityType, auditedCourseID, versionNumber, status string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'course_id', details->>'version_number', details->>'status'
+		FROM audit_events
+		WHERE entity_type = 'lesson' AND entity_id = $1
+		ORDER BY id DESC LIMIT 1
+	`, lesson.ID).Scan(&actorID, &action, &entityType, &entityID, &auditedCourseID, &versionNumber, &status); err != nil {
+		t.Fatalf("read lesson audit event: %v", err)
+	}
+	if actorID != staffID || action != "lesson.draft.create" || entityType != "lesson" ||
+		entityID != lesson.ID || auditedCourseID != fmt.Sprint(course.ID) || versionNumber != "1" || status != "draft" {
+		t.Fatalf("unexpected audit event: actor=%d action=%q entity=%q id=%d course=%q version=%q status=%q",
+			actorID, action, entityType, entityID, auditedCourseID, versionNumber, status)
+	}
+}

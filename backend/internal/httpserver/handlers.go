@@ -47,6 +47,7 @@ type StaffAuthAPI interface {
 
 type StaffAuthoringAPI interface {
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
+	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 }
 
 type staffLoginRequest struct {
@@ -56,6 +57,11 @@ type staffLoginRequest struct {
 
 type staffCreateDraftCourseRequest struct {
 	Slug        string  `json:"slug"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+}
+
+type staffCreateDraftLessonRequest struct {
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 }
@@ -145,6 +151,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		staffAdminMux := http.NewServeMux()
 		if h.authoring != nil {
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
 		}
 		mux.Handle("/api/v1/staff/admin/", h.staffSessionMiddleware(staffAdminMux))
 	}
@@ -277,6 +284,44 @@ func (h handlers) staffCreateDraftCourse(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusCreated, course)
+}
+
+func (h handlers) staffCreateDraftLesson(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	courseID, ok := parsePositiveID(w, r.PathValue("courseID"))
+	if !ok {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input staffCreateDraftLessonRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+
+	lesson, err := h.authoring.CreateDraftLesson(r.Context(), domain.CreateLessonParams{
+		CourseID: courseID, Title: input.Title, Description: input.Description,
+		CreatedByStaffID: identity.StaffID,
+	})
+	if err != nil {
+		h.writeAPIError(w, err, "создать черновик урока")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toLessonResponse(lesson))
 }
 
 func (h handlers) staffLogout(w http.ResponseWriter, r *http.Request) {
