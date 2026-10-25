@@ -398,9 +398,17 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 }
 
 type fakeStaffAuthoringAPI struct {
-	listCoursesCalls     int
-	listCoursesResult    []domain.Course
-	listCoursesErr       error
+	listCoursesCalls          int
+	listCoursesResult         []domain.Course
+	listCoursesErr            error
+	listLessonsCalls          int
+	listLessonsCourseID       int64
+	listLessonsResult         []domain.StaffLesson
+	listLessonsErr            error
+	listQuestionsCalls        int
+	listQuestionsVersionID    int64
+	listQuestionsResult       []domain.LessonQuestion
+	listQuestionsErr          error
 	listLessonsCalls     int
 	listLessonsCourseID  int64
 	listLessonsResult    []domain.StaffLesson
@@ -428,6 +436,12 @@ func (f *fakeStaffAuthoringAPI) ListLessonsForStaffByCourseID(_ context.Context,
 	f.listLessonsCalls++
 	f.listLessonsCourseID = courseID
 	return f.listLessonsResult, f.listLessonsErr
+}
+
+func (f *fakeStaffAuthoringAPI) ListQuestionsForStaffVersion(_ context.Context, versionID int64) ([]domain.LessonQuestion, error) {
+	f.listQuestionsCalls++
+	f.listQuestionsVersionID = versionID
+	return f.listQuestionsResult, f.listQuestionsErr
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
@@ -710,5 +724,72 @@ func TestStaffListLessonsForCourseRequiresSessionAndReturnsLatestVersionMetadata
 	}
 	if authoring.listLessonsCalls != 1 {
 		t.Fatal("invalid course ID reached the authoring service")
+	}
+}
+
+func TestStaffListQuestionsForVersionRequiresSessionAndReturnsInternalAuthoringData(t *testing.T) {
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	explanation := "Internal explanation"
+	authoring := &fakeStaffAuthoringAPI{listQuestionsResult: []domain.LessonQuestion{{
+		ID: 501, LessonVersionID: 93, QuestionNumber: 1, Prompt: "Question text",
+		ExpectedAnswer: "Internal expected answer", AnswerType: "single_choice",
+		ExpectedExplanation: &explanation,
+		Criteria: []domain.QuestionCriterion{{Key: "core", Description: "Core concept", Weight: 2, Required: true}},
+		Options: []domain.QuestionOption{{ID: 601, Key: "A", Text: "Correct option", IsCorrect: true}, {ID: 602, Key: "B", Text: "Other option"}},
+		CommonMistakes: []domain.CommonMistake{{Text: "Mistake", Explanation: "How to correct it"}},
+		BiblePassages: []domain.BiblePassage{{ID: 701, BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17, PassageText: &explanation, SourceNote: &explanation}},
+	}}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	unauthenticated := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/lesson-versions/93/questions", nil)
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d; body=%s", unauthenticatedResponse.Code, http.StatusUnauthorized, unauthenticatedResponse.Body.String())
+	}
+	if authoring.listQuestionsCalls != 0 {
+		t.Fatal("authoring service was called without a staff session")
+	}
+
+	request := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/lesson-versions/93/questions", nil)
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid session status = %d, want %d; body=%s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if authoring.listQuestionsCalls != 1 || authoring.listQuestionsVersionID != 93 {
+		t.Fatalf("list questions calls/version ID = %d/%d, want 1/93", authoring.listQuestionsCalls, authoring.listQuestionsVersionID)
+	}
+	for _, expected := range []string{`"expected_answer":"Internal expected answer"`, `"expected_explanation":"Internal explanation"`, `"is_correct":true`, `"criteria"`, `"common_mistakes"`, `"bible_passages"`} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Errorf("staff response does not include %q: %s", expected, response.Body.String())
+		}
+	}
+	if strings.Contains(response.Body.String(), "staff_session") {
+		t.Fatal("staff questions response leaked a session cookie name")
+	}
+
+	badID := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/lesson-versions/0/questions", nil)
+	badID.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	badIDResponse := httptest.NewRecorder()
+	handler.ServeHTTP(badIDResponse, badID)
+	if badIDResponse.Code != http.StatusBadRequest {
+		t.Fatalf("zero version ID status = %d, want %d; body=%s", badIDResponse.Code, http.StatusBadRequest, badIDResponse.Body.String())
+	}
+	if authoring.listQuestionsCalls != 1 {
+		t.Fatal("invalid version ID reached the authoring service")
 	}
 }

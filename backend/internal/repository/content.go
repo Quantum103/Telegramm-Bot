@@ -63,6 +63,14 @@ func (r *ContentRepository) ListPublishedLessonsByCourse(ctx context.Context, co
 }
 
 func (r *ContentRepository) ListQuestionsForVersion(ctx context.Context, lessonVersionID int64) ([]LessonQuestion, error) {
+	return r.listQuestionsForVersion(ctx, lessonVersionID, false)
+}
+
+func (r *ContentRepository) ListQuestionsForStaffVersion(ctx context.Context, lessonVersionID int64) ([]LessonQuestion, error) {
+	return r.listQuestionsForVersion(ctx, lessonVersionID, true)
+}
+
+func (r *ContentRepository) listQuestionsForVersion(ctx context.Context, lessonVersionID int64, includeDraft bool) ([]LessonQuestion, error) {
 	if lessonVersionID <= 0 {
 		return nil, ErrInvalidInput
 	}
@@ -131,11 +139,11 @@ func (r *ContentRepository) ListQuestionsForVersion(ctx context.Context, lessonV
 			q.updated_at
 		FROM lesson_questions q
 		JOIN lesson_versions lv ON lv.id = q.lesson_version_id
-		WHERE q.lesson_version_id = $1 AND lv.status IN ('published', 'archived')
+		WHERE q.lesson_version_id = $1 AND ($2 OR lv.status IN ('published', 'archived'))
 		ORDER BY q.question_number
 	`
 
-	rows, err := r.pool.Query(ctx, query, lessonVersionID)
+	rows, err := r.pool.Query(ctx, query, lessonVersionID, includeDraft)
 	if err != nil {
 		return nil, mapDatabaseError("получить вопросы версии урока", err)
 	}
@@ -176,14 +184,14 @@ func (r *ContentRepository) ListQuestionsForVersion(ctx context.Context, lessonV
 		return nil, mapDatabaseError("обойти вопросы урока", err)
 	}
 	if len(questions) == 0 {
-		var published bool
+		var versionExists bool
 		if err := r.pool.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM lesson_versions WHERE id = $1 AND status IN ('published', 'archived'))`,
-			lessonVersionID,
-		).Scan(&published); err != nil {
+			`SELECT EXISTS (SELECT 1 FROM lesson_versions WHERE id = $1 AND ($2 OR status IN ('published', 'archived')))`,
+			lessonVersionID, includeDraft,
+		).Scan(&versionExists); err != nil {
 			return nil, mapDatabaseError("проверить версию урока", err)
 		}
-		if !published {
+		if !versionExists {
 			return nil, ErrNotFound
 		}
 	}

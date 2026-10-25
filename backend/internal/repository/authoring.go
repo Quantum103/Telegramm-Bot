@@ -133,6 +133,13 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 	}, nil
 }
 
+func (r *CatalogRepository) ListQuestionsForStaffVersion(ctx context.Context, lessonVersionID int64) ([]domain.LessonQuestion, error) {
+	if lessonVersionID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	return NewContentRepository(r.pool).ListQuestionsForStaffVersion(ctx, lessonVersionID)
+}
+
 func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, params domain.CreateQuestionParams) (domain.LessonQuestion, error) {
 	if params.CreatedByStaffID < 0 || len(params.Prompt) > 4000 || len(params.ExpectedAnswer) > 4000 ||
 		len(params.Options) > 20 || len(params.Criteria) > 50 ||

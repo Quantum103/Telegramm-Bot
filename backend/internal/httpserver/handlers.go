@@ -48,6 +48,7 @@ type StaffAuthAPI interface {
 type StaffAuthoringAPI interface {
 	ListCoursesForStaff(context.Context) ([]domain.Course, error)
 	ListLessonsForStaffByCourseID(context.Context, int64) ([]domain.StaffLesson, error)
+	ListQuestionsForStaffVersion(context.Context, int64) ([]domain.LessonQuestion, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
@@ -64,6 +65,33 @@ type staffCoursesResponse struct {
 
 type staffLessonsResponse struct {
 	Lessons []domain.StaffLesson `json:"lessons"`
+}
+
+type staffQuestionsResponse struct {
+	Questions []staffQuestionResponse `json:"questions"`
+}
+
+type staffQuestionResponse struct {
+	ID                  int64                         `json:"id"`
+	LessonVersionID     int64                         `json:"lesson_version_id"`
+	QuestionNumber      int                           `json:"question_number"`
+	Prompt              string                        `json:"prompt"`
+	ExpectedAnswer      string                        `json:"expected_answer"`
+	AnswerType          string                        `json:"answer_type"`
+	ExpectedExplanation *string                       `json:"expected_explanation,omitempty"`
+	Criteria            []domain.QuestionCriterion    `json:"criteria"`
+	Options             []staffQuestionOptionResponse `json:"options"`
+	CommonMistakes      []domain.CommonMistake        `json:"common_mistakes"`
+	BiblePassages       []domain.BiblePassage         `json:"bible_passages"`
+	CreatedAt           time.Time                     `json:"created_at"`
+	UpdatedAt           time.Time                     `json:"updated_at"`
+}
+
+type staffQuestionOptionResponse struct {
+	ID        int64  `json:"id"`
+	Key       string `json:"key"`
+	Text      string `json:"text"`
+	IsCorrect bool   `json:"is_correct"`
 }
 
 type staffCreateDraftCourseRequest struct {
@@ -184,6 +212,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		if h.authoring != nil {
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses", h.staffListCourses)
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses/{courseID}/lessons", h.staffListLessonsForCourse)
+			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffListQuestionsForVersion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
@@ -325,6 +354,46 @@ func (h handlers) staffListLessonsForCourse(w http.ResponseWriter, r *http.Reque
 		lessons = make([]domain.StaffLesson, 0)
 	}
 	writeJSON(w, http.StatusOK, staffLessonsResponse{Lessons: lessons})
+}
+
+func (h handlers) staffListQuestionsForVersion(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	versionID, ok := parsePositiveID(w, r.PathValue("versionID"))
+	if !ok {
+		return
+	}
+	questions, err := h.authoring.ListQuestionsForStaffVersion(r.Context(), versionID)
+	if err != nil {
+		h.writeAPIError(w, err, "получить вопросы версии для сотрудника")
+		return
+	}
+	response := staffQuestionsResponse{Questions: make([]staffQuestionResponse, 0, len(questions))}
+	for _, question := range questions {
+		item := staffQuestionResponse{
+			ID: question.ID, LessonVersionID: question.LessonVersionID,
+			QuestionNumber: question.QuestionNumber, Prompt: question.Prompt,
+			ExpectedAnswer: question.ExpectedAnswer, AnswerType: question.AnswerType,
+			ExpectedExplanation: question.ExpectedExplanation,
+			Criteria: question.Criteria, Options: make([]staffQuestionOptionResponse, 0, len(question.Options)),
+			CommonMistakes: question.CommonMistakes, BiblePassages: question.BiblePassages,
+			CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
+		}
+		if item.Criteria == nil { item.Criteria = make([]domain.QuestionCriterion, 0) }
+		if item.CommonMistakes == nil { item.CommonMistakes = make([]domain.CommonMistake, 0) }
+		if item.BiblePassages == nil { item.BiblePassages = make([]domain.BiblePassage, 0) }
+		for _, option := range question.Options {
+			item.Options = append(item.Options, staffQuestionOptionResponse{
+				ID: option.ID, Key: option.Key, Text: option.Text, IsCorrect: option.IsCorrect,
+			})
+		}
+		response.Questions = append(response.Questions, item)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h handlers) staffCreateDraftCourse(w http.ResponseWriter, r *http.Request) {

@@ -454,3 +454,62 @@ func TestListLessonsForStaffIncludesDraftVersion(t *testing.T) {
 		t.Fatalf("zero course ID error = %v, want ErrInvalidInput", err)
 	}
 }
+
+func TestListQuestionsForStaffIncludesDraftQuestionAndMaterials(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	repo := NewCatalogRepository(pool)
+	authoring := service.NewAuthoringService(repo)
+	suffix := fmt.Sprintf("staff-question-list-%d", time.Now().UnixNano())
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{Slug: suffix, Title: "Staff question listing"})
+	if err != nil {
+		t.Fatalf("create draft course: %v", err)
+	}
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{CourseID: course.ID, Title: "Question lesson"})
+	if err != nil {
+		t.Fatalf("create draft lesson: %v", err)
+	}
+	correctRequired := true
+	_, err = authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 1,
+		Prompt: "Draft question prompt", ExpectedAnswer: "Expected secret answer", AnswerType: "single_choice",
+		ExpectedExplanation: stringPtr("Explain why the answer is correct"),
+		Criteria: []domain.QuestionCriterionInput{{Key: "core", Description: "Core meaning", Weight: 2, Required: &correctRequired}},
+		Options: []domain.QuestionOptionInput{{Key: "A", Text: "Correct", IsCorrect: true}, {Key: "B", Text: "Incorrect"}},
+		CommonMistakes: []domain.CommonMistake{{Text: "Common mistake", Explanation: "Correction"}},
+		BiblePassages: []domain.BiblePassageInput{{BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17, PassageText: stringPtr("Passage text"), SourceNote: stringPtr("Source note")}},
+	})
+	if err != nil {
+		t.Fatalf("create draft question: %v", err)
+	}
+
+	questions, err := authoring.ListQuestionsForStaffVersion(ctx, lesson.LessonVersionID)
+	if err != nil {
+		t.Fatalf("list draft questions for staff: %v", err)
+	}
+	if len(questions) != 1 {
+		t.Fatalf("staff question count = %d, want 1: %+v", len(questions), questions)
+	}
+	got := questions[0]
+	if got.LessonVersionID != lesson.LessonVersionID || got.QuestionNumber != 1 ||
+		got.Prompt != "Draft question prompt" || got.ExpectedAnswer != "Expected secret answer" ||
+		got.ExpectedExplanation == nil || *got.ExpectedExplanation != "Explain why the answer is correct" ||
+		len(got.Criteria) != 1 || len(got.Options) != 2 || !got.Options[0].IsCorrect ||
+		len(got.CommonMistakes) != 1 || len(got.BiblePassages) != 1 || got.BiblePassages[0].SourceNote == nil {
+		t.Fatalf("staff question listing lost draft content: %+v", got)
+	}
+
+	emptyLesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{CourseID: course.ID, Title: "Empty lesson"})
+	if err != nil {
+		t.Fatalf("create empty draft lesson: %v", err)
+	}
+	emptyQuestions, err := authoring.ListQuestionsForStaffVersion(ctx, emptyLesson.LessonVersionID)
+	if err != nil || emptyQuestions == nil || len(emptyQuestions) != 0 {
+		t.Fatalf("empty draft questions = %#v, error=%v; want empty list without error", emptyQuestions, err)
+	}
+	if _, err := authoring.ListQuestionsForStaffVersion(ctx, 0); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("zero version ID error = %v, want ErrInvalidInput", err)
+	}
+}

@@ -10,6 +10,7 @@ import (
 type AuthoringStore interface {
 	ListCoursesForStaff(context.Context) ([]domain.Course, error)
 	ListLessonsForStaffByCourseID(context.Context, int64) ([]domain.StaffLesson, error)
+	ListQuestionsForStaffVersion(context.Context, int64) ([]domain.LessonQuestion, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateDraftRevision(context.Context, int64) (domain.Lesson, error)
@@ -37,6 +38,13 @@ func (s *AuthoringService) ListLessonsForStaffByCourseID(ctx context.Context, co
 		return nil, domain.ErrInvalidInput
 	}
 	return s.store.ListLessonsForStaffByCourseID(ctx, courseID)
+}
+
+func (s *AuthoringService) ListQuestionsForStaffVersion(ctx context.Context, lessonVersionID int64) ([]domain.LessonQuestion, error) {
+	if lessonVersionID <= 0 {
+		return nil, domain.ErrInvalidInput
+	}
+	return s.store.ListQuestionsForStaffVersion(ctx, lessonVersionID)
 }
 
 func (s *AuthoringService) CreateDraftCourse(ctx context.Context, params domain.CreateCourseParams) (domain.Course, error) {
