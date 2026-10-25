@@ -239,6 +239,17 @@ func TestCreateDraftLessonStoresStaffActorAndAuditEvent(t *testing.T) {
 			if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'course' AND entity_id = $1", courseID); err != nil {
 				t.Errorf("cleanup course audit event: %v", err)
 			}
+			if lessonID > 0 {
+				if _, err := pool.Exec(cleanupCtx, "DELETE FROM course_lessons WHERE course_id = $1", courseID); err != nil {
+					t.Errorf("cleanup course lesson links: %v", err)
+				}
+				if _, err := pool.Exec(cleanupCtx, "DELETE FROM lesson_versions WHERE lesson_id = $1", lessonID); err != nil {
+					t.Errorf("cleanup lesson versions: %v", err)
+				}
+				if _, err := pool.Exec(cleanupCtx, "DELETE FROM lessons WHERE id = $1", lessonID); err != nil {
+					t.Errorf("cleanup lesson: %v", err)
+				}
+			}
 			if _, err := pool.Exec(cleanupCtx, "DELETE FROM courses WHERE id = $1", courseID); err != nil {
 				t.Errorf("cleanup course: %v", err)
 			}
