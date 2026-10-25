@@ -17,6 +17,26 @@ services:
       retries: 20
       start_period: 5s
 
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Укажите REDIS_PASSWORD в .env}"
+    command:
+      - sh
+      - -ec
+      - |
+        exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}" --maxmemory 256mb --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
   backend:
     build:
       context: ./backend
@@ -38,10 +58,15 @@ services:
       DATABASE_MAX_CONNS: "${DATABASE_MAX_CONNS:-10}"
       DATABASE_MIN_CONNS: "${DATABASE_MIN_CONNS:-1}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Укажите REDIS_PASSWORD в .env}"
+      REDIS_DB: "${REDIS_DB:-0}"
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   frontend:
@@ -71,3 +96,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

@@ -19,6 +19,8 @@ func validEnvironment() map[string]string {
 		"DATABASE_NAME":     "bible_platform",
 		"DATABASE_USER":     "bible_app",
 		"DATABASE_PASSWORD": "test-password",
+		"REDIS_ADDR": "localhost:6379",
+		"REDIS_PASSWORD": "test-redis-password",
 	}
 }
 
@@ -39,6 +41,9 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.TelegramBotToken != "" {
 		t.Errorf("TelegramBotToken = %q, want empty when not configured", cfg.TelegramBotToken)
 	}
+	if cfg.Redis.Addr != "localhost:6379" || cfg.Redis.Password != "test-redis-password" || cfg.Redis.DB != 0 || cfg.Redis.ConnectTimeout != 3*time.Second {
+		t.Errorf("unexpected Redis defaults: %+v", cfg.Redis)
+	}
 }
 
 func TestLoadTrimsOptionalTelegramToken(t *testing.T) {
@@ -55,7 +60,7 @@ func TestLoadTrimsOptionalTelegramToken(t *testing.T) {
 }
 
 func TestLoadRejectsMissingRequiredDatabaseValues(t *testing.T) {
-	tests := []string{"DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD"}
+	tests := []string{"DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD", "REDIS_PASSWORD"}
 	for _, key := range tests {
 		t.Run(key, func(t *testing.T) {
 			values := validEnvironment()
@@ -81,6 +86,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "max connections", key: "DATABASE_MAX_CONNS", value: "0"},
 		{name: "min connections", key: "DATABASE_MIN_CONNS", value: "11"},
 		{name: "ssl mode", key: "DATABASE_SSLMODE", value: "unsafe"},
+		{name: "Redis address", key: "REDIS_ADDR", value: "not-an-address"},
+		{name: "Redis database", key: "REDIS_DB", value: "16"},
+		{name: "Redis timeout", key: "REDIS_CONNECT_TIMEOUT", value: "0s"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

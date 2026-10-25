@@ -18,6 +18,14 @@ type Config struct {
 	HTTPIdleTimeout       time.Duration
 	TelegramBotToken      string
 	Database              DatabaseConfig
+	Redis                 RedisConfig
+}
+
+type RedisConfig struct {
+	Addr string
+	Password string
+	DB int
+	ConnectTimeout time.Duration
 }
 
 // DatabaseConfig содержит параметры пула PostgreSQL.
@@ -61,6 +69,20 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	cfg.TelegramBotToken = strings.TrimSpace(stringValue(lookup, "TELEGRAM_BOT_TOKEN", ""))
+
+	cfg.Redis.Addr = strings.TrimSpace(stringValue(lookup, "REDIS_ADDR", "localhost:6379"))
+	host, redisPort, redisAddrErr := net.SplitHostPort(cfg.Redis.Addr)
+	parsedRedisPort, parsedRedisPortErr := strconv.Atoi(redisPort)
+	if redisAddrErr != nil || host == "" || parsedRedisPortErr != nil || parsedRedisPort < 1 || parsedRedisPort > 65535 {
+		return Config{}, fmt.Errorf("REDIS_ADDR must be a valid host:port address")
+	}
+	cfg.Redis.Password = stringValue(lookup, "REDIS_PASSWORD", "")
+	if strings.TrimSpace(cfg.Redis.Password) == "" { return Config{}, fmt.Errorf("REDIS_PASSWORD is required") }
+	redisDB, err := intValue(lookup, "REDIS_DB", 0)
+	if err != nil { return Config{}, err }
+	if redisDB < 0 || redisDB > 15 { return Config{}, fmt.Errorf("REDIS_DB must be between 0 and 15") }
+	cfg.Redis.DB = redisDB
+	if cfg.Redis.ConnectTimeout, err = durationValue(lookup, "REDIS_CONNECT_TIMEOUT", 3*time.Second); err != nil { return Config{}, err }
 
 	cfg.Database.Host = strings.TrimSpace(stringValue(lookup, "DATABASE_HOST", ""))
 	cfg.Database.Name = strings.TrimSpace(stringValue(lookup, "DATABASE_NAME", ""))

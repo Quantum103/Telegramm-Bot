@@ -76,7 +76,7 @@ type handlers struct {
 	catalog      CatalogAPI
 	staffAuth    StaffAuthAPI
 	cookieSecure bool
-	loginLimiter *staffLoginLimiter
+	loginLimiter StaffLoginRateLimiter
 }
 
 // NewHandler собирает публичные маршруты и сохраняет обратную совместимость тестов.
@@ -85,21 +85,26 @@ func NewHandler(database databasePinger, logger *slog.Logger, catalogs ...Catalo
 	if len(catalogs) > 0 {
 		catalog = catalogs[0]
 	}
-	return newHandler(database, logger, catalog, nil, false)
+	return newHandler(database, logger, catalog, nil, false, newStaffLoginLimiter())
 }
 
 // NewHandlerWithStaffAuth adds staff login/logout endpoints. Production should keep cookieSecure enabled.
 func NewHandlerWithStaffAuth(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool) http.Handler {
-	return newHandler(database, logger, catalog, staffAuth, cookieSecure)
+	return newHandler(database, logger, catalog, staffAuth, cookieSecure, newStaffLoginLimiter())
 }
 
-func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool) http.Handler {
+// NewHandlerWithStaffAuthAndLoginLimiter configures staff authentication with a shared login limiter.
+func NewHandlerWithStaffAuthAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
+	return newHandler(database, logger, catalog, staffAuth, cookieSecure, limiter)
+}
+func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if limiter == nil { limiter = newStaffLoginLimiter() }
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, cookieSecure: cookieSecure, loginLimiter: newStaffLoginLimiter(),
+		staffAuth: staffAuth, cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -115,6 +120,10 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		mux.HandleFunc("POST /api/v1/staff/auth/login", h.staffLogin)
 		mux.Handle("GET /api/v1/staff/auth/me", h.staffSessionMiddleware(http.HandlerFunc(h.staffMe)))
 		mux.HandleFunc("POST /api/v1/staff/auth/logout", h.staffLogout)
+		// All future staff data routes must be registered on this subrouter.
+		// The whole namespace is protected, so route handlers cannot accidentally bypass auth/CSRF.
+		staffAdminMux := http.NewServeMux()
+		mux.Handle("/api/v1/staff/admin/", h.staffSessionMiddleware(staffAdminMux))
 	}
 	return mux
 }
@@ -147,32 +156,55 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "temporarily_unavailable"})
 		return
 	}
-	finish, retryAfter, allowed := h.loginLimiter.begin(loginClientIP(r), input.Email)
+	finish, retryAfter, allowed, limitErr := h.loginLimiter.Begin(r.Context(), loginClientIP(r), input.Email)
+	if limitErr != nil {
+		h.logger.Error("ограничитель попыток входа недоступен", "error", limitErr)
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "temporarily_unavailable"})
+		return
+	}
 	if !allowed {
 		w.Header().Set("Retry-After", formatRetryAfter(retryAfter))
 		writeJSON(w, http.StatusTooManyRequests, apiErrorResponse{Error: "rate_limited"})
 		return
 	}
-	outcome := loginOutcomeNeutral
-	defer func() { finish(outcome) }()
+	completed := false
+	complete := func(outcome StaffLoginAttemptOutcome) bool {
+		if completed { return true }
+		completed = true
+		if err := finish(outcome); err != nil {
+			h.logger.Error("не удалось завершить учёт попытки входа", "error", err)
+			writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "temporarily_unavailable"})
+			return false
+		}
+		return true
+	}
+	defer func() {
+		if !completed {
+			if err := finish(LoginOutcomeNeutral); err != nil {
+				h.logger.Error("не удалось освободить резерв попытки входа", "error", err)
+			}
+		}
+	}()
 
 	result, err := h.staffAuth.Login(r.Context(), input.Email, input.Password)
 	if errors.Is(err, service.ErrInvalidStaffCredentials) {
-		outcome = loginOutcomeFailure
+		if !complete(LoginOutcomeFailure) { return }
 		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "invalid_credentials"})
 		return
 	}
 	if err != nil {
+		if !complete(LoginOutcomeNeutral) { return }
 		h.logger.Error("ошибка входа сотрудника", "error", err)
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
 		return
 	}
 	if result.SessionToken == "" || result.CSRFToken == "" || !result.ExpiresAt.After(time.Now()) {
+		if !complete(LoginOutcomeNeutral) { return }
 		h.logger.Error("сервис авторизации вернул неполные данные сессии")
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
 		return
 	}
-	outcome = loginOutcomeSuccess
+	if !complete(LoginOutcomeSuccess) { return }
 
 	setStaffAuthCookies(w, result.SessionToken, result.CSRFToken, result.ExpiresAt, h.cookieSecure)
 	writeJSON(w, http.StatusOK, staffLoginResponse{Staff: staffIdentityResponse{
@@ -382,6 +414,13 @@ func (h handlers) ready(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "unavailable"})
 		return
+	}
+	if h.loginLimiter != nil {
+		if err := h.loginLimiter.Ping(ctx); err != nil {
+			h.logger.Error("проверка готовности Redis-лимитера завершилась ошибкой", "error", err)
+			writeJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "unavailable"})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
 }

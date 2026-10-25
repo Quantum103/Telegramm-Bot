@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,12 +24,26 @@ const (
 	staffLoginConcurrentRetryDelay = time.Second
 )
 
-type loginAttemptOutcome uint8
+type StaffLoginAttemptOutcome uint8
 
 const (
-	loginOutcomeNeutral loginAttemptOutcome = iota
-	loginOutcomeFailure
-	loginOutcomeSuccess
+	LoginOutcomeNeutral StaffLoginAttemptOutcome = iota
+	LoginOutcomeFailure
+	LoginOutcomeSuccess
+)
+
+type loginAttemptOutcome = StaffLoginAttemptOutcome
+
+const (
+	loginOutcomeNeutral = LoginOutcomeNeutral
+	loginOutcomeFailure = LoginOutcomeFailure
+	loginOutcomeSuccess = LoginOutcomeSuccess
+)
+
+// StaffLoginRateLimiter coordinates attempts across app instances and fails closed on backend errors.
+type StaffLoginRateLimiter interface {
+	Begin(context.Context, string, string) (func(StaffLoginAttemptOutcome) error, time.Duration, bool, error)
+	Ping(context.Context) error
 )
 
 type loginRatePolicy struct {
@@ -260,3 +275,10 @@ func formatRetryAfter(wait time.Duration) string {
 	}
 	return strconv.Itoa(seconds)
 }
+
+func (l *staffLoginLimiter) Begin(_ context.Context, clientIP, email string) (func(StaffLoginAttemptOutcome) error, time.Duration, bool, error) {
+	finish, retryAfter, allowed := l.begin(clientIP, email)
+	if !allowed { return nil, retryAfter, false, nil }
+	return func(outcome StaffLoginAttemptOutcome) error { finish(outcome); return nil }, 0, true, nil
+}
+func (l *staffLoginLimiter) Ping(context.Context) error { return nil }

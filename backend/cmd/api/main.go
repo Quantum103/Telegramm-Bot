@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/repository"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/telegrambot"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -41,6 +42,21 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB,
+		DialTimeout: cfg.Redis.ConnectTimeout, ReadTimeout: 2*time.Second,
+		WriteTimeout: 2*time.Second, PoolSize: 16, MinIdleConns: 2,
+		PoolTimeout: time.Second, MaxRetries: -1,
+	})
+	redisCtx, cancelRedis := context.WithTimeout(context.Background(), cfg.Redis.ConnectTimeout)
+	if err := redisClient.Ping(redisCtx).Err(); err != nil {
+		cancelRedis(); _ = redisClient.Close()
+		return fmt.Errorf("подключиться к Redis для лимитера входа: %w", err)
+	}
+	cancelRedis()
+	defer redisClient.Close()
+	loginLimiter := httpserver.NewRedisStaffLoginLimiter(redisClient)
+
 	studentRepository := repository.NewStudentRepository(pool)
 	studentService := service.NewStudentService(studentRepository)
 	catalogRepository := repository.NewCatalogRepository(pool)
@@ -56,7 +72,7 @@ func run(logger *slog.Logger) error {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.NewHandlerWithStaffAuth(pool, logger, catalogService, service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)), true),
+		Handler:           httpserver.NewHandlerWithStaffAuthAndLoginLimiter(pool, logger, catalogService, service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)), loginLimiter, true),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,

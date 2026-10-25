@@ -359,3 +359,24 @@ func TestStaffLoginRateLimitsRepeatedFailures(t *testing.T) {
 		t.Fatalf("rate-limit response body = %q, want generic rate_limited", response.Body.String())
 	}
 }
+
+func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
+	api := &fakeStaffAuthAPI{loginErr: service.ErrInvalidStaffCredentials, authErr: service.ErrInvalidStaffSession}
+	handler := NewHandlerWithStaffAuth(fakePinger{}, testLogger(), nil, api, true)
+	tests := []struct { name, method, path, body, content string; wantStatus int }{
+		{name:"login requires same origin", method:http.MethodPost, path:"/api/v1/staff/auth/login", body:`{"email":"a@example.test","password":"bad-password"}`, content:"application/json", wantStatus:http.StatusForbidden},
+		{name:"me requires session", method:http.MethodGet, path:"/api/v1/staff/auth/me", wantStatus:http.StatusUnauthorized},
+		{name:"logout requires same origin", method:http.MethodPost, path:"/api/v1/staff/auth/logout", wantStatus:http.StatusForbidden},
+		{name:"admin namespace requires session before route resolution", method:http.MethodPost, path:"/api/v1/staff/admin/courses", wantStatus:http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name,func(t *testing.T){
+			request:=httptest.NewRequest(tt.method,"https://admin.example.test"+tt.path,strings.NewReader(tt.body))
+			if tt.content!="" { request.Header.Set("Content-Type",tt.content) }
+			recorder:=httptest.NewRecorder(); handler.ServeHTTP(recorder,request)
+			if recorder.Code!=tt.wantStatus { t.Fatalf("status = %d, want %d; body=%s",recorder.Code,tt.wantStatus,recorder.Body.String()) }
+		})
+	}
+	if api.loginCalls!=0 { t.Fatalf("login service invoked %d times despite missing Origin",api.loginCalls) }
+	if api.logoutCalls!=0 { t.Fatalf("logout service invoked %d times despite missing Origin",api.logoutCalls) }
+}
