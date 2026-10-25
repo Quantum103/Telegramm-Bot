@@ -2,10 +2,13 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -76,4 +79,46 @@ func (r *StaffAuthRepository) CreateSession(ctx context.Context, session domain.
 		return mapDatabaseError("создать сессию сотрудника", err)
 	}
 	return nil
+}
+
+// GetActiveSessionByTokenHash validates a session token digest and returns its staff identity.
+// Expired/revoked sessions and sessions belonging to non-active accounts are indistinguishable
+// from unknown sessions. Only the supplied digest is queried; raw tokens are never persisted.
+func (r *StaffAuthRepository) GetActiveSessionByTokenHash(
+	ctx context.Context,
+	tokenHash [32]byte,
+) (domain.StaffSessionIdentity, error) {
+	var identity domain.StaffSessionIdentity
+	var csrfHash []byte
+
+	err := r.pool.QueryRow(ctx, `
+		UPDATE staff_sessions AS s
+		SET last_seen_at = now()
+		FROM staff_accounts AS a
+		WHERE a.id = s.staff_id
+			AND s.token_hash = $1
+			AND s.revoked_at IS NULL
+			AND s.expires_at > now()
+			AND a.account_status = 'active'
+			AND a.email IS NOT NULL
+			AND length(btrim(a.email)) > 0
+		RETURNING s.staff_id, a.display_name, a.email, s.csrf_token_hash, s.expires_at
+	`, tokenHash[:]).Scan(
+		&identity.StaffID,
+		&identity.DisplayName,
+		&identity.Email,
+		&csrfHash,
+		&identity.ExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.StaffSessionIdentity{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.StaffSessionIdentity{}, mapDatabaseError("проверить сессию сотрудника", err)
+	}
+	if len(csrfHash) != len(identity.CSRFTokenHash) {
+		return domain.StaffSessionIdentity{}, fmt.Errorf("проверить сессию сотрудника: некорректная длина хеша CSRF-токена")
+	}
+	copy(identity.CSRFTokenHash[:], csrfHash)
+	return identity, nil
 }

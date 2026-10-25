@@ -18,3 +18,13 @@ type StaffSession struct {
 	CSRFTokenHash [32]byte
 	ExpiresAt     time.Time
 }
+
+// StaffSessionIdentity is the non-secret identity associated with a valid staff session.
+// It deliberately contains only the CSRF digest, never the raw session or CSRF tokens.
+type StaffSessionIdentity struct {
+	StaffID       int64
+	DisplayName   string
+	Email         string
+	CSRFTokenHash [32]byte
+	ExpiresAt     time.Time
+}
