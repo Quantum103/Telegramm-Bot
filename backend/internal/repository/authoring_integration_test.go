@@ -113,7 +113,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 	if !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("нельзя менять опубликованную версию, получено %v", err)
 	}
-	revision, err := authoring.CreateDraftRevision(ctx, lesson.ID)
+	revision, err := authoring.CreateDraftRevision(ctx, lesson.ID, 0)
 	if err != nil {
 		t.Fatalf("создать новую черновую версию опубликованного урока: %v", err)
 	}
@@ -511,5 +511,91 @@ func TestListQuestionsForStaffIncludesDraftQuestionAndMaterials(t *testing.T) {
 	}
 	if _, err := authoring.ListQuestionsForStaffVersion(ctx, 0); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("zero version ID error = %v, want ErrInvalidInput", err)
+	}
+}
+
+
+func TestCreateDraftRevisionStoresStaffActorAndAuditEvent(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	suffix := fmt.Sprintf("staff-revision-audit-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Revision author', $1, 'active')
+		RETURNING id
+	`, suffix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+
+	repo := NewCatalogRepository(pool)
+	authoring := service.NewAuthoringService(repo)
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: suffix, Title: "Revision audit course", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create course: %v", err)
+	}
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Revision audit lesson", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create lesson: %v", err)
+	}
+	baseVersionID := lesson.LessonVersionID
+	if _, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: baseVersionID, QuestionNumber: 1,
+		Prompt: "Question copied into revision", ExpectedAnswer: "Expected answer", AnswerType: "text",
+		CreatedByStaffID: staffID,
+	}); err != nil {
+		t.Fatalf("create source question: %v", err)
+	}
+	if err := authoring.PublishLessonVersion(ctx, baseVersionID); err != nil {
+		t.Fatalf("publish base version: %v", err)
+	}
+
+	revision, err := authoring.CreateDraftRevision(ctx, lesson.ID, staffID)
+	if err != nil {
+		t.Fatalf("create audited revision: %v", err)
+	}
+	revisionVersionID := revision.LessonVersionID
+	if revisionVersionID == baseVersionID || revision.VersionNumber != 2 || revision.QuestionCount != 1 {
+		t.Fatalf("revision not copied correctly: %+v", revision)
+	}
+	var createdBy int64
+	if err := pool.QueryRow(ctx,
+		"SELECT created_by_staff_id FROM lesson_versions WHERE id = $1", revisionVersionID,
+	).Scan(&createdBy); err != nil {
+		t.Fatalf("read revision creator: %v", err)
+	}
+	if createdBy != staffID {
+		t.Fatalf("revision creator = %d, want %d", createdBy, staffID)
+	}
+
+	var actorID, entityID int64
+	var action, entityType, auditedLessonID, auditedBaseID, versionNumber, status string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'lesson_id', details->>'base_version_id',
+		       details->>'version_number', details->>'status'
+		FROM audit_events WHERE entity_type = 'lesson_version' AND entity_id = $1
+	`, revisionVersionID).Scan(
+		&actorID, &action, &entityType, &entityID,
+		&auditedLessonID, &auditedBaseID, &versionNumber, &status,
+	); err != nil {
+		t.Fatalf("read revision audit event: %v", err)
+	}
+	if actorID != staffID || action != "lesson.draft_revision.create" ||
+		entityType != "lesson_version" || entityID != revisionVersionID ||
+		auditedLessonID != fmt.Sprint(lesson.ID) || auditedBaseID != fmt.Sprint(baseVersionID) ||
+		versionNumber != "2" || status != "draft" {
+		t.Fatalf("unexpected revision audit event: actor=%d action=%q entity=%q id=%d lesson=%q base=%q version=%q status=%q",
+			actorID, action, entityType, entityID, auditedLessonID, auditedBaseID, versionNumber, status)
+	}
+
+	if _, err := authoring.CreateDraftRevision(ctx, lesson.ID, staffID); !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("creating another draft while one exists should fail with invalid state, got %v", err)
 	}
 }

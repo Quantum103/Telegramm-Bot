@@ -13,7 +13,7 @@ type AuthoringStore interface {
 	ListQuestionsForStaffVersion(context.Context, int64) ([]domain.LessonQuestion, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
-	CreateDraftRevision(context.Context, int64) (domain.Lesson, error)
+	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestionWithMaterials(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64) error
 	PublishCourse(context.Context, int64) error
@@ -68,11 +68,11 @@ func (s *AuthoringService) CreateDraftLesson(ctx context.Context, params domain.
 	return s.store.CreateDraftLesson(ctx, params)
 }
 
-func (s *AuthoringService) CreateDraftRevision(ctx context.Context, lessonID int64) (domain.Lesson, error) {
-	if lessonID <= 0 {
+func (s *AuthoringService) CreateDraftRevision(ctx context.Context, lessonID, createdByStaffID int64) (domain.Lesson, error) {
+	if lessonID <= 0 || createdByStaffID < 0 {
 		return domain.Lesson{}, domain.ErrInvalidInput
 	}
-	return s.store.CreateDraftRevision(ctx, lessonID)
+	return s.store.CreateDraftRevision(ctx, lessonID, createdByStaffID)
 }
 
 func (s *AuthoringService) CreateQuestion(ctx context.Context, params domain.CreateQuestionParams) (domain.LessonQuestion, error) {

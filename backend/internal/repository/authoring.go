@@ -339,6 +339,16 @@ func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID in
 		return domain.Lesson{}, mapDatabaseError("заблокировать урок для создания версии", err)
 	}
 
+	var existingDraft bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM lesson_versions WHERE lesson_id = $1 AND status = 'draft')
+	`, lessonID).Scan(&existingDraft); err != nil {
+		return domain.Lesson{}, mapDatabaseError("проверить существование черновой версии", err)
+	}
+	if existingDraft {
+		return domain.Lesson{}, ErrInvalidState
+	}
+
 	var baseVersionID int64
 	var baseTitle string
 	var baseDescription pgtype.Text

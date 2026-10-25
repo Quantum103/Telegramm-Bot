@@ -415,8 +415,13 @@ type fakeStaffAuthoringAPI struct {
 	createCourseErr        error
 	createLessonCalls      int
 	createLessonParams     domain.CreateLessonParams
-	createLessonResult     domain.Lesson
-	createLessonErr        error
+	createLessonResult    domain.Lesson
+	createLessonErr       error
+	createRevisionCalls   int
+	createRevisionLessonID int64
+	createRevisionStaffID int64
+	createRevisionResult  domain.Lesson
+	createRevisionErr     error
 	createQuestionCalls    int
 	createQuestionParams   domain.CreateQuestionParams
 	createQuestionResult   domain.LessonQuestion
@@ -450,6 +455,13 @@ func (f *fakeStaffAuthoringAPI) CreateDraftLesson(_ context.Context, params doma
 	f.createLessonCalls++
 	f.createLessonParams = params
 	return f.createLessonResult, f.createLessonErr
+}
+
+func (f *fakeStaffAuthoringAPI) CreateDraftRevision(_ context.Context, lessonID, staffID int64) (domain.Lesson, error) {
+	f.createRevisionCalls++
+	f.createRevisionLessonID = lessonID
+	f.createRevisionStaffID = staffID
+	return f.createRevisionResult, f.createRevisionErr
 }
 
 func (f *fakeStaffAuthoringAPI) CreateQuestion(_ context.Context, params domain.CreateQuestionParams) (domain.LessonQuestion, error) {
@@ -787,5 +799,105 @@ func TestStaffListQuestionsForVersionRequiresSessionAndReturnsInternalAuthoringD
 	}
 	if authoring.listQuestionsCalls != 1 {
 		t.Fatal("invalid version ID reached the authoring service")
+	}
+}
+
+
+func TestStaffCreateDraftRevisionUsesAuthenticatedActorAndCSRF(t *testing.T) {
+	csrfToken := "csrf-revision-test-token-0123456789"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	authoring := &fakeStaffAuthoringAPI{createRevisionResult: domain.Lesson{
+		ID: 77, CourseID: 88, CourseTitle: "Published course", Position: 1,
+		LessonVersionID: 99, VersionNumber: 2, Title: "Lesson in revision", QuestionCount: 4,
+	}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	makeRequest := func(pathID, body string, includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost,
+			"https://admin.example.test/api/v1/staff/admin/lessons/"+pathID+"/revisions",
+			strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	unauthenticated := httptest.NewRequest(http.MethodPost,
+		"https://admin.example.test/api/v1/staff/admin/lessons/77/revisions",
+		strings.NewReader(`{}`))
+	unauthenticated.Header.Set("Content-Type", "application/json")
+	unauthenticated.Header.Set("Origin", "https://admin.example.test")
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d; body=%s",
+			unauthenticatedResponse.Code, http.StatusUnauthorized, unauthenticatedResponse.Body.String())
+	}
+	if authoring.createRevisionCalls != 0 {
+		t.Fatal("revision creation service was called without a staff session")
+	}
+
+	withoutCSRF := makeRequest("77", `{}`, false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s",
+			withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.createRevisionCalls != 0 {
+		t.Fatal("revision creation service was called without a valid CSRF token")
+	}
+
+	withUntrustedActor := makeRequest("77", `{"created_by_staff_id":999}`, true)
+	if withUntrustedActor.Code != http.StatusBadRequest {
+		t.Fatalf("request with caller-supplied actor ID status = %d, want %d; body=%s",
+			withUntrustedActor.Code, http.StatusBadRequest, withUntrustedActor.Body.String())
+	}
+	if authoring.createRevisionCalls != 0 {
+		t.Fatal("request with caller-supplied actor reached the authoring service")
+	}
+
+	response := makeRequest("77", `{}`, true)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("valid request status = %d, want %d; body=%s",
+			response.Code, http.StatusCreated, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if authoring.createRevisionCalls != 1 || authoring.createRevisionLessonID != 77 ||
+		authoring.createRevisionStaffID != identity.StaffID {
+		t.Fatalf("revision service calls/lesson/staff = %d/%d/%d, want 1/77/%d",
+			authoring.createRevisionCalls, authoring.createRevisionLessonID,
+			authoring.createRevisionStaffID, identity.StaffID)
+	}
+	if !strings.Contains(response.Body.String(), `"version_status":"draft"`) ||
+		!strings.Contains(response.Body.String(), `"lesson_version_id":99`) ||
+		!strings.Contains(response.Body.String(), `"question_count":4`) {
+		t.Fatalf("revision response is missing metadata: %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), csrfToken) || strings.Contains(response.Body.String(), "staff_session") ||
+		strings.Contains(response.Body.String(), "expected_answer") {
+		t.Fatal("revision response leaked authentication material or internal question answers")
+	}
+
+	badID := makeRequest("0", `{}`, true)
+	if badID.Code != http.StatusBadRequest {
+		t.Fatalf("zero lesson ID status = %d, want %d; body=%s",
+			badID.Code, http.StatusBadRequest, badID.Body.String())
+	}
+	if authoring.createRevisionCalls != 1 {
+		t.Fatal("invalid lesson ID reached the authoring service")
 	}
 }
