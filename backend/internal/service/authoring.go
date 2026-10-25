@@ -92,7 +92,6 @@ func (s *AuthoringService) CreateQuestion(ctx context.Context, params domain.Cre
 	return s.store.CreateQuestionWithMaterials(ctx, params)
 }
 
-
 func (s *AuthoringService) UpdateQuestion(ctx context.Context, questionID int64, params domain.CreateQuestionParams, updatedByStaffID int64) (domain.LessonQuestion, error) {
 	params.Prompt = strings.TrimSpace(params.Prompt)
 	params.ExpectedAnswer = strings.TrimSpace(params.ExpectedAnswer)

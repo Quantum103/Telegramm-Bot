@@ -320,7 +320,6 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	return question, nil
 }
 
-
 func (r *CatalogRepository) UpdateQuestionWithMaterials(ctx context.Context, questionID int64, params domain.CreateQuestionParams, updatedByStaffID int64) (domain.LessonQuestion, error) {
 	if questionID <= 0 || params.LessonVersionID <= 0 || updatedByStaffID <= 0 ||
 		len(params.Prompt) > 4000 || len(params.ExpectedAnswer) > 4000 ||
@@ -498,8 +497,8 @@ func (r *CatalogRepository) UpdateQuestionWithMaterials(ctx context.Context, que
 			ID: passageID, BookName: passage.BookName, Chapter: passage.Chapter,
 			StartVerse: passage.StartVerse, EndVerse: passage.EndVerse,
 			TranslationName: cleanOptionalString(passage.TranslationName),
-			PassageText: cleanOptionalString(passage.PassageText),
-			SourceNote: cleanOptionalString(passage.SourceNote),
+			PassageText:     cleanOptionalString(passage.PassageText),
+			SourceNote:      cleanOptionalString(passage.SourceNote),
 		})
 	}
 

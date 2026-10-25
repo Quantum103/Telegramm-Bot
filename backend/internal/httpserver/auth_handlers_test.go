@@ -426,12 +426,12 @@ type fakeStaffAuthoringAPI struct {
 	createQuestionParams   domain.CreateQuestionParams
 	createQuestionResult   domain.LessonQuestion
 	createQuestionErr      error
-	updateQuestionCalls     int
-	updateQuestionID        int64
-	updateQuestionParams    domain.CreateQuestionParams
-	updateQuestionStaffID   int64
-	updateQuestionResult    domain.LessonQuestion
-	updateQuestionErr       error
+	updateQuestionCalls    int
+	updateQuestionID       int64
+	updateQuestionParams   domain.CreateQuestionParams
+	updateQuestionStaffID  int64
+	updateQuestionResult   domain.LessonQuestion
+	updateQuestionErr      error
 	publishVersionCalls    int
 	publishVersionID       int64
 	publishVersionStaffID  int64
@@ -1223,4 +1223,3 @@ func TestStaffUpdateQuestionRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatal("invalid path ID reached the question update service")
 	}
 }
-

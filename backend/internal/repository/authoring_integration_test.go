@@ -808,8 +808,8 @@ func TestUpdateDraftQuestionReplacesMaterialsAuditsAndProtectsPublishedVersion(t
 		       (SELECT count(*) FROM question_common_mistakes m WHERE m.question_id=q.id),
 		       (SELECT count(*) FROM question_bible_passages b WHERE b.question_id=q.id)
 		FROM lesson_questions q WHERE q.id = $1
-	`, question.ID).Scan(&storedPrompt,&storedAnswer,&storedType,&storedNumber,
-		&optionCount,&criteriaCount,&mistakeCount,&passageCount); err != nil {
+	`, question.ID).Scan(&storedPrompt, &storedAnswer, &storedType, &storedNumber,
+		&optionCount, &criteriaCount, &mistakeCount, &passageCount); err != nil {
 		t.Fatalf("read updated question content: %v", err)
 	}
 	if storedPrompt != "Updated prompt" || storedAnswer != "Updated answer" ||
@@ -825,7 +825,7 @@ func TestUpdateDraftQuestionReplacesMaterialsAuditsAndProtectsPublishedVersion(t
 		SELECT actor_staff_id, action, entity_type, entity_id,
 		       details->>'lesson_version_id', details->>'question_number', details->>'answer_type'
 		FROM audit_events WHERE entity_type='question' AND entity_id=$1 AND action='question.draft.update'
-	`, question.ID).Scan(&actorID,&action,&entityType,&entityID,&auditedVersionID,&auditedNumber,&auditedType); err != nil {
+	`, question.ID).Scan(&actorID, &action, &entityType, &entityID, &auditedVersionID, &auditedNumber, &auditedType); err != nil {
 		t.Fatalf("read question update audit event: %v", err)
 	}
 	if actorID != staffID || action != "question.draft.update" || entityType != "question" ||
@@ -847,7 +847,7 @@ func TestUpdateDraftQuestionReplacesMaterialsAuditsAndProtectsPublishedVersion(t
 	}
 	var finalPrompt, finalAnswer string
 	if err := pool.QueryRow(ctx, "SELECT prompt, expected_answer FROM lesson_questions WHERE id=$1", question.ID).
-		Scan(&finalPrompt,&finalAnswer); err != nil {
+		Scan(&finalPrompt, &finalAnswer); err != nil {
 		t.Fatalf("read published question after rejected update: %v", err)
 	}
 	if finalPrompt != "Updated prompt" || finalAnswer != "Updated answer" {

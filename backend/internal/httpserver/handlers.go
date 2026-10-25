@@ -594,7 +594,6 @@ func (h handlers) staffCreateQuestion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (h handlers) staffUpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
 	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
@@ -628,7 +627,7 @@ func (h handlers) staffUpdateQuestion(w http.ResponseWriter, r *http.Request) {
 
 	question, err := h.authoring.UpdateQuestion(r.Context(), questionID, domain.CreateQuestionParams{
 		LessonVersionID: versionID,
-		QuestionNumber: input.QuestionNumber, Prompt: input.Prompt, ExpectedAnswer: input.ExpectedAnswer,
+		QuestionNumber:  input.QuestionNumber, Prompt: input.Prompt, ExpectedAnswer: input.ExpectedAnswer,
 		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation,
 		Criteria: input.Criteria, Options: input.Options, CommonMistakes: input.CommonMistakes,
 		BiblePassages: input.BiblePassages,
