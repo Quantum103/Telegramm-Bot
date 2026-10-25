@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,14 +12,18 @@ import (
 )
 
 type fakeStaffAuthStore struct {
-	credentials domain.StaffCredentials
-	getErr      error
-	session     domain.StaffSession
-	createErr   error
-	revokeErr   error
-	revokedHash [32]byte
-	revoked     bool
-	created     bool
+	credentials    domain.StaffCredentials
+	getErr         error
+	session        domain.StaffSession
+	createErr      error
+	lookupIdentity domain.StaffSessionIdentity
+	lookupErr      error
+	lookupHash     [32]byte
+	lookupCalled   bool
+	revokeErr      error
+	revokedHash    [32]byte
+	revoked        bool
+	created        bool
 }
 
 func (s *fakeStaffAuthStore) GetCredentialsByEmail(_ context.Context, _ string) (domain.StaffCredentials, error) {
@@ -29,6 +34,12 @@ func (s *fakeStaffAuthStore) CreateSession(_ context.Context, session domain.Sta
 	s.created = true
 	s.session = session
 	return s.createErr
+}
+
+func (s *fakeStaffAuthStore) GetActiveSessionByTokenHash(_ context.Context, tokenHash [32]byte) (domain.StaffSessionIdentity, error) {
+	s.lookupCalled = true
+	s.lookupHash = tokenHash
+	return s.lookupIdentity, s.lookupErr
 }
 
 func (s *fakeStaffAuthStore) RevokeSessionByTokenHash(_ context.Context, tokenHash [32]byte) error {
@@ -148,5 +159,57 @@ func TestStaffLogoutPropagatesPersistenceError(t *testing.T) {
 	err := NewStaffAuthService(store).Logout(context.Background(), "opaque-session-token")
 	if !errors.Is(err, store.revokeErr) {
 		t.Fatalf("Logout() error = %v, want persistence error", err)
+	}
+}
+
+func TestAuthenticateSessionLooksUpTokenDigest(t *testing.T) {
+	token := strings.Repeat("A", 43)
+	identity := domain.StaffSessionIdentity{
+		StaffID: 19, DisplayName: "Curator", Email: "curator@example.test",
+		ExpiresAt: time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC),
+	}
+	store := &fakeStaffAuthStore{lookupIdentity: identity}
+	svc := NewStaffAuthService(store)
+	svc.now = func() time.Time { return time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC) }
+
+	got, err := svc.AuthenticateSession(context.Background(), token)
+	if err != nil {
+		t.Fatalf("AuthenticateSession() error = %v", err)
+	}
+	if got.StaffID != identity.StaffID || got.Email != identity.Email {
+		t.Fatalf("identity = %+v, want staff ID %d and email %q", got, identity.StaffID, identity.Email)
+	}
+	if !store.lookupCalled || store.lookupHash != auth.HashToken(token) {
+		t.Fatal("AuthenticateSession() did not look up the session by token digest")
+	}
+}
+
+func TestAuthenticateSessionRejectsMalformedExpiredAndUnknownSessions(t *testing.T) {
+	validShape := strings.Repeat("B", 43)
+	now := time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		token string
+		store *fakeStaffAuthStore
+	}{
+		{name: "empty token", token: "", store: &fakeStaffAuthStore{}},
+		{name: "short token", token: "short", store: &fakeStaffAuthStore{}},
+		{name: "invalid base64url", token: strings.Repeat("!", 43), store: &fakeStaffAuthStore{}},
+		{name: "unknown session", token: validShape, store: &fakeStaffAuthStore{lookupErr: domain.ErrNotFound}},
+		{name: "expired identity", token: validShape, store: &fakeStaffAuthStore{lookupIdentity: domain.StaffSessionIdentity{
+			StaffID: 1, Email: "staff@example.test", ExpiresAt: now,
+		}}},
+		{name: "missing identity", token: validShape, store: &fakeStaffAuthStore{lookupIdentity: domain.StaffSessionIdentity{
+			Email: "staff@example.test", ExpiresAt: now.Add(time.Hour),
+		}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewStaffAuthService(tt.store)
+			svc.now = func() time.Time { return now }
+			if _, err := svc.AuthenticateSession(context.Background(), tt.token); !errors.Is(err, ErrInvalidStaffSession) {
+				t.Fatalf("AuthenticateSession() error = %v, want ErrInvalidStaffSession", err)
+			}
+		})
 	}
 }

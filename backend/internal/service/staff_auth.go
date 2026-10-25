@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"time"
@@ -10,13 +11,17 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
-var ErrInvalidStaffCredentials = errors.New("invalid staff credentials")
+var (
+	ErrInvalidStaffCredentials = errors.New("invalid staff credentials")
+	ErrInvalidStaffSession     = errors.New("invalid staff session")
+)
 
 const staffSessionTTL = 12 * time.Hour
 
 type StaffAuthStore interface {
 	GetCredentialsByEmail(context.Context, string) (domain.StaffCredentials, error)
 	CreateSession(context.Context, domain.StaffSession) error
+	GetActiveSessionByTokenHash(context.Context, [32]byte) (domain.StaffSessionIdentity, error)
 	RevokeSessionByTokenHash(context.Context, [32]byte) error
 }
 
@@ -95,4 +100,28 @@ func (s *StaffAuthService) Logout(ctx context.Context, sessionToken string) erro
 		return nil
 	}
 	return s.store.RevokeSessionByTokenHash(ctx, auth.HashToken(sessionToken))
+}
+
+// AuthenticateSession validates the opaque session token against the server-side
+// session store and returns only the associated non-secret staff identity.
+func (s *StaffAuthService) AuthenticateSession(ctx context.Context, sessionToken string) (domain.StaffSessionIdentity, error) {
+	if len(sessionToken) != base64.RawURLEncoding.EncodedLen(32) {
+		return domain.StaffSessionIdentity{}, ErrInvalidStaffSession
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(sessionToken)
+	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != sessionToken {
+		return domain.StaffSessionIdentity{}, ErrInvalidStaffSession
+	}
+
+	identity, err := s.store.GetActiveSessionByTokenHash(ctx, auth.HashToken(sessionToken))
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
+			return domain.StaffSessionIdentity{}, ErrInvalidStaffSession
+		}
+		return domain.StaffSessionIdentity{}, err
+	}
+	if identity.StaffID <= 0 || identity.Email == "" || identity.ExpiresAt.IsZero() || !identity.ExpiresAt.After(s.now()) {
+		return domain.StaffSessionIdentity{}, ErrInvalidStaffSession
+	}
+	return identity, nil
 }

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
@@ -38,6 +40,7 @@ type CatalogAPI interface {
 
 type StaffAuthAPI interface {
 	Login(context.Context, string, string) (service.StaffLoginResult, error)
+	AuthenticateSession(context.Context, string) (domain.StaffSessionIdentity, error)
 	Logout(context.Context, string) error
 }
 
@@ -55,6 +58,13 @@ type staffIdentityResponse struct {
 type staffLoginResponse struct {
 	Staff staffIdentityResponse `json:"staff"`
 }
+
+type staffMeResponse struct {
+	Staff     staffIdentityResponse `json:"staff"`
+	ExpiresAt time.Time             `json:"expires_at"`
+}
+
+type staffSessionContextKey struct{}
 
 type healthResponse struct {
 	Status string `json:"status"`
@@ -102,6 +112,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	}
 	if h.staffAuth != nil {
 		mux.HandleFunc("POST /api/v1/staff/auth/login", h.staffLogin)
+		mux.Handle("GET /api/v1/staff/auth/me", h.staffSessionMiddleware(http.HandlerFunc(h.staffMe)))
 		mux.HandleFunc("POST /api/v1/staff/auth/logout", h.staffLogout)
 	}
 	return mux
@@ -109,7 +120,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 
 func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
-	if !sameOriginOrNoOrigin(r) {
+	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "origin_not_allowed"})
 		return
 	}
@@ -154,24 +165,41 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 
 func (h handlers) staffLogout(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
-	if !sameOriginOrNoOrigin(r) {
+	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "origin_not_allowed"})
 		return
 	}
 
-	cookie, err := r.Cookie(staffSessionCookieName)
-	var sessionToken string
-	if err == nil {
-		sessionToken = cookie.Value
+	sessionCookie, err := r.Cookie(staffSessionCookieName)
+	if err != nil || sessionCookie.Value == "" {
+		clearStaffAuthCookies(w, h.cookieSecure)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	identity, err := h.staffAuth.AuthenticateSession(r.Context(), sessionCookie.Value)
+	if errors.Is(err, service.ErrInvalidStaffSession) {
+		clearStaffAuthCookies(w, h.cookieSecure)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		h.logger.Error("ошибка проверки сессии при выходе сотрудника", "error", err)
+		clearStaffAuthCookies(w, h.cookieSecure)
+		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+		return
+	}
+	if !csrfMatches(r, identity) {
+		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "csrf_token_invalid"})
+		return
+	}
+
+	if err := h.staffAuth.Logout(r.Context(), sessionCookie.Value); err != nil {
+		h.logger.Error("ошибка выхода сотрудника", "error", err)
+		clearStaffAuthCookies(w, h.cookieSecure)
+		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+		return
 	}
 	clearStaffAuthCookies(w, h.cookieSecure)
-	if sessionToken != "" {
-		if err := h.staffAuth.Logout(r.Context(), sessionToken); err != nil {
-			h.logger.Error("ошибка выхода сотрудника", "error", err)
-			writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
-			return
-		}
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -192,10 +220,10 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, destination any) err
 	return nil
 }
 
-func sameOriginOrNoOrigin(r *http.Request) bool {
+func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return true
+		return false
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
@@ -206,6 +234,81 @@ func sameOriginOrNoOrigin(r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+func sameOriginOrNoOrigin(r *http.Request) bool {
+	return r.Header.Get("Origin") == "" || sameOrigin(r)
+}
+
+func csrfMatches(r *http.Request, identity domain.StaffSessionIdentity) bool {
+	csrfCookie, err := r.Cookie(staffCSRFCookieName)
+	if err != nil || csrfCookie.Value == "" {
+		return false
+	}
+	headerToken := r.Header.Get("X-CSRF-Token")
+	if headerToken == "" || len(headerToken) > 128 || len(csrfCookie.Value) > 128 {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(headerToken)) != 1 {
+		return false
+	}
+	digest := auth.HashToken(headerToken)
+	return subtle.ConstantTimeCompare(digest[:], identity.CSRFTokenHash[:]) == 1
+}
+
+func isUnsafeMethod(method string) bool {
+	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
+}
+
+func (h handlers) staffSessionMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setNoStoreHeaders(w)
+		sessionCookie, err := r.Cookie(staffSessionCookieName)
+		if err != nil || sessionCookie.Value == "" {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+
+		identity, err := h.staffAuth.AuthenticateSession(r.Context(), sessionCookie.Value)
+		if errors.Is(err, service.ErrInvalidStaffSession) {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+		if err != nil {
+			h.logger.Error("ошибка проверки сессии сотрудника", "error", err)
+			writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+			return
+		}
+		if identity.StaffID <= 0 || identity.Email == "" || identity.ExpiresAt.IsZero() || !identity.ExpiresAt.After(time.Now()) {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+
+		if isUnsafeMethod(r.Method) {
+			if !sameOrigin(r) {
+				writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "origin_not_allowed"})
+				return
+			}
+			if !csrfMatches(r, identity) {
+				writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "csrf_token_invalid"})
+				return
+			}
+		}
+		ctx := context.WithValue(r.Context(), staffSessionContextKey{}, identity)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (h handlers) staffMe(w http.ResponseWriter, r *http.Request) {
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, staffMeResponse{
+		Staff: staffIdentityResponse{ID: identity.StaffID, DisplayName: identity.DisplayName, Email: identity.Email},
+		ExpiresAt: identity.ExpiresAt,
+	})
 }
 
 func setNoStoreHeaders(w http.ResponseWriter) {

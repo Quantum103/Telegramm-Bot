@@ -10,16 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 type fakeStaffAuthAPI struct {
-	loginResult service.StaffLoginResult
-	loginErr    error
-	loginCalls  int
-	logoutToken string
-	logoutErr   error
-	logoutCalls int
+	loginResult   service.StaffLoginResult
+	loginErr      error
+	loginCalls    int
+	authIdentity  domain.StaffSessionIdentity
+	authErr       error
+	authCalls     int
+	authToken     string
+	logoutToken   string
+	logoutErr     error
+	logoutCalls   int
 }
 
 func (f *fakeStaffAuthAPI) Login(_ context.Context, email, password string) (service.StaffLoginResult, error) {
@@ -28,6 +34,12 @@ func (f *fakeStaffAuthAPI) Login(_ context.Context, email, password string) (ser
 		return service.StaffLoginResult{}, service.ErrInvalidStaffCredentials
 	}
 	return f.loginResult, f.loginErr
+}
+
+func (f *fakeStaffAuthAPI) AuthenticateSession(_ context.Context, token string) (domain.StaffSessionIdentity, error) {
+	f.authCalls++
+	f.authToken = token
+	return f.authIdentity, f.authErr
 }
 
 func (f *fakeStaffAuthAPI) Logout(_ context.Context, token string) error {
@@ -98,6 +110,7 @@ func TestStaffLoginRejectsInvalidCredentialsGenerically(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://admin.example.test/api/v1/staff/auth/login",
 		strings.NewReader(`{"email":"unknown@example.test","password":"wrong"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://admin.example.test")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
@@ -130,6 +143,8 @@ func TestStaffLoginRejectsMalformedOrCrossOriginRequests(t *testing.T) {
 			request.Header.Set("Content-Type", tt.contentType)
 			if tt.origin != "" {
 				request.Header.Set("Origin", tt.origin)
+			} else {
+				request.Header.Set("Origin", "http://admin.example.test")
 			}
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
@@ -144,11 +159,16 @@ func TestStaffLoginRejectsMalformedOrCrossOriginRequests(t *testing.T) {
 }
 
 func TestStaffLogoutRevokesSessionAndClearsCookies(t *testing.T) {
-	api := &fakeStaffAuthAPI{}
+	api := &fakeStaffAuthAPI{authIdentity: domain.StaffSessionIdentity{
+		StaffID: 7, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken("raw-csrf-secret"), ExpiresAt: time.Now().Add(time.Hour),
+	}}
 	handler := NewHandlerWithStaffAuth(fakePinger{}, testLogger(), nil, api, true)
 	request := httptest.NewRequest(http.MethodPost, "https://admin.example.test/api/v1/staff/auth/logout", nil)
 	request.Header.Set("Origin", "https://admin.example.test")
+	request.Header.Set("X-CSRF-Token", "raw-csrf-secret")
 	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "raw-session-secret"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "raw-csrf-secret"})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
@@ -173,10 +193,19 @@ func TestStaffLogoutRevokesSessionAndClearsCookies(t *testing.T) {
 }
 
 func TestStaffLogoutClearsCookiesWhenRevocationFails(t *testing.T) {
-	api := &fakeStaffAuthAPI{logoutErr: errors.New("database unavailable")}
+	api := &fakeStaffAuthAPI{
+		logoutErr: errors.New("database unavailable"),
+		authIdentity: domain.StaffSessionIdentity{
+			StaffID: 7, Email: "admin@example.test",
+			CSRFTokenHash: auth.HashToken("raw-csrf-secret"), ExpiresAt: time.Now().Add(time.Hour),
+		},
+	}
 	handler := NewHandlerWithStaffAuth(fakePinger{}, testLogger(), nil, api, false)
 	request := httptest.NewRequest(http.MethodPost, "http://admin.example.test/api/v1/staff/auth/logout", nil)
+	request.Header.Set("Origin", "http://admin.example.test")
+	request.Header.Set("X-CSRF-Token", "raw-csrf-secret")
 	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "raw-session-secret"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "raw-csrf-secret"})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
@@ -208,4 +237,90 @@ func cookieNames(cookies []*http.Cookie) []string {
 		names = append(names, cookie.Name)
 	}
 	return names
+}
+
+func TestStaffMeRequiresValidSession(t *testing.T) {
+	api := &fakeStaffAuthAPI{authErr: service.ErrInvalidStaffSession}
+	handler := NewHandlerWithStaffAuth(fakePinger{}, testLogger(), nil, api, true)
+	request := httptest.NewRequest(http.MethodGet, "https://admin.example.test/api/v1/staff/auth/me", nil)
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "unauthorized") {
+		t.Fatalf("status/body = %d/%q, want generic unauthorized", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestStaffMeReturnsValidatedIdentityWithoutSecrets(t *testing.T) {
+	api := &fakeStaffAuthAPI{authIdentity: domain.StaffSessionIdentity{
+		StaffID: 12, DisplayName: "Curator", Email: "curator@example.test",
+		CSRFTokenHash: auth.HashToken("csrf-secret"), ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	handler := NewHandlerWithStaffAuth(fakePinger{}, testLogger(), nil, api, true)
+	request := httptest.NewRequest(http.MethodGet, "https://admin.example.test/api/v1/staff/auth/me", nil)
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "curator@example.test") || strings.Contains(recorder.Body.String(), "csrf-secret") {
+		t.Fatalf("unexpected /me response: %s", recorder.Body.String())
+	}
+	if api.authCalls != 1 {
+		t.Fatalf("AuthenticateSession calls = %d, want 1", api.authCalls)
+	}
+}
+
+func TestStaffSessionMiddlewareProtectsUnsafeMethodsWithOriginAndCSRF(t *testing.T) {
+	csrf := "csrf-secret"
+	validIdentity := domain.StaffSessionIdentity{
+		StaffID: 12, DisplayName: "Curator", Email: "curator@example.test",
+		CSRFTokenHash: auth.HashToken(csrf), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	tests := []struct {
+		name       string
+		origin     string
+		csrfCookie string
+		csrfHeader string
+		authErr    error
+		wantStatus int
+	}{
+		{name: "valid request", origin: "https://admin.example.test", csrfCookie: csrf, csrfHeader: csrf, wantStatus: http.StatusNoContent},
+		{name: "missing origin", csrfCookie: csrf, csrfHeader: csrf, wantStatus: http.StatusForbidden},
+		{name: "cross origin", origin: "https://attacker.example", csrfCookie: csrf, csrfHeader: csrf, wantStatus: http.StatusForbidden},
+		{name: "missing CSRF header", origin: "https://admin.example.test", csrfCookie: csrf, wantStatus: http.StatusForbidden},
+		{name: "cookie/header mismatch", origin: "https://admin.example.test", csrfCookie: "other", csrfHeader: csrf, wantStatus: http.StatusForbidden},
+		{name: "unknown session", origin: "https://admin.example.test", csrfCookie: csrf, csrfHeader: csrf, authErr: service.ErrInvalidStaffSession, wantStatus: http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := &fakeStaffAuthAPI{authIdentity: validIdentity, authErr: tt.authErr}
+			h := handlers{logger: testLogger(), staffAuth: api, cookieSecure: true}
+			called := false
+			protected := h.staffSessionMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodPost, "https://admin.example.test/api/v1/staff/protected", nil)
+			if tt.origin != "" {
+				request.Header.Set("Origin", tt.origin)
+			}
+			if tt.csrfHeader != "" {
+				request.Header.Set("X-CSRF-Token", tt.csrfHeader)
+			}
+			request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+			if tt.csrfCookie != "" {
+				request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: tt.csrfCookie})
+			}
+			recorder := httptest.NewRecorder()
+			protected.ServeHTTP(recorder, request)
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+			if called != (tt.wantStatus == http.StatusNoContent) {
+				t.Fatalf("protected handler called = %v for status %d", called, recorder.Code)
+			}
+		})
+	}
 }
