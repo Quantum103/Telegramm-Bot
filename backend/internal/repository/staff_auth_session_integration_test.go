@@ -85,20 +85,20 @@ func TestGetActiveSessionByTokenHash(t *testing.T) {
 		t.Fatal("returned valid session is already expired")
 	}
 
-	var lastSeen time.Time
-	if err := pool.QueryRow(ctx, "SELECT last_seen_at FROM staff_sessions WHERE token_hash = $1", validTokenHash[:]).Scan(&lastSeen); err != nil {
-		t.Fatalf("read last_seen_at: %v", err)
+	var lastSeen, createdAt time.Time
+	if err := pool.QueryRow(ctx, "SELECT last_seen_at, created_at FROM staff_sessions WHERE token_hash = $1", validTokenHash[:]).Scan(&lastSeen, &createdAt); err != nil {
+		t.Fatalf("read session timestamps: %v", err)
 	}
-	if lastSeen.Before(now.Add(-time.Minute)) {
+	if !lastSeen.After(createdAt) {
 		t.Fatal("valid session lookup did not refresh last_seen_at")
 	}
 
 	unknownHash := sha256.Sum256([]byte(prefix + "unknown-token"))
 	for name, digest := range map[string][32]byte{
-		"unknown token":           unknownHash,
-		"revoked session":         revokedHash,
-		"expired session":         expiredHash,
-		"inactive staff account":  inactiveHash,
+		"unknown token":          unknownHash,
+		"revoked session":        revokedHash,
+		"expired session":        expiredHash,
+		"inactive staff account": inactiveHash,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := repo.GetActiveSessionByTokenHash(ctx, digest)
