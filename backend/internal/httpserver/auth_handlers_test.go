@@ -398,18 +398,18 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 }
 
 type fakeStaffAuthoringAPI struct {
-	createCourseCalls  int
-	createCourseParams domain.CreateCourseParams
-	createCourseResult domain.Course
-	createCourseErr    error
-	createLessonCalls  int
-	createLessonParams domain.CreateLessonParams
-	createLessonResult domain.Lesson
-	createLessonErr    error
-	createQuestionCalls int
+	createCourseCalls    int
+	createCourseParams   domain.CreateCourseParams
+	createCourseResult   domain.Course
+	createCourseErr      error
+	createLessonCalls    int
+	createLessonParams   domain.CreateLessonParams
+	createLessonResult   domain.Lesson
+	createLessonErr      error
+	createQuestionCalls  int
 	createQuestionParams domain.CreateQuestionParams
 	createQuestionResult domain.LessonQuestion
-	createQuestionErr error
+	createQuestionErr    error
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
@@ -549,7 +549,6 @@ func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T)
 		t.Fatal("lesson creation response leaked authentication material")
 	}
 }
-
 
 func TestStaffCreateQuestionUsesAuthenticatedActorAndVersionPath(t *testing.T) {
 	csrfToken := "csrf-question-test-token-0123456789"

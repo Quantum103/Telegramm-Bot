@@ -301,7 +301,6 @@ func TestCreateDraftLessonStoresStaffActorAndAuditEvent(t *testing.T) {
 	}
 }
 
-
 func TestCreateQuestionStoresStaffActorAndAuditEvent(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
