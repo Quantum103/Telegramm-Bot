@@ -321,8 +321,8 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 }
 
 // CreateDraftRevision создаёт новую неизменяемую версию на основе последнего опубликованного содержимого.
-func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID int64) (domain.Lesson, error) {
-	if lessonID <= 0 {
+func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID, createdByStaffID int64) (domain.Lesson, error) {
+	if lessonID <= 0 || createdByStaffID < 0 {
 		return domain.Lesson{}, ErrInvalidInput
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -379,10 +379,10 @@ func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID in
 		description = baseDescription.String
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO lesson_versions (lesson_id, version_number, title, description, status)
-		VALUES ($1, $2, $3, $4, 'draft')
+		INSERT INTO lesson_versions (lesson_id, version_number, title, description, status, created_by_staff_id)
+		VALUES ($1, $2, $3, $4, 'draft', NULLIF($5, 0))
 		RETURNING id
-	`, lessonID, nextVersionNumber, baseTitle, description).Scan(&newVersionID); err != nil {
+	`, lessonID, nextVersionNumber, baseTitle, description, createdByStaffID).Scan(&newVersionID); err != nil {
 		return domain.Lesson{}, mapDatabaseError("создать черновую версию урока", err)
 	}
 
@@ -498,6 +498,16 @@ func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID in
 	result.QuestionCount = len(questions)
 	if publishedCourseTitle.Valid {
 		result.CourseTitle = publishedCourseTitle.String
+	}
+	if createdByStaffID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'lesson.draft_revision.create', 'lesson_version', $2,
+			        jsonb_build_object('lesson_id', $3::bigint, 'base_version_id', $4::bigint,
+			                           'version_number', $5::integer, 'status', 'draft'))
+		`, createdByStaffID, newVersionID, lessonID, baseVersionID, nextVersionNumber); err != nil {
+			return domain.Lesson{}, mapDatabaseError("записать аудит создания новой версии урока", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Lesson{}, mapDatabaseError("зафиксировать новую версию урока", err)
