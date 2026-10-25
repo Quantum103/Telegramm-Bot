@@ -52,6 +52,34 @@ func (r *CatalogRepository) ListPublishedCourses(ctx context.Context) ([]domain.
 	return courses, nil
 }
 
+func (r *CatalogRepository) ListCoursesForStaff(ctx context.Context) ([]domain.Course, error) {
+	const query = `
+		SELECT c.id, c.slug, c.title, c.description, c.status, c.published_at,
+		       c.created_at, c.updated_at,
+		       (SELECT count(*)::INTEGER FROM course_lessons cl WHERE cl.course_id = c.id) AS lesson_count
+		FROM courses c
+		ORDER BY c.updated_at DESC, c.id DESC
+	`
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, mapDatabaseError("получить все курсы для сотрудника", err)
+	}
+	defer rows.Close()
+
+	courses := make([]domain.Course, 0)
+	for rows.Next() {
+		course, err := scanCourse(rows)
+		if err != nil {
+			return nil, mapDatabaseError("прочитать курс для сотрудника", err)
+		}
+		courses = append(courses, course)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDatabaseError("обойти курсы для сотрудника", err)
+	}
+	return courses, nil
+}
+
 func (r *CatalogRepository) GetPublishedCourseByID(ctx context.Context, courseID int64) (domain.Course, error) {
 	if courseID <= 0 {
 		return domain.Course{}, ErrInvalidInput

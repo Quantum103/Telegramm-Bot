@@ -46,6 +46,7 @@ type StaffAuthAPI interface {
 }
 
 type StaffAuthoringAPI interface {
+	ListCoursesForStaff(context.Context) ([]domain.Course, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
@@ -54,6 +55,10 @@ type StaffAuthoringAPI interface {
 type staffLoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type staffCoursesResponse struct {
+	Courses []domain.Course `json:"courses"`
 }
 
 type staffCreateDraftCourseRequest struct {
@@ -172,6 +177,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		// The whole namespace is protected, so route handlers cannot accidentally bypass auth/CSRF.
 		staffAdminMux := http.NewServeMux()
 		if h.authoring != nil {
+			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses", h.staffListCourses)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
@@ -273,6 +279,24 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, staffLoginResponse{Staff: staffIdentityResponse{
 		ID: result.StaffID, DisplayName: result.DisplayName, Email: result.Email,
 	}})
+}
+
+func (h handlers) staffListCourses(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	courses, err := h.authoring.ListCoursesForStaff(r.Context())
+	if err != nil {
+		h.writeAPIError(w, err, "получить список курсов для сотрудника")
+		return
+	}
+	if courses == nil {
+		courses = make([]domain.Course, 0)
+	}
+	writeJSON(w, http.StatusOK, staffCoursesResponse{Courses: courses})
 }
 
 func (h handlers) staffCreateDraftCourse(w http.ResponseWriter, r *http.Request) {

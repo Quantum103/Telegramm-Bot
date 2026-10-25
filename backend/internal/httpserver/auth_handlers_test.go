@@ -398,6 +398,9 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 }
 
 type fakeStaffAuthoringAPI struct {
+	listCoursesCalls     int
+	listCoursesResult    []domain.Course
+	listCoursesErr       error
 	createCourseCalls    int
 	createCourseParams   domain.CreateCourseParams
 	createCourseResult   domain.Course
@@ -410,6 +413,11 @@ type fakeStaffAuthoringAPI struct {
 	createQuestionParams domain.CreateQuestionParams
 	createQuestionResult domain.LessonQuestion
 	createQuestionErr    error
+}
+
+func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
+	f.listCoursesCalls++
+	return f.listCoursesResult, f.listCoursesErr
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {

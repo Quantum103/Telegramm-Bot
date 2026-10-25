@@ -8,6 +8,7 @@ import (
 )
 
 type AuthoringStore interface {
+	ListCoursesForStaff(context.Context) ([]domain.Course, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateDraftRevision(context.Context, int64) (domain.Lesson, error)
@@ -24,6 +25,10 @@ type AuthoringService struct {
 
 func NewAuthoringService(store AuthoringStore) *AuthoringService {
 	return &AuthoringService{store: store}
+}
+
+func (s *AuthoringService) ListCoursesForStaff(ctx context.Context) ([]domain.Course, error) {
+	return s.store.ListCoursesForStaff(ctx)
 }
 
 func (s *AuthoringService) CreateDraftCourse(ctx context.Context, params domain.CreateCourseParams) (domain.Course, error) {
