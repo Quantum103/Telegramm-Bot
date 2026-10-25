@@ -857,7 +857,6 @@ func TestUpdateDraftQuestionReplacesMaterialsAuditsAndProtectsPublishedVersion(t
 	}
 }
 
-
 func draftLessonVersionUpdateFixture(t *testing.T) (context.Context, *pgxpool.Pool, *service.AuthoringService, int64, int64) {
 	t.Helper()
 	pool := integrationPool(t)

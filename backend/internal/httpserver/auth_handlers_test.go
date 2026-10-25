@@ -397,7 +397,6 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 	}
 }
 
-
 func TestStaffAdminRBACAllowsCuratorReadButRequiresAdministratorForWrites(t *testing.T) {
 	csrfToken := "csrf-rbac-test-token-0123456789"
 	tests := []struct {
@@ -509,54 +508,54 @@ func TestStaffAdminRBACAllowsCuratorReadButRequiresAdministratorForWrites(t *tes
 }
 
 type fakeStaffAuthoringAPI struct {
-	listCoursesCalls       int
-	listCoursesResult      []domain.Course
-	listCoursesErr         error
-	listLessonsCalls       int
-	listLessonsCourseID    int64
-	listLessonsResult      []domain.StaffLesson
-	listLessonsErr         error
-	listQuestionsCalls     int
-	listQuestionsVersionID int64
-	listQuestionsResult    []domain.LessonQuestion
-	listQuestionsErr       error
-	createCourseCalls      int
-	createCourseParams     domain.CreateCourseParams
-	createCourseResult     domain.Course
-	createCourseErr        error
-	createLessonCalls      int
-	createLessonParams     domain.CreateLessonParams
-	createLessonResult     domain.Lesson
-	createLessonErr        error
+	listCoursesCalls               int
+	listCoursesResult              []domain.Course
+	listCoursesErr                 error
+	listLessonsCalls               int
+	listLessonsCourseID            int64
+	listLessonsResult              []domain.StaffLesson
+	listLessonsErr                 error
+	listQuestionsCalls             int
+	listQuestionsVersionID         int64
+	listQuestionsResult            []domain.LessonQuestion
+	listQuestionsErr               error
+	createCourseCalls              int
+	createCourseParams             domain.CreateCourseParams
+	createCourseResult             domain.Course
+	createCourseErr                error
+	createLessonCalls              int
+	createLessonParams             domain.CreateLessonParams
+	createLessonResult             domain.Lesson
+	createLessonErr                error
 	updateLessonVersionCalls       int
 	updateLessonVersionID          int64
 	updateLessonVersionTitle       string
 	updateLessonVersionDescription *string
 	updateLessonVersionStaffID     int64
 	updateLessonVersionErr         error
-	createRevisionCalls    int
-	createRevisionLessonID int64
-	createRevisionStaffID  int64
-	createRevisionResult   domain.Lesson
-	createRevisionErr      error
-	createQuestionCalls    int
-	createQuestionParams   domain.CreateQuestionParams
-	createQuestionResult   domain.LessonQuestion
-	createQuestionErr      error
-	updateQuestionCalls    int
-	updateQuestionID       int64
-	updateQuestionParams   domain.CreateQuestionParams
-	updateQuestionStaffID  int64
-	updateQuestionResult   domain.LessonQuestion
-	updateQuestionErr      error
-	publishVersionCalls    int
-	publishVersionID       int64
-	publishVersionStaffID  int64
-	publishVersionErr      error
-	publishCourseCalls     int
-	publishCourseID        int64
-	publishCourseStaffID   int64
-	publishCourseErr       error
+	createRevisionCalls            int
+	createRevisionLessonID         int64
+	createRevisionStaffID          int64
+	createRevisionResult           domain.Lesson
+	createRevisionErr              error
+	createQuestionCalls            int
+	createQuestionParams           domain.CreateQuestionParams
+	createQuestionResult           domain.LessonQuestion
+	createQuestionErr              error
+	updateQuestionCalls            int
+	updateQuestionID               int64
+	updateQuestionParams           domain.CreateQuestionParams
+	updateQuestionStaffID          int64
+	updateQuestionResult           domain.LessonQuestion
+	updateQuestionErr              error
+	publishVersionCalls            int
+	publishVersionID               int64
+	publishVersionStaffID          int64
+	publishVersionErr              error
+	publishCourseCalls             int
+	publishCourseID                int64
+	publishCourseStaffID           int64
+	publishCourseErr               error
 }
 
 func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
