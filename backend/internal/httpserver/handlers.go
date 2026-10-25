@@ -68,15 +68,15 @@ type staffCreateDraftLessonRequest struct {
 }
 
 type staffCreateQuestionRequest struct {
-	QuestionNumber      int                              `json:"question_number"`
-	Prompt              string                           `json:"prompt"`
-	ExpectedAnswer      string                           `json:"expected_answer"`
-	AnswerType          string                           `json:"answer_type"`
-	ExpectedExplanation *string                          `json:"expected_explanation"`
-	Criteria            []domain.QuestionCriterionInput  `json:"criteria"`
-	Options             []domain.QuestionOptionInput     `json:"options"`
-	CommonMistakes      []domain.CommonMistake           `json:"common_mistakes"`
-	BiblePassages       []domain.BiblePassageInput       `json:"bible_passages"`
+	QuestionNumber      int                             `json:"question_number"`
+	Prompt              string                          `json:"prompt"`
+	ExpectedAnswer      string                          `json:"expected_answer"`
+	AnswerType          string                          `json:"answer_type"`
+	ExpectedExplanation *string                         `json:"expected_explanation"`
+	Criteria            []domain.QuestionCriterionInput `json:"criteria"`
+	Options             []domain.QuestionOptionInput    `json:"options"`
+	CommonMistakes      []domain.CommonMistake          `json:"common_mistakes"`
+	BiblePassages       []domain.BiblePassageInput      `json:"bible_passages"`
 }
 
 type staffCreatedQuestionResponse struct {
