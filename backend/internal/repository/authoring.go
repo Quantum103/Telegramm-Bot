@@ -515,8 +515,8 @@ func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID, c
 	return result, nil
 }
 
-func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID int64) error {
-	if versionID <= 0 {
+func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID, publishedByStaffID int64) error {
+	if versionID <= 0 || publishedByStaffID < 0 {
 		return ErrInvalidInput
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -526,10 +526,11 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var lessonID int64
+	var versionNumber int
 	var status string
 	if err := tx.QueryRow(ctx, `
-		SELECT lesson_id, status FROM lesson_versions WHERE id = $1 FOR UPDATE
-	`, versionID).Scan(&lessonID, &status); err != nil {
+		SELECT lesson_id, version_number, status FROM lesson_versions WHERE id = $1 FOR UPDATE
+	`, versionID).Scan(&lessonID, &versionNumber, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -572,6 +573,15 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID 
 		WHERE id = $1 AND status = 'draft'
 	`, versionID); err != nil {
 		return mapDatabaseError("опубликовать новую версию урока", err)
+	}
+	if publishedByStaffID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'lesson_version.publish', 'lesson_version', $2,
+			        jsonb_build_object('lesson_id', $3::bigint, 'version_number', $4::integer, 'status', 'published'))
+		`, publishedByStaffID, versionID, lessonID, versionNumber); err != nil {
+			return mapDatabaseError("записать аудит публикации версии урока", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать публикацию версии урока", err)

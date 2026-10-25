@@ -72,7 +72,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 			t.Fatal("черновой курс виден в ученическом каталоге")
 		}
 	}
-	if err := authoring.PublishLessonVersion(ctx, lesson.LessonVersionID); err != nil {
+	if err := authoring.PublishLessonVersion(ctx, lesson.LessonVersionID, 0); err != nil {
 		t.Fatalf("опубликовать версию урока: %v", err)
 	}
 	if err := authoring.PublishCourse(ctx, course.ID); err != nil {
@@ -120,7 +120,7 @@ func TestDraftAuthoringPublicationAndLearnerCatalog(t *testing.T) {
 	if revision.LessonVersionID == lesson.LessonVersionID || revision.VersionNumber != 2 || revision.QuestionCount != 1 {
 		t.Fatalf("новая версия создана некорректно: %+v", revision)
 	}
-	if err := authoring.PublishLessonVersion(ctx, revision.LessonVersionID); err != nil {
+	if err := authoring.PublishLessonVersion(ctx, revision.LessonVersionID, 0); err != nil {
 		t.Fatalf("опубликовать новую версию урока: %v", err)
 	}
 
@@ -551,8 +551,52 @@ func TestCreateDraftRevisionStoresStaffActorAndAuditEvent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create source question: %v", err)
 	}
-	if err := authoring.PublishLessonVersion(ctx, baseVersionID); err != nil {
+	if err := authoring.PublishLessonVersion(ctx, baseVersionID, staffID); err != nil {
 		t.Fatalf("publish base version: %v", err)
+	}
+
+	var publishedStatus string
+	var publishedAt bool
+	if err := pool.QueryRow(ctx,
+		"SELECT status, published_at IS NOT NULL FROM lesson_versions WHERE id = $1", baseVersionID,
+	).Scan(&publishedStatus, &publishedAt); err != nil {
+		t.Fatalf("read published version state: %v", err)
+	}
+	if publishedStatus != "published" || !publishedAt {
+		t.Fatalf("published version status/time = %q/%v", publishedStatus, publishedAt)
+	}
+	var publishActorID, publishEntityID int64
+	var publishAction, publishEntityType, publishLessonID, publishVersionNumber, publishStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'lesson_id', details->>'version_number', details->>'status'
+		FROM audit_events WHERE entity_type = 'lesson_version' AND entity_id = $1
+		  AND action = 'lesson_version.publish'
+	`, baseVersionID).Scan(
+		&publishActorID, &publishAction, &publishEntityType, &publishEntityID,
+		&publishLessonID, &publishVersionNumber, &publishStatus,
+	); err != nil {
+		t.Fatalf("read lesson publication audit event: %v", err)
+	}
+	if publishActorID != staffID || publishAction != "lesson_version.publish" ||
+		publishEntityType != "lesson_version" || publishEntityID != baseVersionID ||
+		publishLessonID != fmt.Sprint(lesson.ID) || publishVersionNumber != "1" || publishStatus != "published" {
+		t.Fatalf("unexpected publication audit event: actor=%d action=%q entity=%q id=%d lesson=%q version=%q status=%q",
+			publishActorID, publishAction, publishEntityType, publishEntityID,
+			publishLessonID, publishVersionNumber, publishStatus)
+	}
+	if err := authoring.PublishLessonVersion(ctx, baseVersionID, staffID); err != nil {
+		t.Fatalf("repeat publication should remain idempotent: %v", err)
+	}
+	var publishAuditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE entity_type = 'lesson_version' AND entity_id = $1 AND action = 'lesson_version.publish'
+	`, baseVersionID).Scan(&publishAuditCount); err != nil {
+		t.Fatalf("count publication audit events: %v", err)
+	}
+	if publishAuditCount != 1 {
+		t.Fatalf("idempotent publication wrote %d audit events, want exactly 1", publishAuditCount)
 	}
 
 	revision, err := authoring.CreateDraftRevision(ctx, lesson.ID, staffID)
