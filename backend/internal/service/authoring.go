@@ -132,7 +132,6 @@ func (s *AuthoringService) PublishCourse(ctx context.Context, courseID, publishe
 	return s.store.PublishCourse(ctx, courseID, publishedByStaffID)
 }
 
-
 // StaffRoleStore is implemented by the repository that persists role assignments.
 type StaffRoleStore interface {
 	AssignStaffRole(context.Context, int64, int64, string) error

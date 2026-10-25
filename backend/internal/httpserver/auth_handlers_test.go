@@ -556,16 +556,16 @@ type fakeStaffAuthoringAPI struct {
 	publishCourseID                int64
 	publishCourseStaffID           int64
 	publishCourseErr               error
-	assignRoleCalls                 int
-	assignRoleActorID               int64
-	assignRoleTargetID              int64
-	assignRoleCode                  string
-	assignRoleErr                   error
-	revokeRoleCalls                 int
-	revokeRoleActorID               int64
-	revokeRoleTargetID              int64
-	revokeRoleCode                  string
-	revokeRoleErr                   error
+	assignRoleCalls                int
+	assignRoleActorID              int64
+	assignRoleTargetID             int64
+	assignRoleCode                 string
+	assignRoleErr                  error
+	revokeRoleCalls                int
+	revokeRoleActorID              int64
+	revokeRoleTargetID             int64
+	revokeRoleCode                 string
+	revokeRoleErr                  error
 }
 
 func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
@@ -1462,7 +1462,6 @@ func TestStaffUpdateQuestionRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatal("invalid path ID reached the question update service")
 	}
 }
-
 
 func TestStaffRoleManagementRequiresAdministratorAndUsesSessionActor(t *testing.T) {
 	csrfToken := "csrf-role-management-token-0123456789"

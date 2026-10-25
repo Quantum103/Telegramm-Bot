@@ -32,7 +32,9 @@ func (h handlers) staffAssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetID, ok := parsePositiveID(w, r.PathValue("staffID"))
-	if !ok { return }
+	if !ok {
+		return
+	}
 	if targetID == identity.StaffID {
 		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "self_role_change_forbidden"})
 		return
@@ -77,7 +79,9 @@ func (h handlers) staffRevokeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetID, ok := parsePositiveID(w, r.PathValue("staffID"))
-	if !ok { return }
+	if !ok {
+		return
+	}
 	if targetID == identity.StaffID {
 		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "self_role_change_forbidden"})
 		return
