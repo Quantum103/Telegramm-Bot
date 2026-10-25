@@ -44,7 +44,7 @@ func (r *CatalogRepository) CreateDraftCourse(ctx context.Context, params domain
 	if params.CreatedByStaffID > 0 {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
-			VALUES ($1, 'course.draft.create', 'course', $2, jsonb_build_object('slug', $3, 'status', 'draft'))
+			VALUES ($1, 'course.draft.create', 'course', $2, jsonb_build_object('slug', $3::text, 'status', 'draft'))
 		`, params.CreatedByStaffID, course.ID, course.Slug); err != nil {
 			return domain.Course{}, mapDatabaseError("записать аудит создания курса", err)
 		}
