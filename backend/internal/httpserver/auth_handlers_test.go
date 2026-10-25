@@ -16,16 +16,16 @@ import (
 )
 
 type fakeStaffAuthAPI struct {
-	loginResult   service.StaffLoginResult
-	loginErr      error
-	loginCalls    int
-	authIdentity  domain.StaffSessionIdentity
-	authErr       error
-	authCalls     int
-	authToken     string
-	logoutToken   string
-	logoutErr     error
-	logoutCalls   int
+	loginResult  service.StaffLoginResult
+	loginErr     error
+	loginCalls   int
+	authIdentity domain.StaffSessionIdentity
+	authErr      error
+	authCalls    int
+	authToken    string
+	logoutToken  string
+	logoutErr    error
+	logoutCalls  int
 }
 
 func (f *fakeStaffAuthAPI) Login(_ context.Context, email, password string) (service.StaffLoginResult, error) {

@@ -306,7 +306,7 @@ func (h handlers) staffMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, staffMeResponse{
-		Staff: staffIdentityResponse{ID: identity.StaffID, DisplayName: identity.DisplayName, Email: identity.Email},
+		Staff:     staffIdentityResponse{ID: identity.StaffID, DisplayName: identity.DisplayName, Email: identity.Email},
 		ExpiresAt: identity.ExpiresAt,
 	})
 }
