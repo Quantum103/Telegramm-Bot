@@ -29,7 +29,9 @@ func NewAuthoringService(store AuthoringStore) *AuthoringService {
 func (s *AuthoringService) CreateDraftCourse(ctx context.Context, params domain.CreateCourseParams) (domain.Course, error) {
 	params.Slug = strings.TrimSpace(params.Slug)
 	params.Title = strings.TrimSpace(params.Title)
-	if params.Slug == "" || params.Title == "" {
+	if params.Slug == "" || len(params.Slug) > 100 || params.Title == "" || len(params.Title) > 200 ||
+		params.CreatedByStaffID < 0 ||
+		(params.Description != nil && len(*params.Description) > 4000) {
 		return domain.Course{}, domain.ErrInvalidInput
 	}
 	return s.store.CreateDraftCourse(ctx, params)

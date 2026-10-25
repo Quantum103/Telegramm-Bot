@@ -22,6 +22,7 @@ import (
 const (
 	readinessTimeout       = 2 * time.Second
 	maxStaffLoginBodyBytes = 8 << 10
+	maxStaffAdminBodyBytes = 16 << 10
 	staffSessionCookieName = "staff_session"
 	staffCSRFCookieName    = "staff_csrf"
 )
@@ -44,9 +45,19 @@ type StaffAuthAPI interface {
 	Logout(context.Context, string) error
 }
 
+type StaffAuthoringAPI interface {
+	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
+}
+
 type staffLoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type staffCreateDraftCourseRequest struct {
+	Slug        string  `json:"slug"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
 }
 
 type staffIdentityResponse struct {
@@ -75,6 +86,7 @@ type handlers struct {
 	logger       *slog.Logger
 	catalog      CatalogAPI
 	staffAuth    StaffAuthAPI
+	authoring    StaffAuthoringAPI
 	cookieSecure bool
 	loginLimiter StaffLoginRateLimiter
 }
@@ -85,19 +97,24 @@ func NewHandler(database databasePinger, logger *slog.Logger, catalogs ...Catalo
 	if len(catalogs) > 0 {
 		catalog = catalogs[0]
 	}
-	return newHandler(database, logger, catalog, nil, false, newStaffLoginLimiter())
+	return newHandler(database, logger, catalog, nil, nil, false, newStaffLoginLimiter())
 }
 
 // NewHandlerWithStaffAuth adds staff login/logout endpoints. Production should keep cookieSecure enabled.
 func NewHandlerWithStaffAuth(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool) http.Handler {
-	return newHandler(database, logger, catalog, staffAuth, cookieSecure, newStaffLoginLimiter())
+	return newHandler(database, logger, catalog, staffAuth, nil, cookieSecure, newStaffLoginLimiter())
 }
 
 // NewHandlerWithStaffAuthAndLoginLimiter configures staff authentication with a shared login limiter.
 func NewHandlerWithStaffAuthAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
-	return newHandler(database, logger, catalog, staffAuth, cookieSecure, limiter)
+	return newHandler(database, logger, catalog, staffAuth, nil, cookieSecure, limiter)
 }
-func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
+// NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter enables the first protected staff authoring operation.
+func NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
+	return newHandler(database, logger, catalog, staffAuth, authoring, cookieSecure, limiter)
+}
+
+func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -106,7 +123,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, cookieSecure: cookieSecure, loginLimiter: limiter,
+		staffAuth: staffAuth, authoring: authoring, cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -125,6 +142,9 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		// All future staff data routes must be registered on this subrouter.
 		// The whole namespace is protected, so route handlers cannot accidentally bypass auth/CSRF.
 		staffAdminMux := http.NewServeMux()
+		if h.authoring != nil {
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
+		}
 		mux.Handle("/api/v1/staff/admin/", h.staffSessionMiddleware(staffAdminMux))
 	}
 	return mux
@@ -224,6 +244,40 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+func (h handlers) staffCreateDraftCourse(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input staffCreateDraftCourseRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+
+	course, err := h.authoring.CreateDraftCourse(r.Context(), domain.CreateCourseParams{
+		Slug: input.Slug, Title: input.Title, Description: input.Description,
+		CreatedByStaffID: identity.StaffID,
+	})
+	if err != nil {
+		h.writeAPIError(w, err, "создать черновик курса")
+		return
+	}
+	writeJSON(w, http.StatusCreated, course)
+}
+
 func (h handlers) staffLogout(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
 	if !sameOrigin(r) {
@@ -265,7 +319,11 @@ func (h handlers) staffLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, destination any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxStaffLoginBodyBytes)
+	return decodeJSONBodyWithLimit(w, r, destination, maxStaffLoginBodyBytes)
+}
+
+func decodeJSONBodyWithLimit(w http.ResponseWriter, r *http.Request, destination any, maxBytes int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

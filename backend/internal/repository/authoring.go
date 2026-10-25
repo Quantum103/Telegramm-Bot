@@ -14,22 +14,43 @@ import (
 func (r *CatalogRepository) CreateDraftCourse(ctx context.Context, params domain.CreateCourseParams) (domain.Course, error) {
 	params.Slug = strings.TrimSpace(params.Slug)
 	params.Title = strings.TrimSpace(params.Title)
-	if !validCourseSlug(params.Slug) || params.Title == "" {
+	if !validCourseSlug(params.Slug) || len(params.Slug) > 100 ||
+		params.Title == "" || len(params.Title) > 200 ||
+		params.CreatedByStaffID < 0 ||
+		(params.Description != nil && len(*params.Description) > 4000) {
 		return domain.Course{}, ErrInvalidInput
 	}
 	var description any
 	if params.Description != nil && strings.TrimSpace(*params.Description) != "" {
-		value := strings.TrimSpace(*params.Description)
-		description = value
+		description = strings.TrimSpace(*params.Description)
 	}
-	course, err := scanCourse(r.pool.QueryRow(ctx, `
-		INSERT INTO courses (slug, title, description, status)
-		VALUES ($1, $2, $3, 'draft')
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Course{}, mapDatabaseError("начать транзакцию создания курса", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	course, err := scanCourse(tx.QueryRow(ctx, `
+		INSERT INTO courses (slug, title, description, status, created_by_staff_id)
+		VALUES ($1, $2, $3, 'draft', NULLIF($4, 0))
 		RETURNING id, slug, title, description, status, published_at,
 		          created_at, updated_at, 0::INTEGER
-	`, params.Slug, params.Title, description))
+	`, params.Slug, params.Title, description, params.CreatedByStaffID))
 	if err != nil {
 		return domain.Course{}, mapDatabaseError("создать черновик курса", err)
+	}
+
+	if params.CreatedByStaffID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'course.draft.create', 'course', $2, jsonb_build_object('slug', $3, 'status', 'draft'))
+		`, params.CreatedByStaffID, course.ID, course.Slug); err != nil {
+			return domain.Course{}, mapDatabaseError("записать аудит создания курса", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Course{}, mapDatabaseError("зафиксировать создание черновика курса", err)
 	}
 	return course, nil
 }

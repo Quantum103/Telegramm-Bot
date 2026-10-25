@@ -396,3 +396,71 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 		t.Fatalf("logout service invoked %d times despite missing Origin", api.logoutCalls)
 	}
 }
+
+type fakeStaffAuthoringAPI struct {
+	createCourseCalls int
+	createCourseParams domain.CreateCourseParams
+	createCourseResult domain.Course
+	createCourseErr error
+}
+
+func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
+	f.createCourseCalls++
+	f.createCourseParams = params
+	return f.createCourseResult, f.createCourseErr
+}
+
+func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
+	csrfToken := "csrf-test-token-0123456789"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	createdAt := time.Now().UTC()
+	authoring := &fakeStaffAuthoringAPI{createCourseResult: domain.Course{
+		ID: 99, Slug: "new-course", Title: "New course", Status: "draft",
+		CreatedAt: createdAt, UpdatedAt: createdAt,
+	}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	makeRequest := func(includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "https://admin.example.test/api/v1/staff/admin/courses",
+			strings.NewReader(`{"slug":"new-course","title":"New course","description":"Draft description"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	withoutCSRF := makeRequest(false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s", withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.createCourseCalls != 0 {
+		t.Fatal("authoring service was called without a valid CSRF token")
+	}
+
+	response := makeRequest(true)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("valid request status = %d, want %d; body=%s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	if authoring.createCourseCalls != 1 {
+		t.Fatalf("create course calls = %d, want 1", authoring.createCourseCalls)
+	}
+	if authoring.createCourseParams.CreatedByStaffID != identity.StaffID {
+		t.Fatalf("CreatedByStaffID = %d, want authenticated staff ID %d", authoring.createCourseParams.CreatedByStaffID, identity.StaffID)
+	}
+	if strings.Contains(response.Body.String(), csrfToken) || strings.Contains(response.Body.String(), "staff_session") {
+		t.Fatal("course creation response leaked authentication material")
+	}
+}

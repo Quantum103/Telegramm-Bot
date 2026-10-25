@@ -63,6 +63,7 @@ func run(logger *slog.Logger) error {
 	catalogRepository := repository.NewCatalogRepository(pool)
 	contentRepository := repository.NewContentRepository(pool)
 	catalogService := service.NewCatalogService(catalogRepository, contentRepository)
+	authoringService := service.NewAuthoringService(catalogRepository)
 	learningService := service.NewLearningService(
 		studentService,
 		catalogRepository,
@@ -73,7 +74,7 @@ func run(logger *slog.Logger) error {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.NewHandlerWithStaffAuthAndLoginLimiter(pool, logger, catalogService, service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)), loginLimiter, true),
+		Handler:           httpserver.NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(pool, logger, catalogService, service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)), authoringService, loginLimiter, true),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,
