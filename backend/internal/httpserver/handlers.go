@@ -109,6 +109,7 @@ func NewHandlerWithStaffAuth(database databasePinger, logger *slog.Logger, catal
 func NewHandlerWithStaffAuthAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
 	return newHandler(database, logger, catalog, staffAuth, nil, cookieSecure, limiter)
 }
+
 // NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter enables the first protected staff authoring operation.
 func NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
 	return newHandler(database, logger, catalog, staffAuth, authoring, cookieSecure, limiter)

@@ -2,10 +2,10 @@ package domain
 
 // CreateCourseParams задаёт содержимое нового чернового курса.
 type CreateCourseParams struct {
-	Slug              string
-	Title             string
-	Description       *string
-	CreatedByStaffID  int64
+	Slug             string
+	Title            string
+	Description      *string
+	CreatedByStaffID int64
 }
 
 // CreateLessonParams создаёт самостоятельный урок и его первую черновую версию.

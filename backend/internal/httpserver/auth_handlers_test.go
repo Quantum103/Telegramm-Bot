@@ -398,10 +398,10 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 }
 
 type fakeStaffAuthoringAPI struct {
-	createCourseCalls int
+	createCourseCalls  int
 	createCourseParams domain.CreateCourseParams
 	createCourseResult domain.Course
-	createCourseErr error
+	createCourseErr    error
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
