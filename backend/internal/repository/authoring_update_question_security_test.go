@@ -43,11 +43,11 @@ func questionUpdateSecurityFixture(t *testing.T) (context.Context, *pgxpool.Pool
 		t.Fatalf("create draft lesson: %v", err)
 	}
 	question, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
-		LessonVersionID: lesson.LessonVersionID,
-		QuestionNumber:  1,
-		Prompt:          "Original prompt",
-		ExpectedAnswer:  "Original answer",
-		AnswerType:      "text",
+		LessonVersionID:  lesson.LessonVersionID,
+		QuestionNumber:   1,
+		Prompt:           "Original prompt",
+		ExpectedAnswer:   "Original answer",
+		AnswerType:       "text",
 		CreatedByStaffID: staffID,
 	})
 	if err != nil {
