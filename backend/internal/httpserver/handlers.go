@@ -379,13 +379,19 @@ func (h handlers) staffListQuestionsForVersion(w http.ResponseWriter, r *http.Re
 			QuestionNumber: question.QuestionNumber, Prompt: question.Prompt,
 			ExpectedAnswer: question.ExpectedAnswer, AnswerType: question.AnswerType,
 			ExpectedExplanation: question.ExpectedExplanation,
-			Criteria: question.Criteria, Options: make([]staffQuestionOptionResponse, 0, len(question.Options)),
+			Criteria:            question.Criteria, Options: make([]staffQuestionOptionResponse, 0, len(question.Options)),
 			CommonMistakes: question.CommonMistakes, BiblePassages: question.BiblePassages,
 			CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
 		}
-		if item.Criteria == nil { item.Criteria = make([]domain.QuestionCriterion, 0) }
-		if item.CommonMistakes == nil { item.CommonMistakes = make([]domain.CommonMistake, 0) }
-		if item.BiblePassages == nil { item.BiblePassages = make([]domain.BiblePassage, 0) }
+		if item.Criteria == nil {
+			item.Criteria = make([]domain.QuestionCriterion, 0)
+		}
+		if item.CommonMistakes == nil {
+			item.CommonMistakes = make([]domain.CommonMistake, 0)
+		}
+		if item.BiblePassages == nil {
+			item.BiblePassages = make([]domain.BiblePassage, 0)
+		}
 		for _, option := range question.Options {
 			item.Options = append(item.Options, staffQuestionOptionResponse{
 				ID: option.ID, Key: option.Key, Text: option.Text, IsCorrect: option.IsCorrect,

@@ -476,10 +476,10 @@ func TestListQuestionsForStaffIncludesDraftQuestionAndMaterials(t *testing.T) {
 		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 1,
 		Prompt: "Draft question prompt", ExpectedAnswer: "Expected secret answer", AnswerType: "single_choice",
 		ExpectedExplanation: stringPtr("Explain why the answer is correct"),
-		Criteria: []domain.QuestionCriterionInput{{Key: "core", Description: "Core meaning", Weight: 2, Required: &correctRequired}},
-		Options: []domain.QuestionOptionInput{{Key: "A", Text: "Correct", IsCorrect: true}, {Key: "B", Text: "Incorrect"}},
-		CommonMistakes: []domain.CommonMistake{{Text: "Common mistake", Explanation: "Correction"}},
-		BiblePassages: []domain.BiblePassageInput{{BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17, PassageText: stringPtr("Passage text"), SourceNote: stringPtr("Source note")}},
+		Criteria:            []domain.QuestionCriterionInput{{Key: "core", Description: "Core meaning", Weight: 2, Required: &correctRequired}},
+		Options:             []domain.QuestionOptionInput{{Key: "A", Text: "Correct", IsCorrect: true}, {Key: "B", Text: "Incorrect"}},
+		CommonMistakes:      []domain.CommonMistake{{Text: "Common mistake", Explanation: "Correction"}},
+		BiblePassages:       []domain.BiblePassageInput{{BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17, PassageText: stringPtr("Passage text"), SourceNote: stringPtr("Source note")}},
 	})
 	if err != nil {
 		t.Fatalf("create draft question: %v", err)

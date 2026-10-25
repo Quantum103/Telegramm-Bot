@@ -398,33 +398,29 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 }
 
 type fakeStaffAuthoringAPI struct {
-	listCoursesCalls          int
-	listCoursesResult         []domain.Course
-	listCoursesErr            error
-	listLessonsCalls          int
-	listLessonsCourseID       int64
-	listLessonsResult         []domain.StaffLesson
-	listLessonsErr            error
-	listQuestionsCalls        int
-	listQuestionsVersionID    int64
-	listQuestionsResult       []domain.LessonQuestion
-	listQuestionsErr          error
-	listLessonsCalls     int
-	listLessonsCourseID  int64
-	listLessonsResult    []domain.StaffLesson
-	listLessonsErr       error
-	createCourseCalls    int
-	createCourseParams   domain.CreateCourseParams
-	createCourseResult   domain.Course
-	createCourseErr      error
-	createLessonCalls    int
-	createLessonParams   domain.CreateLessonParams
-	createLessonResult   domain.Lesson
-	createLessonErr      error
-	createQuestionCalls  int
-	createQuestionParams domain.CreateQuestionParams
-	createQuestionResult domain.LessonQuestion
-	createQuestionErr    error
+	listCoursesCalls       int
+	listCoursesResult      []domain.Course
+	listCoursesErr         error
+	listLessonsCalls       int
+	listLessonsCourseID    int64
+	listLessonsResult      []domain.StaffLesson
+	listLessonsErr         error
+	listQuestionsCalls     int
+	listQuestionsVersionID int64
+	listQuestionsResult    []domain.LessonQuestion
+	listQuestionsErr       error
+	createCourseCalls      int
+	createCourseParams     domain.CreateCourseParams
+	createCourseResult     domain.Course
+	createCourseErr        error
+	createLessonCalls      int
+	createLessonParams     domain.CreateLessonParams
+	createLessonResult     domain.Lesson
+	createLessonErr        error
+	createQuestionCalls    int
+	createQuestionParams   domain.CreateQuestionParams
+	createQuestionResult   domain.LessonQuestion
+	createQuestionErr      error
 }
 
 func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
@@ -738,10 +734,10 @@ func TestStaffListQuestionsForVersionRequiresSessionAndReturnsInternalAuthoringD
 		ID: 501, LessonVersionID: 93, QuestionNumber: 1, Prompt: "Question text",
 		ExpectedAnswer: "Internal expected answer", AnswerType: "single_choice",
 		ExpectedExplanation: &explanation,
-		Criteria: []domain.QuestionCriterion{{Key: "core", Description: "Core concept", Weight: 2, Required: true}},
-		Options: []domain.QuestionOption{{ID: 601, Key: "A", Text: "Correct option", IsCorrect: true}, {ID: 602, Key: "B", Text: "Other option"}},
-		CommonMistakes: []domain.CommonMistake{{Text: "Mistake", Explanation: "How to correct it"}},
-		BiblePassages: []domain.BiblePassage{{ID: 701, BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17, PassageText: &explanation, SourceNote: &explanation}},
+		Criteria:            []domain.QuestionCriterion{{Key: "core", Description: "Core concept", Weight: 2, Required: true}},
+		Options:             []domain.QuestionOption{{ID: 601, Key: "A", Text: "Correct option", IsCorrect: true}, {ID: 602, Key: "B", Text: "Other option"}},
+		CommonMistakes:      []domain.CommonMistake{{Text: "Mistake", Explanation: "How to correct it"}},
+		BiblePassages:       []domain.BiblePassage{{ID: 701, BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17, PassageText: &explanation, SourceNote: &explanation}},
 	}}}
 	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
 		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
