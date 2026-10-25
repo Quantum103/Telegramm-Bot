@@ -169,8 +169,20 @@ func (r *ContentRepository) listQuestionsForVersion(ctx context.Context, lessonV
 		if err := json.Unmarshal(criteriaJSON, &question.Criteria); err != nil {
 			return nil, mapDatabaseError("разобрать критерии вопроса", err)
 		}
-		if err := json.Unmarshal(optionsJSON, &question.Options); err != nil {
+		var parsedOptions []struct {
+			ID        int64  `json:"id"`
+			Key       string `json:"key"`
+			Text      string `json:"text"`
+			IsCorrect bool   `json:"is_correct"`
+		}
+		if err := json.Unmarshal(optionsJSON, &parsedOptions); err != nil {
 			return nil, mapDatabaseError("разобрать варианты ответа", err)
+		}
+		question.Options = make([]QuestionOption, 0, len(parsedOptions))
+		for _, option := range parsedOptions {
+			question.Options = append(question.Options, QuestionOption{
+				ID: option.ID, Key: option.Key, Text: option.Text, IsCorrect: option.IsCorrect,
+			})
 		}
 		if err := json.Unmarshal(mistakesJSON, &question.CommonMistakes); err != nil {
 			return nil, mapDatabaseError("разобрать распространённые ошибки", err)
