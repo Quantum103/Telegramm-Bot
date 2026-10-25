@@ -405,3 +405,52 @@ func TestCreateQuestionStoresStaffActorAndAuditEvent(t *testing.T) {
 			actorID, action, entityType, entityID, auditedVersionID, number, answerType)
 	}
 }
+
+func TestListLessonsForStaffIncludesDraftVersion(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	repo := NewCatalogRepository(pool)
+	authoring := service.NewAuthoringService(repo)
+	suffix := fmt.Sprintf("staff-lesson-list-%d", time.Now().UnixNano())
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: suffix, Title: "Staff list draft course",
+	})
+	if err != nil {
+		t.Fatalf("create draft course: %v", err)
+	}
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Staff list draft lesson",
+	})
+	if err != nil {
+		t.Fatalf("create draft lesson: %v", err)
+	}
+	question, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 1,
+		Prompt: "Public prompt", ExpectedAnswer: "Private expected answer", AnswerType: "text",
+	})
+	if err != nil {
+		t.Fatalf("create draft question: %v", err)
+	}
+	if question.ID <= 0 {
+		t.Fatal("draft question was not created")
+	}
+
+	lessons, err := repo.ListLessonsForStaffByCourseID(ctx, course.ID)
+	if err != nil {
+		t.Fatalf("list lessons for staff: %v", err)
+	}
+	if len(lessons) != 1 {
+		t.Fatalf("staff lessons count = %d, want 1: %+v", len(lessons), lessons)
+	}
+	got := lessons[0]
+	if got.ID != lesson.ID || got.CourseID != course.ID || got.CourseTitle != course.Title ||
+		got.LessonVersionID != lesson.LessonVersionID || got.VersionNumber != 1 ||
+		got.VersionStatus != "draft" || got.Title != lesson.Title || got.QuestionCount != 1 {
+		t.Fatalf("staff listing missed draft/version metadata: %+v", got)
+	}
+	if _, err := repo.ListLessonsForStaffByCourseID(ctx, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("zero course ID error = %v, want ErrInvalidInput", err)
+	}
+}

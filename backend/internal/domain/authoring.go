@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // CreateCourseParams задаёт содержимое нового чернового курса.
 type CreateCourseParams struct {
 	Slug             string
@@ -52,4 +54,19 @@ type CreateQuestionParams struct {
 	CommonMistakes      []CommonMistake
 	BiblePassages       []BiblePassageInput
 	CreatedByStaffID    int64
+}
+
+// StaffLesson is the latest lesson version as exposed only to authenticated staff.
+type StaffLesson struct {
+	ID              int64      `json:"id"`
+	CourseID        int64      `json:"course_id"`
+	CourseTitle     string     `json:"course_title"`
+	Position        int        `json:"position"`
+	LessonVersionID int64      `json:"lesson_version_id"`
+	VersionNumber   int        `json:"version_number"`
+	VersionStatus   string     `json:"version_status"`
+	Title           string     `json:"title"`
+	Description     *string    `json:"description,omitempty"`
+	PublishedAt     *time.Time `json:"published_at,omitempty"`
+	QuestionCount   int        `json:"question_count"`
 }

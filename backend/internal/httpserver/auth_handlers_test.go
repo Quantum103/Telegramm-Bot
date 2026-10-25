@@ -401,6 +401,10 @@ type fakeStaffAuthoringAPI struct {
 	listCoursesCalls     int
 	listCoursesResult    []domain.Course
 	listCoursesErr       error
+	listLessonsCalls     int
+	listLessonsCourseID  int64
+	listLessonsResult    []domain.StaffLesson
+	listLessonsErr       error
 	createCourseCalls    int
 	createCourseParams   domain.CreateCourseParams
 	createCourseResult   domain.Course
@@ -418,6 +422,12 @@ type fakeStaffAuthoringAPI struct {
 func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
 	f.listCoursesCalls++
 	return f.listCoursesResult, f.listCoursesErr
+}
+
+func (f *fakeStaffAuthoringAPI) ListLessonsForStaffByCourseID(_ context.Context, courseID int64) ([]domain.StaffLesson, error) {
+	f.listLessonsCalls++
+	f.listLessonsCourseID = courseID
+	return f.listLessonsResult, f.listLessonsErr
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
@@ -624,5 +634,81 @@ func TestStaffCreateQuestionUsesAuthenticatedActorAndVersionPath(t *testing.T) {
 	if strings.Contains(response.Body.String(), "Internal expected answer") || strings.Contains(response.Body.String(), csrfToken) ||
 		strings.Contains(response.Body.String(), "staff_session") {
 		t.Fatal("question creation response leaked internal answer or authentication material")
+	}
+}
+
+func TestStaffListLessonsForCourseRequiresSessionAndReturnsLatestVersionMetadata(t *testing.T) {
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	authoring := &fakeStaffAuthoringAPI{listLessonsResult: []domain.StaffLesson{{
+		ID: 91, CourseID: 77, CourseTitle: "Draft course", Position: 1,
+		LessonVersionID: 93, VersionNumber: 2, VersionStatus: "draft",
+		Title: "Lesson under revision", QuestionCount: 3,
+	}}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	unauthenticated := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/courses/77/lessons", nil)
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d; body=%s",
+			unauthenticatedResponse.Code, http.StatusUnauthorized, unauthenticatedResponse.Body.String())
+	}
+	if authoring.listLessonsCalls != 0 {
+		t.Fatal("authoring service was called without a staff session")
+	}
+
+	request := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/courses/77/lessons", nil)
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid session status = %d, want %d; body=%s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if authoring.listLessonsCalls != 1 || authoring.listLessonsCourseID != 77 {
+		t.Fatalf("list lessons calls/course ID = %d/%d, want 1/77",
+			authoring.listLessonsCalls, authoring.listLessonsCourseID)
+	}
+	var body struct {
+		Lessons []domain.StaffLesson `json:"lessons"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode lessons response: %v", err)
+	}
+	if len(body.Lessons) != 1 {
+		t.Fatalf("lessons count = %d, want 1", len(body.Lessons))
+	}
+	lesson := body.Lessons[0]
+	if lesson.ID != 91 || lesson.LessonVersionID != 93 || lesson.VersionNumber != 2 ||
+		lesson.VersionStatus != "draft" || lesson.QuestionCount != 3 {
+		t.Fatalf("staff lesson metadata is incomplete: %+v", lesson)
+	}
+	for _, forbidden := range []string{"expected_answer", "expected_explanation", "staff_session"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("staff lesson listing leaked forbidden field/material %q: %s", forbidden, response.Body.String())
+		}
+	}
+
+	badID := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/courses/0/lessons", nil)
+	badID.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	badIDResponse := httptest.NewRecorder()
+	handler.ServeHTTP(badIDResponse, badID)
+	if badIDResponse.Code != http.StatusBadRequest {
+		t.Fatalf("zero course ID status = %d, want %d; body=%s",
+			badIDResponse.Code, http.StatusBadRequest, badIDResponse.Body.String())
+	}
+	if authoring.listLessonsCalls != 1 {
+		t.Fatal("invalid course ID reached the authoring service")
 	}
 }

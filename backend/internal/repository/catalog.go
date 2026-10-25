@@ -80,6 +80,66 @@ func (r *CatalogRepository) ListCoursesForStaff(ctx context.Context) ([]domain.C
 	return courses, nil
 }
 
+
+func (r *CatalogRepository) ListLessonsForStaffByCourseID(ctx context.Context, courseID int64) ([]domain.StaffLesson, error) {
+	if courseID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	var exists bool
+	if err := r.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM courses WHERE id = $1)", courseID).Scan(&exists); err != nil {
+		return nil, mapDatabaseError("проверить курс для списка уроков сотрудника", err)
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	const query = "SELECT c.id, c.title, cl.position, l.id, lv.id, lv.version_number, lv.status, " +
+		"lv.title, lv.description, lv.published_at, " +
+		"(SELECT count(*)::INTEGER FROM lesson_questions q WHERE q.lesson_version_id = lv.id) AS question_count\n" +
+		"FROM courses c\n" +
+		"JOIN course_lessons cl ON cl.course_id = c.id\n" +
+		"JOIN lessons l ON l.id = cl.lesson_id\n" +
+		"JOIN LATERAL (\n" +
+		"    SELECT id, version_number, status, title, description, published_at\n" +
+		"    FROM lesson_versions WHERE lesson_id = l.id\n" +
+		"    ORDER BY version_number DESC, id DESC LIMIT 1\n" +
+		") lv ON TRUE\n" +
+		"WHERE c.id = $1\n" +
+		"ORDER BY cl.position, l.id"
+	rows, err := r.pool.Query(ctx, query, courseID)
+	if err != nil {
+		return nil, mapDatabaseError("получить уроки курса для сотрудника", err)
+	}
+	defer rows.Close()
+
+	lessons := make([]domain.StaffLesson, 0)
+	for rows.Next() {
+		var lesson domain.StaffLesson
+		var description pgtype.Text
+		var publishedAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&lesson.CourseID, &lesson.CourseTitle, &lesson.Position, &lesson.ID,
+			&lesson.LessonVersionID, &lesson.VersionNumber, &lesson.VersionStatus,
+			&lesson.Title, &description, &publishedAt, &lesson.QuestionCount,
+		); err != nil {
+			return nil, mapDatabaseError("прочитать урок курса для сотрудника", err)
+		}
+		if description.Valid {
+			value := description.String
+			lesson.Description = &value
+		}
+		if publishedAt.Valid {
+			value := publishedAt.Time
+			lesson.PublishedAt = &value
+		}
+		lessons = append(lessons, lesson)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDatabaseError("обойти уроки курса для сотрудника", err)
+	}
+	return lessons, nil
+}
+
 func (r *CatalogRepository) GetPublishedCourseByID(ctx context.Context, courseID int64) (domain.Course, error) {
 	if courseID <= 0 {
 		return domain.Course{}, ErrInvalidInput

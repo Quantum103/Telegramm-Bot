@@ -47,6 +47,7 @@ type StaffAuthAPI interface {
 
 type StaffAuthoringAPI interface {
 	ListCoursesForStaff(context.Context) ([]domain.Course, error)
+	ListLessonsForStaffByCourseID(context.Context, int64) ([]domain.StaffLesson, error)
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
@@ -59,6 +60,10 @@ type staffLoginRequest struct {
 
 type staffCoursesResponse struct {
 	Courses []domain.Course `json:"courses"`
+}
+
+type staffLessonsResponse struct {
+	Lessons []domain.StaffLesson `json:"lessons"`
 }
 
 type staffCreateDraftCourseRequest struct {
@@ -178,6 +183,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		staffAdminMux := http.NewServeMux()
 		if h.authoring != nil {
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses", h.staffListCourses)
+			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses/{courseID}/lessons", h.staffListLessonsForCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
@@ -297,6 +303,28 @@ func (h handlers) staffListCourses(w http.ResponseWriter, r *http.Request) {
 		courses = make([]domain.Course, 0)
 	}
 	writeJSON(w, http.StatusOK, staffCoursesResponse{Courses: courses})
+}
+
+func (h handlers) staffListLessonsForCourse(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	courseID, ok := parsePositiveID(w, r.PathValue("courseID"))
+	if !ok {
+		return
+	}
+	lessons, err := h.authoring.ListLessonsForStaffByCourseID(r.Context(), courseID)
+	if err != nil {
+		h.writeAPIError(w, err, "получить список уроков для сотрудника")
+		return
+	}
+	if lessons == nil {
+		lessons = make([]domain.StaffLesson, 0)
+	}
+	writeJSON(w, http.StatusOK, staffLessonsResponse{Lessons: lessons})
 }
 
 func (h handlers) staffCreateDraftCourse(w http.ResponseWriter, r *http.Request) {
