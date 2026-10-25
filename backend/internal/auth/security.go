@@ -84,8 +84,9 @@ func NewSessionToken() (token string, digest [32]byte, err error) {
 	if _, err := rand.Read(raw); err != nil {
 		return "", digest, fmt.Errorf("generate session token: %w", err)
 	}
-	digest = sha256.Sum256(raw)
-	return base64.RawURLEncoding.EncodeToString(raw), digest, nil
+	token = base64.RawURLEncoding.EncodeToString(raw)
+	digest = sha256.Sum256([]byte(token))
+	return token, digest, nil
 }
 
 // HashToken hashes an opaque token before database lookup.
