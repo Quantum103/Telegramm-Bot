@@ -846,7 +846,8 @@ func (r *CatalogRepository) PublishCourse(ctx context.Context, courseID, publish
 
 func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 	if params.LessonVersionID <= 0 || params.QuestionNumber <= 0 ||
-		strings.TrimSpace(params.Prompt) == "" || strings.TrimSpace(params.ExpectedAnswer) == "" {
+		strings.TrimSpace(params.Prompt) == "" || strings.TrimSpace(params.ExpectedAnswer) == "" ||
+		(params.ExpectedExplanation != nil && len(strings.TrimSpace(*params.ExpectedExplanation)) > 4000) {
 		return ErrInvalidInput
 	}
 	params.Prompt = strings.TrimSpace(params.Prompt)
@@ -870,7 +871,8 @@ func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 	for index := range params.Options {
 		params.Options[index].Key = strings.TrimSpace(params.Options[index].Key)
 		params.Options[index].Text = strings.TrimSpace(params.Options[index].Text)
-		if params.Options[index].Key == "" || params.Options[index].Text == "" {
+		if params.Options[index].Key == "" || len(params.Options[index].Key) > 50 ||
+			params.Options[index].Text == "" || len(params.Options[index].Text) > 1000 {
 			return ErrInvalidInput
 		}
 		if _, exists := optionKeys[params.Options[index].Key]; exists {
@@ -897,7 +899,8 @@ func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 			weight = 1
 			params.Criteria[index].Weight = weight
 		}
-		if params.Criteria[index].Key == "" || params.Criteria[index].Description == "" ||
+		if params.Criteria[index].Key == "" || len(params.Criteria[index].Key) > 100 ||
+			params.Criteria[index].Description == "" || len(params.Criteria[index].Description) > 2000 ||
 			weight < 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
 			return ErrInvalidInput
 		}
@@ -909,15 +912,19 @@ func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 	for index := range params.CommonMistakes {
 		params.CommonMistakes[index].Text = strings.TrimSpace(params.CommonMistakes[index].Text)
 		params.CommonMistakes[index].Explanation = strings.TrimSpace(params.CommonMistakes[index].Explanation)
-		if params.CommonMistakes[index].Text == "" || params.CommonMistakes[index].Explanation == "" {
+		if params.CommonMistakes[index].Text == "" || len(params.CommonMistakes[index].Text) > 2000 ||
+			params.CommonMistakes[index].Explanation == "" || len(params.CommonMistakes[index].Explanation) > 4000 {
 			return ErrInvalidInput
 		}
 	}
 	for index := range params.BiblePassages {
 		passage := &params.BiblePassages[index]
 		passage.BookName = strings.TrimSpace(passage.BookName)
-		if passage.BookName == "" || passage.Chapter <= 0 ||
-			passage.StartVerse <= 0 || passage.EndVerse < passage.StartVerse {
+		if passage.BookName == "" || len(passage.BookName) > 100 || passage.Chapter <= 0 ||
+			passage.StartVerse <= 0 || passage.EndVerse < passage.StartVerse ||
+			(passage.TranslationName != nil && len(strings.TrimSpace(*passage.TranslationName)) > 100) ||
+			(passage.PassageText != nil && len(strings.TrimSpace(*passage.PassageText)) > 4000) ||
+			(passage.SourceNote != nil && len(strings.TrimSpace(*passage.SourceNote)) > 1000) {
 			return ErrInvalidInput
 		}
 	}
