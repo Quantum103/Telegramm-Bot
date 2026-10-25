@@ -2,29 +2,30 @@
 package auth
 
 import (
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/pbkdf2"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"hash"
+	"strconv"
 	"strings"
 )
 
 const (
-	passwordAlgorithm = "pbkdf2-sha256"
+	passwordAlgorithm  = "pbkdf2-sha256"
 	passwordIterations = 600_000
-	passwordSaltBytes = 16
-	passwordKeyBytes = 32
-	maxPasswordBytes = 1024
-	sessionTokenBytes = 32
+	passwordSaltBytes  = 16
+	passwordKeyBytes   = 32
+	maxPasswordBytes   = 1024
+	sessionTokenBytes  = 32
 )
 
 var (
 	ErrInvalidPassword = errors.New("password does not meet requirements")
-	ErrInvalidHash = errors.New("invalid password hash")
+	ErrInvalidHash     = errors.New("invalid password hash")
 )
 
 // HashPassword creates a salted PBKDF2-HMAC-SHA256 hash suitable for storage.
@@ -56,9 +57,8 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	if len(parts) != 4 || parts[0] != passwordAlgorithm {
 		return false, ErrInvalidHash
 	}
-	var iterations int
-	if _, err := fmt.Sscanf(parts[1], "%d", &iterations); err != nil ||
-		iterations != passwordIterations {
+	iterations, err := strconv.Atoi(parts[1])
+	if err != nil || iterations != passwordIterations {
 		return false, ErrInvalidHash
 	}
 	enc := base64.RawStdEncoding
