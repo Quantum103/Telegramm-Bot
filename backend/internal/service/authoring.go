@@ -131,3 +131,34 @@ func (s *AuthoringService) PublishCourse(ctx context.Context, courseID, publishe
 	}
 	return s.store.PublishCourse(ctx, courseID, publishedByStaffID)
 }
+
+
+// StaffRoleStore is implemented by the repository that persists role assignments.
+type StaffRoleStore interface {
+	AssignStaffRole(context.Context, int64, int64, string) error
+	RevokeStaffRole(context.Context, int64, int64, string) error
+}
+
+func (s *AuthoringService) AssignStaffRole(ctx context.Context, actorStaffID, targetStaffID int64, roleCode string) error {
+	if actorStaffID <= 0 || targetStaffID <= 0 || actorStaffID == targetStaffID ||
+		(roleCode != "administrator" && roleCode != "curator") {
+		return domain.ErrInvalidInput
+	}
+	store, ok := s.store.(StaffRoleStore)
+	if !ok {
+		return domain.ErrInvalidState
+	}
+	return store.AssignStaffRole(ctx, actorStaffID, targetStaffID, roleCode)
+}
+
+func (s *AuthoringService) RevokeStaffRole(ctx context.Context, actorStaffID, targetStaffID int64, roleCode string) error {
+	if actorStaffID <= 0 || targetStaffID <= 0 || actorStaffID == targetStaffID ||
+		(roleCode != "administrator" && roleCode != "curator") {
+		return domain.ErrInvalidInput
+	}
+	store, ok := s.store.(StaffRoleStore)
+	if !ok {
+		return domain.ErrInvalidState
+	}
+	return store.RevokeStaffRole(ctx, actorStaffID, targetStaffID, roleCode)
+}

@@ -247,6 +247,8 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		// The whole namespace is protected, so route handlers cannot accidentally bypass auth/CSRF.
 		staffAdminMux := http.NewServeMux()
 		if h.authoring != nil {
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/staff/{staffID}/roles", h.staffAssignRole)
+			staffAdminMux.HandleFunc("DELETE /api/v1/staff/admin/staff/{staffID}/roles/{roleCode}", h.staffRevokeRole)
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses", h.staffListCourses)
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses/{courseID}/lessons", h.staffListLessonsForCourse)
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffListQuestionsForVersion)

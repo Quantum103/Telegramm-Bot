@@ -556,6 +556,16 @@ type fakeStaffAuthoringAPI struct {
 	publishCourseID                int64
 	publishCourseStaffID           int64
 	publishCourseErr               error
+	assignRoleCalls                 int
+	assignRoleActorID               int64
+	assignRoleTargetID              int64
+	assignRoleCode                  string
+	assignRoleErr                   error
+	revokeRoleCalls                 int
+	revokeRoleActorID               int64
+	revokeRoleTargetID              int64
+	revokeRoleCode                  string
+	revokeRoleErr                   error
 }
 
 func (f *fakeStaffAuthoringAPI) ListCoursesForStaff(_ context.Context) ([]domain.Course, error) {
@@ -629,6 +639,18 @@ func (f *fakeStaffAuthoringAPI) PublishCourse(_ context.Context, courseID, staff
 	f.publishCourseID = courseID
 	f.publishCourseStaffID = staffID
 	return f.publishCourseErr
+}
+
+func (f *fakeStaffAuthoringAPI) AssignStaffRole(_ context.Context, actorID, targetID int64, roleCode string) error {
+	f.assignRoleCalls++
+	f.assignRoleActorID, f.assignRoleTargetID, f.assignRoleCode = actorID, targetID, roleCode
+	return f.assignRoleErr
+}
+
+func (f *fakeStaffAuthoringAPI) RevokeStaffRole(_ context.Context, actorID, targetID int64, roleCode string) error {
+	f.revokeRoleCalls++
+	f.revokeRoleActorID, f.revokeRoleTargetID, f.revokeRoleCode = actorID, targetID, roleCode
+	return f.revokeRoleErr
 }
 
 func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
@@ -1439,4 +1461,75 @@ func TestStaffUpdateQuestionRequiresSessionAndCSRF(t *testing.T) {
 	if authoring.updateQuestionCalls != 1 {
 		t.Fatal("invalid path ID reached the question update service")
 	}
+}
+
+
+func TestStaffRoleManagementRequiresAdministratorAndUsesSessionActor(t *testing.T) {
+	csrfToken := "csrf-role-management-token-0123456789"
+	makeHandler := func(roles []string) (*fakeStaffAuthoringAPI, http.Handler) {
+		identity := domain.StaffSessionIdentity{
+			StaffID: 42, Roles: roles, DisplayName: "Staff", Email: "staff@example.test",
+			CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+		}
+		authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+		authoring := &fakeStaffAuthoringAPI{}
+		handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+			fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+		)
+		return authoring, handler
+	}
+	makeRequest := func(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, "https://admin.example.test"+path, strings.NewReader(body))
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+		request.Header.Set("X-CSRF-Token", csrfToken)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	t.Run("administrator grants role with authenticated actor", func(t *testing.T) {
+		authoring, handler := makeHandler([]string{"administrator"})
+		response := makeRequest(handler, http.MethodPost, "/api/v1/staff/admin/staff/55/roles", `{"role_code":"curator"}`)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusCreated, response.Body.String())
+		}
+		if authoring.assignRoleCalls != 1 || authoring.assignRoleActorID != 42 ||
+			authoring.assignRoleTargetID != 55 || authoring.assignRoleCode != "curator" {
+			t.Fatalf("unexpected role assignment call: %+v", authoring)
+		}
+	})
+	t.Run("caller cannot supply actor ID", func(t *testing.T) {
+		authoring, handler := makeHandler([]string{"administrator"})
+		response := makeRequest(handler, http.MethodPost, "/api/v1/staff/admin/staff/55/roles", `{"role_code":"curator","actor_staff_id":999}`)
+		if response.Code != http.StatusBadRequest || authoring.assignRoleCalls != 0 {
+			t.Fatalf("status/calls = %d/%d, want 400/0; body=%s", response.Code, authoring.assignRoleCalls, response.Body.String())
+		}
+	})
+	t.Run("curator cannot grant roles", func(t *testing.T) {
+		authoring, handler := makeHandler([]string{"curator"})
+		response := makeRequest(handler, http.MethodPost, "/api/v1/staff/admin/staff/55/roles", `{"role_code":"curator"}`)
+		if response.Code != http.StatusForbidden || authoring.assignRoleCalls != 0 {
+			t.Fatalf("status/calls = %d/%d, want 403/0", response.Code, authoring.assignRoleCalls)
+		}
+	})
+	t.Run("self grant is rejected", func(t *testing.T) {
+		authoring, handler := makeHandler([]string{"administrator"})
+		response := makeRequest(handler, http.MethodPost, "/api/v1/staff/admin/staff/42/roles", `{"role_code":"curator"}`)
+		if response.Code != http.StatusBadRequest || authoring.assignRoleCalls != 0 {
+			t.Fatalf("status/calls = %d/%d, want 400/0", response.Code, authoring.assignRoleCalls)
+		}
+	})
+	t.Run("administrator revokes role", func(t *testing.T) {
+		authoring, handler := makeHandler([]string{"administrator"})
+		response := makeRequest(handler, http.MethodDelete, "/api/v1/staff/admin/staff/55/roles/curator", "")
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusNoContent, response.Body.String())
+		}
+		if authoring.revokeRoleCalls != 1 || authoring.revokeRoleActorID != 42 ||
+			authoring.revokeRoleTargetID != 55 || authoring.revokeRoleCode != "curator" {
+			t.Fatalf("unexpected role revocation call: %+v", authoring)
+		}
+	})
 }
