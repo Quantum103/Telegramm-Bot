@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listCourseLessons, listCourses, type Course, type Lesson } from './api'
+import './catalog.css'
 
 type Page = 'overview' | 'courses' | 'lessons' | 'students' | 'analytics' | 'settings'
 type HealthState = 'checking' | 'connected' | 'error'
