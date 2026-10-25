@@ -102,13 +102,22 @@ func (r *StaffAuthRepository) GetActiveSessionByTokenHash(
 			AND a.account_status = 'active'
 			AND a.email IS NOT NULL
 			AND length(btrim(a.email)) > 0
-		RETURNING s.staff_id, a.display_name, a.email, s.csrf_token_hash, s.expires_at
+		RETURNING s.staff_id, a.display_name, a.email, s.csrf_token_hash, s.expires_at,
+			ARRAY(
+				SELECT DISTINCT role.role_code
+				FROM staff_role_assignments assignment
+				JOIN staff_roles role ON role.id = assignment.role_id
+				WHERE assignment.staff_id = s.staff_id
+					AND assignment.revoked_at IS NULL
+				ORDER BY role.role_code
+			) AS active_roles
 	`, tokenHash[:]).Scan(
 		&identity.StaffID,
 		&identity.DisplayName,
 		&identity.Email,
 		&csrfHash,
 		&identity.ExpiresAt,
+		&identity.Roles,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.StaffSessionIdentity{}, ErrNotFound

@@ -33,9 +33,19 @@ func TestGetActiveSessionByTokenHash(t *testing.T) {
 
 	activeStaffID := insertStaff("active", "active")
 	inactiveStaffID := insertStaff("inactive", "inactive")
+	var administratorRoleID int64
+	if err := pool.QueryRow(ctx, "SELECT id FROM staff_roles WHERE role_code = 'administrator'").Scan(&administratorRoleID); err != nil {
+		t.Fatalf("read administrator role ID: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO staff_role_assignments (staff_id, role_id, granted_by_staff_id) VALUES ($1, $2, $1)", activeStaffID, administratorRoleID); err != nil {
+		t.Fatalf("assign administrator role: %v", err)
+	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_role_assignments WHERE staff_id IN ($1, $2)", activeStaffID, inactiveStaffID); err != nil {
+			t.Errorf("cleanup staff role assignments: %v", err)
+		}
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_accounts WHERE id IN ($1, $2)", activeStaffID, inactiveStaffID); err != nil {
 			t.Errorf("cleanup staff auth integration data: %v", err)
 		}
@@ -81,8 +91,23 @@ func TestGetActiveSessionByTokenHash(t *testing.T) {
 	if identity.CSRFTokenHash != validCSRFHash {
 		t.Fatal("returned CSRF digest does not match stored digest")
 	}
+	if len(identity.Roles) != 1 || identity.Roles[0] != "administrator" {
+		t.Fatalf("active roles = %v, want [administrator]", identity.Roles)
+	}
 	if identity.ExpiresAt.Before(time.Now()) {
 		t.Fatal("returned valid session is already expired")
+	}
+
+	// Active assignments are read on each request, so revocation takes effect immediately.
+	if _, err := pool.Exec(ctx, "UPDATE staff_role_assignments SET revoked_at = now() WHERE staff_id = $1 AND role_id = $2 AND revoked_at IS NULL", activeStaffID, administratorRoleID); err != nil {
+		t.Fatalf("revoke administrator role: %v", err)
+	}
+	identityAfterRevocation, err := repo.GetActiveSessionByTokenHash(ctx, validTokenHash)
+	if err != nil {
+		t.Fatalf("look up session after role revocation: %v", err)
+	}
+	if len(identityAfterRevocation.Roles) != 0 {
+		t.Fatalf("roles after revocation = %v, want none", identityAfterRevocation.Roles)
 	}
 
 	var lastSeen, createdAt time.Time

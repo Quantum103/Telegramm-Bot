@@ -397,6 +397,87 @@ func TestRegisteredStaffRoutesHaveExpectedGuards(t *testing.T) {
 	}
 }
 
+
+func TestStaffAdminRBACAllowsCuratorReadButRequiresAdministratorForWrites(t *testing.T) {
+	csrfToken := "csrf-rbac-test-token-0123456789"
+	tests := []struct {
+		name          string
+		roles         []string
+		method        string
+		path          string
+		body          string
+		wantStatus    int
+		wantLists     int
+		wantPublishes int
+	}{
+		{
+			name: "unassigned staff cannot read authoring data",
+			roles: []string{}, method: http.MethodGet,
+			path: "/api/v1/staff/admin/courses", wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "curator can read authoring data",
+			roles: []string{"curator"}, method: http.MethodGet,
+			path: "/api/v1/staff/admin/courses", wantStatus: http.StatusOK, wantLists: 1,
+		},
+		{
+			name: "administrator can read authoring data",
+			roles: []string{"administrator"}, method: http.MethodGet,
+			path: "/api/v1/staff/admin/courses", wantStatus: http.StatusOK, wantLists: 1,
+		},
+		{
+			name: "unassigned staff cannot publish",
+			roles: []string{}, method: http.MethodPost,
+			path: "/api/v1/staff/admin/courses/77/publish", body: "{}", wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "curator cannot publish",
+			roles: []string{"curator"}, method: http.MethodPost,
+			path: "/api/v1/staff/admin/courses/77/publish", body: "{}", wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "administrator can publish",
+			roles: []string{"administrator"}, method: http.MethodPost,
+			path: "/api/v1/staff/admin/courses/77/publish", body: "{}", wantStatus: http.StatusNoContent, wantPublishes: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			identity := domain.StaffSessionIdentity{
+				StaffID: 42, Roles: tt.roles, DisplayName: "Staff", Email: "staff@example.test",
+				CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+			}
+			authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+			authoring := &fakeStaffAuthoringAPI{}
+			handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+				fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+			)
+
+			request := httptest.NewRequest(tt.method, "https://admin.example.test"+tt.path, strings.NewReader(tt.body))
+			request.Header.Set("Origin", "https://admin.example.test")
+			request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+			if tt.method != http.MethodGet {
+				request.Header.Set("Content-Type", "application/json")
+				request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+				request.Header.Set("X-CSRF-Token", csrfToken)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+			if authoring.listCoursesCalls != tt.wantLists {
+				t.Fatalf("list calls = %d, want %d", authoring.listCoursesCalls, tt.wantLists)
+			}
+			if authoring.publishCourseCalls != tt.wantPublishes {
+				t.Fatalf("publish calls = %d, want %d", authoring.publishCourseCalls, tt.wantPublishes)
+			}
+		})
+	}
+}
+
 type fakeStaffAuthoringAPI struct {
 	listCoursesCalls       int
 	listCoursesResult      []domain.Course
@@ -524,7 +605,7 @@ func (f *fakeStaffAuthoringAPI) PublishCourse(_ context.Context, courseID, staff
 func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
 	csrfToken := "csrf-test-token-0123456789"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -579,7 +660,7 @@ func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
 func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T) {
 	csrfToken := "csrf-lesson-test-token-0123456789"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -644,7 +725,7 @@ func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T)
 func TestStaffUpdateDraftLessonVersionRequiresSessionAndCSRF(t *testing.T) {
 	csrfToken := "csrf-lesson-update-test-token-012345"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -736,7 +817,7 @@ func TestStaffUpdateDraftLessonVersionRequiresSessionAndCSRF(t *testing.T) {
 func TestStaffCreateQuestionUsesAuthenticatedActorAndVersionPath(t *testing.T) {
 	csrfToken := "csrf-question-test-token-0123456789"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -804,7 +885,7 @@ func TestStaffCreateQuestionUsesAuthenticatedActorAndVersionPath(t *testing.T) {
 
 func TestStaffListLessonsForCourseRequiresSessionAndReturnsLatestVersionMetadata(t *testing.T) {
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -880,7 +961,7 @@ func TestStaffListLessonsForCourseRequiresSessionAndReturnsLatestVersionMetadata
 
 func TestStaffListQuestionsForVersionRequiresSessionAndReturnsInternalAuthoringData(t *testing.T) {
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -948,7 +1029,7 @@ func TestStaffListQuestionsForVersionRequiresSessionAndReturnsInternalAuthoringD
 func TestStaffCreateDraftRevisionUsesAuthenticatedActorAndCSRF(t *testing.T) {
 	csrfToken := "csrf-revision-test-token-0123456789"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -1047,7 +1128,7 @@ func TestStaffCreateDraftRevisionUsesAuthenticatedActorAndCSRF(t *testing.T) {
 func TestStaffPublishLessonVersionRequiresSessionAndCSRF(t *testing.T) {
 	csrfToken := "csrf-publish-test-token-0123456789"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -1133,7 +1214,7 @@ func TestStaffPublishLessonVersionRequiresSessionAndCSRF(t *testing.T) {
 func TestStaffPublishCourseRequiresSessionAndCSRF(t *testing.T) {
 	csrfToken := "csrf-course-publish-test-token-012345"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -1219,7 +1300,7 @@ func TestStaffPublishCourseRequiresSessionAndCSRF(t *testing.T) {
 func TestStaffUpdateQuestionRequiresSessionAndCSRF(t *testing.T) {
 	csrfToken := "csrf-question-update-test-token-012345"
 	identity := domain.StaffSessionIdentity{
-		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		StaffID: 42, Roles: []string{"administrator"}, DisplayName: "Admin", Email: "admin@example.test",
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}

@@ -259,7 +259,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 			staffAdminMux.HandleFunc("PUT /api/v1/staff/admin/lesson-versions/{versionID}/questions/{questionID}", h.staffUpdateQuestion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/publish", h.staffPublishLessonVersion)
 		}
-		mux.Handle("/api/v1/staff/admin/", h.staffSessionMiddleware(staffAdminMux))
+		mux.Handle("/api/v1/staff/admin/", h.staffAdminMiddleware(staffAdminMux))
 	}
 	return mux
 }
@@ -852,6 +852,39 @@ func csrfMatches(r *http.Request, identity domain.StaffSessionIdentity) bool {
 
 func isUnsafeMethod(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
+}
+
+func staffHasRole(identity domain.StaffSessionIdentity, roleCode string) bool {
+	for _, role := range identity.Roles {
+		if role == roleCode {
+			return true
+		}
+	}
+	return false
+}
+
+// staffAdminMiddleware applies permissions for the whole /staff/admin/ namespace
+// after normal session and CSRF validation. New routes therefore inherit
+// default-deny for unassigned staff and administrator-only access for mutations.
+func (h handlers) staffAdminMiddleware(next http.Handler) http.Handler {
+	roleChecked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+		if !ok || identity.StaffID <= 0 {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+
+		allowed := staffHasRole(identity, "administrator")
+		if !isUnsafeMethod(r.Method) {
+			allowed = allowed || staffHasRole(identity, "curator")
+		}
+		if !allowed {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return h.staffSessionMiddleware(roleChecked)
 }
 
 func (h handlers) staffSessionMiddleware(next http.Handler) http.Handler {
