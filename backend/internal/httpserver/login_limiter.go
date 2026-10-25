@@ -44,7 +44,7 @@ const (
 type StaffLoginRateLimiter interface {
 	Begin(context.Context, string, string) (func(StaffLoginAttemptOutcome) error, time.Duration, bool, error)
 	Ping(context.Context) error
-)
+}
 
 type loginRatePolicy struct {
 	window                 time.Duration
