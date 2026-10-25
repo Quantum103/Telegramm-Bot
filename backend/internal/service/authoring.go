@@ -15,6 +15,7 @@ type AuthoringStore interface {
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestionWithMaterials(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
+	UpdateQuestionWithMaterials(context.Context, int64, domain.CreateQuestionParams, int64) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64, int64) error
 	PublishCourse(context.Context, int64, int64) error
 }
@@ -89,6 +90,23 @@ func (s *AuthoringService) CreateQuestion(ctx context.Context, params domain.Cre
 		return domain.LessonQuestion{}, domain.ErrInvalidInput
 	}
 	return s.store.CreateQuestionWithMaterials(ctx, params)
+}
+
+
+func (s *AuthoringService) UpdateQuestion(ctx context.Context, questionID int64, params domain.CreateQuestionParams, updatedByStaffID int64) (domain.LessonQuestion, error) {
+	params.Prompt = strings.TrimSpace(params.Prompt)
+	params.ExpectedAnswer = strings.TrimSpace(params.ExpectedAnswer)
+	params.AnswerType = strings.TrimSpace(params.AnswerType)
+	if questionID <= 0 || params.LessonVersionID <= 0 || params.QuestionNumber <= 0 ||
+		params.Prompt == "" || len(params.Prompt) > 4000 ||
+		params.ExpectedAnswer == "" || len(params.ExpectedAnswer) > 4000 ||
+		params.AnswerType == "" || updatedByStaffID <= 0 ||
+		len(params.Options) > 20 || len(params.Criteria) > 50 ||
+		len(params.CommonMistakes) > 50 || len(params.BiblePassages) > 20 ||
+		(params.ExpectedExplanation != nil && len(*params.ExpectedExplanation) > 4000) {
+		return domain.LessonQuestion{}, domain.ErrInvalidInput
+	}
+	return s.store.UpdateQuestionWithMaterials(ctx, questionID, params, updatedByStaffID)
 }
 
 func (s *AuthoringService) PublishLessonVersion(ctx context.Context, versionID, publishedByStaffID int64) error {

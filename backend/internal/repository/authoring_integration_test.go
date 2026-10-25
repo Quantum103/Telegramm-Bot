@@ -730,3 +730,127 @@ func TestPublishCourseStoresStaffActorAndAuditEvent(t *testing.T) {
 		t.Fatalf("idempotent publication wrote %d audit events, want exactly 1", auditCount)
 	}
 }
+
+func TestUpdateDraftQuestionReplacesMaterialsAuditsAndProtectsPublishedVersion(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	suffix := fmt.Sprintf("staff-question-update-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Question editor', $1, 'active')
+		RETURNING id
+	`, suffix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+
+	repo := NewCatalogRepository(pool)
+	authoring := service.NewAuthoringService(repo)
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: suffix, Title: "Question update audit", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create course: %v", err)
+	}
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Question update lesson", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create lesson: %v", err)
+	}
+	question, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 1,
+		Prompt: "Original prompt", ExpectedAnswer: "Original answer", AnswerType: "text",
+		CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create question: %v", err)
+	}
+
+	required := true
+	updated, err := authoring.UpdateQuestion(ctx, question.ID, domain.CreateQuestionParams{
+		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 2,
+		Prompt: "Updated prompt", ExpectedAnswer: "Updated answer", AnswerType: "single_choice",
+		ExpectedExplanation: stringPtr("Updated explanation"),
+		Options: []domain.QuestionOptionInput{
+			{Key: "A", Text: "Correct option", IsCorrect: true},
+			{Key: "B", Text: "Incorrect option"},
+		},
+		Criteria: []domain.QuestionCriterionInput{{
+			Key: "core", Description: "Core criterion", Weight: 2, Required: &required,
+		}},
+		CommonMistakes: []domain.CommonMistake{{Text: "Common mistake", Explanation: "Correction"}},
+		BiblePassages: []domain.BiblePassageInput{{
+			BookName: "John", Chapter: 3, StartVerse: 16, EndVerse: 17,
+			PassageText: stringPtr("Updated passage text"), SourceNote: stringPtr("Update source"),
+		}},
+	}, staffID)
+	if err != nil {
+		t.Fatalf("update draft question: %v", err)
+	}
+	if updated.ID != question.ID || updated.LessonVersionID != lesson.LessonVersionID ||
+		updated.QuestionNumber != 2 || updated.Prompt != "Updated prompt" ||
+		updated.ExpectedAnswer != "Updated answer" || updated.AnswerType != "single_choice" ||
+		updated.ExpectedExplanation == nil || *updated.ExpectedExplanation != "Updated explanation" ||
+		len(updated.Options) != 2 || len(updated.Criteria) != 1 ||
+		len(updated.CommonMistakes) != 1 || len(updated.BiblePassages) != 1 {
+		t.Fatalf("updated question is missing content: %+v", updated)
+	}
+
+	var storedPrompt, storedAnswer, storedType string
+	var storedNumber, optionCount, criteriaCount, mistakeCount, passageCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT q.prompt, q.expected_answer, q.answer_type, q.question_number,
+		       (SELECT count(*) FROM question_options o WHERE o.question_id=q.id),
+		       (SELECT count(*) FROM question_criteria c WHERE c.question_id=q.id),
+		       (SELECT count(*) FROM question_common_mistakes m WHERE m.question_id=q.id),
+		       (SELECT count(*) FROM question_bible_passages b WHERE b.question_id=q.id)
+		FROM lesson_questions q WHERE q.id = $1
+	`, question.ID).Scan(&storedPrompt,&storedAnswer,&storedType,&storedNumber,
+		&optionCount,&criteriaCount,&mistakeCount,&passageCount); err != nil {
+		t.Fatalf("read updated question content: %v", err)
+	}
+	if storedPrompt != "Updated prompt" || storedAnswer != "Updated answer" ||
+		storedType != "single_choice" || storedNumber != 2 ||
+		optionCount != 2 || criteriaCount != 1 || mistakeCount != 1 || passageCount != 1 {
+		t.Fatalf("stored updated content mismatch: prompt=%q answer=%q type=%q number=%d options=%d criteria=%d mistakes=%d passages=%d",
+			storedPrompt, storedAnswer, storedType, storedNumber, optionCount, criteriaCount, mistakeCount, passageCount)
+	}
+
+	var actorID, entityID int64
+	var action, entityType, auditedVersionID, auditedNumber, auditedType string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'lesson_version_id', details->>'question_number', details->>'answer_type'
+		FROM audit_events WHERE entity_type='question' AND entity_id=$1 AND action='question.draft.update'
+	`, question.ID).Scan(&actorID,&action,&entityType,&entityID,&auditedVersionID,&auditedNumber,&auditedType); err != nil {
+		t.Fatalf("read question update audit event: %v", err)
+	}
+	if actorID != staffID || action != "question.draft.update" || entityType != "question" ||
+		entityID != question.ID || auditedVersionID != fmt.Sprint(lesson.LessonVersionID) ||
+		auditedNumber != "2" || auditedType != "single_choice" {
+		t.Fatalf("unexpected question update audit event: actor=%d action=%q entity=%q id=%d version=%q number=%q type=%q",
+			actorID, action, entityType, entityID, auditedVersionID, auditedNumber, auditedType)
+	}
+
+	if err := authoring.PublishLessonVersion(ctx, lesson.LessonVersionID, staffID); err != nil {
+		t.Fatalf("publish edited lesson version: %v", err)
+	}
+	_, err = authoring.UpdateQuestion(ctx, question.ID, domain.CreateQuestionParams{
+		LessonVersionID: lesson.LessonVersionID, QuestionNumber: 3,
+		Prompt: "Must not be saved", ExpectedAnswer: "Must not be saved", AnswerType: "text",
+	}, staffID)
+	if !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("editing a published question should return invalid state, got %v", err)
+	}
+	var finalPrompt, finalAnswer string
+	if err := pool.QueryRow(ctx, "SELECT prompt, expected_answer FROM lesson_questions WHERE id=$1", question.ID).
+		Scan(&finalPrompt,&finalAnswer); err != nil {
+		t.Fatalf("read published question after rejected update: %v", err)
+	}
+	if finalPrompt != "Updated prompt" || finalAnswer != "Updated answer" {
+		t.Fatalf("published content changed after rejected update: prompt=%q answer=%q", finalPrompt, finalAnswer)
+	}
+}

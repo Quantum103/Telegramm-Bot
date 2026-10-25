@@ -53,6 +53,7 @@ type StaffAuthoringAPI interface {
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
 	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
+	UpdateQuestion(context.Context, int64, domain.CreateQuestionParams, int64) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64, int64) error
 	PublishCourse(context.Context, int64, int64) error
 }
@@ -148,6 +149,14 @@ type staffCreatedQuestionResponse struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type staffUpdatedQuestionResponse struct {
+	ID              int64     `json:"id"`
+	LessonVersionID int64     `json:"lesson_version_id"`
+	QuestionNumber  int       `json:"question_number"`
+	AnswerType      string    `json:"answer_type"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type staffIdentityResponse struct {
 	ID          int64  `json:"id"`
 	DisplayName string `json:"display_name"`
@@ -240,6 +249,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/publish", h.staffPublishCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lessons/{lessonID}/revisions", h.staffCreateDraftRevision)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
+			staffAdminMux.HandleFunc("PUT /api/v1/staff/admin/lesson-versions/{versionID}/questions/{questionID}", h.staffUpdateQuestion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/publish", h.staffPublishLessonVersion)
 		}
 		mux.Handle("/api/v1/staff/admin/", h.staffSessionMiddleware(staffAdminMux))
@@ -581,6 +591,56 @@ func (h handlers) staffCreateQuestion(w http.ResponseWriter, r *http.Request) {
 		ID: question.ID, LessonVersionID: question.LessonVersionID,
 		QuestionNumber: question.QuestionNumber, AnswerType: question.AnswerType,
 		CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
+	})
+}
+
+
+func (h handlers) staffUpdateQuestion(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	versionID, ok := parsePositiveID(w, r.PathValue("versionID"))
+	if !ok {
+		return
+	}
+	questionID, ok := parsePositiveID(w, r.PathValue("questionID"))
+	if !ok {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input staffCreateQuestionRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+
+	question, err := h.authoring.UpdateQuestion(r.Context(), questionID, domain.CreateQuestionParams{
+		LessonVersionID: versionID,
+		QuestionNumber: input.QuestionNumber, Prompt: input.Prompt, ExpectedAnswer: input.ExpectedAnswer,
+		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation,
+		Criteria: input.Criteria, Options: input.Options, CommonMistakes: input.CommonMistakes,
+		BiblePassages: input.BiblePassages,
+	}, identity.StaffID)
+	if err != nil {
+		h.writeAPIError(w, err, "обновить вопрос черновой версии урока")
+		return
+	}
+	writeJSON(w, http.StatusOK, staffUpdatedQuestionResponse{
+		ID: question.ID, LessonVersionID: question.LessonVersionID,
+		QuestionNumber: question.QuestionNumber, AnswerType: question.AnswerType,
+		UpdatedAt: question.UpdatedAt,
 	})
 }
 

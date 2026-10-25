@@ -426,6 +426,12 @@ type fakeStaffAuthoringAPI struct {
 	createQuestionParams   domain.CreateQuestionParams
 	createQuestionResult   domain.LessonQuestion
 	createQuestionErr      error
+	updateQuestionCalls     int
+	updateQuestionID        int64
+	updateQuestionParams    domain.CreateQuestionParams
+	updateQuestionStaffID   int64
+	updateQuestionResult    domain.LessonQuestion
+	updateQuestionErr       error
 	publishVersionCalls    int
 	publishVersionID       int64
 	publishVersionStaffID  int64
@@ -476,6 +482,14 @@ func (f *fakeStaffAuthoringAPI) CreateQuestion(_ context.Context, params domain.
 	f.createQuestionCalls++
 	f.createQuestionParams = params
 	return f.createQuestionResult, f.createQuestionErr
+}
+
+func (f *fakeStaffAuthoringAPI) UpdateQuestion(_ context.Context, questionID int64, params domain.CreateQuestionParams, staffID int64) (domain.LessonQuestion, error) {
+	f.updateQuestionCalls++
+	f.updateQuestionID = questionID
+	f.updateQuestionParams = params
+	f.updateQuestionStaffID = staffID
+	return f.updateQuestionResult, f.updateQuestionErr
 }
 
 func (f *fakeStaffAuthoringAPI) PublishLessonVersion(_ context.Context, versionID, staffID int64) error {
@@ -1094,3 +1108,119 @@ func TestStaffPublishCourseRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatal("invalid course ID reached the publication service")
 	}
 }
+
+func TestStaffUpdateQuestionRequiresSessionAndCSRF(t *testing.T) {
+	csrfToken := "csrf-question-update-test-token-012345"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	updatedAt := time.Now().UTC()
+	authoring := &fakeStaffAuthoringAPI{updateQuestionResult: domain.LessonQuestion{
+		ID: 77, LessonVersionID: 93, QuestionNumber: 2, AnswerType: "text", UpdatedAt: updatedAt,
+	}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	body := `{
+		"question_number": 2,
+		"prompt": "Updated prompt",
+		"expected_answer": "Updated expected answer",
+		"answer_type": "text",
+		"expected_explanation": "Updated explanation",
+		"criteria": [],
+		"options": [],
+		"common_mistakes": [],
+		"bible_passages": []
+	}`
+	makeRequest := func(versionID, questionID, payload string, includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPut,
+			"https://admin.example.test/api/v1/staff/admin/lesson-versions/"+versionID+"/questions/"+questionID,
+			strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	unauthenticated := httptest.NewRequest(http.MethodPut,
+		"https://admin.example.test/api/v1/staff/admin/lesson-versions/93/questions/77",
+		strings.NewReader(body))
+	unauthenticated.Header.Set("Content-Type", "application/json")
+	unauthenticated.Header.Set("Origin", "https://admin.example.test")
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d; body=%s",
+			unauthenticatedResponse.Code, http.StatusUnauthorized, unauthenticatedResponse.Body.String())
+	}
+	if authoring.updateQuestionCalls != 0 {
+		t.Fatal("question update service was called without a staff session")
+	}
+
+	withoutCSRF := makeRequest("93", "77", body, false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s",
+			withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.updateQuestionCalls != 0 {
+		t.Fatal("question update service was called without a valid CSRF token")
+	}
+
+	withUntrustedActor := makeRequest("93", "77", strings.TrimSuffix(body, "}")+`, "updated_by_staff_id": 999}`, true)
+	if withUntrustedActor.Code != http.StatusBadRequest {
+		t.Fatalf("request with caller-supplied actor ID status = %d, want %d; body=%s",
+			withUntrustedActor.Code, http.StatusBadRequest, withUntrustedActor.Body.String())
+	}
+	if authoring.updateQuestionCalls != 0 {
+		t.Fatal("caller-supplied actor reached the question update service")
+	}
+
+	response := makeRequest("93", "77", body, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid request status = %d, want %d; body=%s",
+			response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if authoring.updateQuestionCalls != 1 || authoring.updateQuestionID != 77 ||
+		authoring.updateQuestionStaffID != identity.StaffID ||
+		authoring.updateQuestionParams.LessonVersionID != 93 ||
+		authoring.updateQuestionParams.QuestionNumber != 2 ||
+		authoring.updateQuestionParams.Prompt != "Updated prompt" {
+		t.Fatalf("update call/ids/staff/payload = %d/%d/%d/%d/%d/%q",
+			authoring.updateQuestionCalls, authoring.updateQuestionID,
+			authoring.updateQuestionStaffID, authoring.updateQuestionParams.LessonVersionID,
+			authoring.updateQuestionParams.QuestionNumber, authoring.updateQuestionParams.Prompt)
+	}
+	if strings.Contains(response.Body.String(), "Updated expected answer") ||
+		strings.Contains(response.Body.String(), csrfToken) ||
+		strings.Contains(response.Body.String(), "staff_session") {
+		t.Fatal("question update response leaked internal answer or authentication material")
+	}
+
+	badVersionID := makeRequest("0", "77", body, true)
+	if badVersionID.Code != http.StatusBadRequest {
+		t.Fatalf("zero version ID status = %d, want %d; body=%s",
+			badVersionID.Code, http.StatusBadRequest, badVersionID.Body.String())
+	}
+	badQuestionID := makeRequest("93", "0", body, true)
+	if badQuestionID.Code != http.StatusBadRequest {
+		t.Fatalf("zero question ID status = %d, want %d; body=%s",
+			badQuestionID.Code, http.StatusBadRequest, badQuestionID.Body.String())
+	}
+	if authoring.updateQuestionCalls != 1 {
+		t.Fatal("invalid path ID reached the question update service")
+	}
+}
+

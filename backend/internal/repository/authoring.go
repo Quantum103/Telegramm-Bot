@@ -320,6 +320,204 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	return question, nil
 }
 
+
+func (r *CatalogRepository) UpdateQuestionWithMaterials(ctx context.Context, questionID int64, params domain.CreateQuestionParams, updatedByStaffID int64) (domain.LessonQuestion, error) {
+	if questionID <= 0 || params.LessonVersionID <= 0 || updatedByStaffID <= 0 ||
+		len(params.Prompt) > 4000 || len(params.ExpectedAnswer) > 4000 ||
+		len(params.Options) > 20 || len(params.Criteria) > 50 ||
+		len(params.CommonMistakes) > 50 || len(params.BiblePassages) > 20 ||
+		(params.ExpectedExplanation != nil && len(*params.ExpectedExplanation) > 4000) {
+		return domain.LessonQuestion{}, ErrInvalidInput
+	}
+	if err := validateQuestionCreation(&params); err != nil {
+		return domain.LessonQuestion{}, err
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.LessonQuestion{}, mapDatabaseError("начать изменение вопроса", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var versionStatus string
+	var question domain.LessonQuestion
+	if err := tx.QueryRow(ctx, `
+		SELECT lv.status, q.created_at
+		FROM lesson_questions q
+		JOIN lesson_versions lv ON lv.id = q.lesson_version_id
+		WHERE q.id = $1 AND q.lesson_version_id = $2
+		FOR UPDATE OF q, lv
+	`, questionID, params.LessonVersionID).Scan(&versionStatus, &question.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.LessonQuestion{}, ErrNotFound
+		}
+		return domain.LessonQuestion{}, mapDatabaseError("проверить вопрос для изменения", err)
+	}
+	if versionStatus != "draft" {
+		return domain.LessonQuestion{}, ErrInvalidState
+	}
+
+	var hasAnswers bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM student_answers WHERE question_id = $1)", questionID).Scan(&hasAnswers); err != nil {
+		return domain.LessonQuestion{}, mapDatabaseError("проверить ответы перед изменением вопроса", err)
+	}
+	if hasAnswers {
+		return domain.LessonQuestion{}, ErrInvalidState
+	}
+
+	if err := tx.QueryRow(ctx, `
+		UPDATE lesson_questions
+		SET question_number = $1, prompt = $2, expected_answer = $3,
+		    answer_type = $4, expected_explanation = $5, updated_at = now()
+		WHERE id = $6 AND lesson_version_id = $7
+		RETURNING updated_at
+	`, params.QuestionNumber, params.Prompt, params.ExpectedAnswer, params.AnswerType,
+		cleanOptional(params.ExpectedExplanation), questionID, params.LessonVersionID).Scan(&question.UpdatedAt); err != nil {
+		return domain.LessonQuestion{}, mapDatabaseError("обновить основной текст вопроса", err)
+	}
+
+	for _, statement := range []struct {
+		name  string
+		query string
+	}{
+		{name: "варианты ответа", query: "DELETE FROM question_options WHERE question_id = $1"},
+		{name: "критерии оценки", query: "DELETE FROM question_criteria WHERE question_id = $1"},
+		{name: "типичные ошибки", query: "DELETE FROM question_common_mistakes WHERE question_id = $1"},
+	} {
+		if _, err := tx.Exec(ctx, statement.query, questionID); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("заменить "+statement.name+" вопроса", err)
+		}
+	}
+
+	passageIDs := make([]int64, 0)
+	passageRows, err := tx.Query(ctx, "DELETE FROM question_bible_passages WHERE question_id = $1 RETURNING passage_id", questionID)
+	if err != nil {
+		return domain.LessonQuestion{}, mapDatabaseError("удалить прежние связи библейских отрывков", err)
+	}
+	for passageRows.Next() {
+		var passageID int64
+		if err := passageRows.Scan(&passageID); err != nil {
+			passageRows.Close()
+			return domain.LessonQuestion{}, mapDatabaseError("прочитать удалённую связь библейского отрывка", err)
+		}
+		passageIDs = append(passageIDs, passageID)
+	}
+	if err := passageRows.Err(); err != nil {
+		passageRows.Close()
+		return domain.LessonQuestion{}, mapDatabaseError("обойти удалённые связи библейских отрывков", err)
+	}
+	passageRows.Close()
+	if len(passageIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM bible_passages p
+			WHERE p.id = ANY($1::bigint[])
+			  AND NOT EXISTS (
+			      SELECT 1 FROM question_bible_passages link WHERE link.passage_id = p.id
+			  )
+		`, passageIDs); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("удалить неиспользуемые библейские отрывки", err)
+		}
+	}
+
+	question.ID = questionID
+	question.LessonVersionID = params.LessonVersionID
+	question.QuestionNumber = params.QuestionNumber
+	question.Prompt = params.Prompt
+	question.ExpectedAnswer = params.ExpectedAnswer
+	question.AnswerType = params.AnswerType
+	question.ExpectedExplanation = cleanOptionalString(params.ExpectedExplanation)
+	question.Options = make([]domain.QuestionOption, 0, len(params.Options))
+	for index, option := range params.Options {
+		var optionID int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO question_options (question_id, option_key, option_text, sort_order, is_correct)
+			VALUES ($1, $2, $3, $4, $5)
+			RETURNING id
+		`, questionID, option.Key, option.Text, index+1, option.IsCorrect).Scan(&optionID); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("создать обновлённый вариант ответа", err)
+		}
+		question.Options = append(question.Options, domain.QuestionOption{
+			ID: optionID, Key: option.Key, Text: option.Text, IsCorrect: option.IsCorrect,
+		})
+	}
+
+	question.Criteria = make([]domain.QuestionCriterion, 0, len(params.Criteria))
+	for index, criterion := range params.Criteria {
+		weight := criterion.Weight
+		if weight == 0 {
+			weight = 1
+		}
+		required := true
+		if criterion.Required != nil {
+			required = *criterion.Required
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO question_criteria (question_id, criterion_key, description, weight, is_required, sort_order)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, questionID, criterion.Key, criterion.Description, weight, required, index+1); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("создать обновлённый критерий оценки", err)
+		}
+		question.Criteria = append(question.Criteria, domain.QuestionCriterion{
+			Key: criterion.Key, Description: criterion.Description, Weight: weight, Required: required,
+		})
+	}
+
+	question.CommonMistakes = make([]domain.CommonMistake, 0, len(params.CommonMistakes))
+	for index, mistake := range params.CommonMistakes {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO question_common_mistakes (question_id, mistake_text, explanation, sort_order)
+			VALUES ($1, $2, $3, $4)
+		`, questionID, mistake.Text, mistake.Explanation, index+1); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("создать обновлённую типичную ошибку", err)
+		}
+		question.CommonMistakes = append(question.CommonMistakes, mistake)
+	}
+
+	question.BiblePassages = make([]domain.BiblePassage, 0, len(params.BiblePassages))
+	for index, passage := range params.BiblePassages {
+		var passageID int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO bible_passages (
+				book_name, chapter, start_verse, end_verse,
+				translation_name, passage_text, source_note
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id
+		`, passage.BookName, passage.Chapter, passage.StartVerse, passage.EndVerse,
+			cleanOptional(passage.TranslationName), cleanOptional(passage.PassageText),
+			cleanOptional(passage.SourceNote)).Scan(&passageID); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("создать обновлённый библейский отрывок", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO question_bible_passages (question_id, passage_id, sort_order)
+			VALUES ($1, $2, $3)
+		`, questionID, passageID, index+1); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("связать обновлённый библейский отрывок с вопросом", err)
+		}
+		question.BiblePassages = append(question.BiblePassages, domain.BiblePassage{
+			ID: passageID, BookName: passage.BookName, Chapter: passage.Chapter,
+			StartVerse: passage.StartVerse, EndVerse: passage.EndVerse,
+			TranslationName: cleanOptionalString(passage.TranslationName),
+			PassageText: cleanOptionalString(passage.PassageText),
+			SourceNote: cleanOptionalString(passage.SourceNote),
+		})
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+		VALUES ($1, 'question.draft.update', 'question', $2,
+		        jsonb_build_object('lesson_version_id', $3::bigint,
+		                           'question_number', $4::integer,
+		                           'answer_type', $5::text))
+	`, updatedByStaffID, questionID, params.LessonVersionID, params.QuestionNumber, params.AnswerType); err != nil {
+		return domain.LessonQuestion{}, mapDatabaseError("записать аудит изменения вопроса", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.LessonQuestion{}, mapDatabaseError("зафиксировать изменение вопроса и материалов", err)
+	}
+	return question, nil
+}
+
 // CreateDraftRevision создаёт новую неизменяемую версию на основе последнего опубликованного содержимого.
 func (r *CatalogRepository) CreateDraftRevision(ctx context.Context, lessonID, createdByStaffID int64) (domain.Lesson, error) {
 	if lessonID <= 0 || createdByStaffID < 0 {
