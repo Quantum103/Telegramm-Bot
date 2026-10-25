@@ -37,7 +37,6 @@ func (s *fakeStaffAuthStore) RevokeSessionByTokenHash(_ context.Context, tokenHa
 	return s.revokeErr
 }
 
-
 func TestStaffLoginCreatesHashedSessionForActiveAccount(t *testing.T) {
 	password := "correct horse battery staple"
 	passwordHash, err := auth.HashPassword(password)

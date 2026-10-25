@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	readinessTimeout = 2 * time.Second
+	readinessTimeout       = 2 * time.Second
 	maxStaffLoginBodyBytes = 8 << 10
 	staffSessionCookieName = "staff_session"
-	staffCSRFCookieName = "staff_csrf"
+	staffCSRFCookieName    = "staff_csrf"
 )
 
 type databasePinger interface {
