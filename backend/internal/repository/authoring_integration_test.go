@@ -401,7 +401,7 @@ func TestCreateQuestionStoresStaffActorAndAuditEvent(t *testing.T) {
 	}
 	if actorID != staffID || action != "question.draft.create" || entityType != "question" ||
 		entityID != question.ID || auditedVersionID != fmt.Sprint(versionID) || number != "1" || answerType != "text" {
-		t.Fatalf("unexpected question audit event: actor=%d action=%q entity=%q id=%d version=%d number=%q type=%q",
+		t.Fatalf("unexpected question audit event: actor=%d action=%q entity=%q id=%d version=%s number=%q type=%q",
 			actorID, action, entityType, entityID, auditedVersionID, number, answerType)
 	}
 }
