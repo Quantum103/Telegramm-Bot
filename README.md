@@ -359,7 +359,7 @@ Set-Location ..
 │       ├── content.go
 │       ├── answer.go
 │       └── repository_integration_test.go
-├── frontend/
+├── web/
 ├── docker-compose.yml
 ├── .env.example
 ├── .gitignore

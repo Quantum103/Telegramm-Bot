@@ -46,7 +46,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ./web
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: "${VITE_API_BASE_URL:-}"

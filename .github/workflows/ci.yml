@@ -9,6 +9,7 @@ on:
       - "stage-4.1/**"
       - "stage-4.2/**"
       - "stage-4.3/**"
+      - "feature/**"
   pull_request:
     branches:
       - main
@@ -93,15 +94,15 @@ jobs:
           package-manager-cache: false
 
       - name: Install frontend dependencies
-        working-directory: frontend
+        working-directory: web
         run: npm install --no-audit --no-fund
 
       - name: Check TypeScript
-        working-directory: frontend
+        working-directory: web
         run: npm run typecheck
 
       - name: Build frontend for production
-        working-directory: frontend
+        working-directory: web
         run: npm run build
 
       - name: Create local environment file
