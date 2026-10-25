@@ -76,6 +76,7 @@ type handlers struct {
 	catalog      CatalogAPI
 	staffAuth    StaffAuthAPI
 	cookieSecure bool
+	loginLimiter *staffLoginLimiter
 }
 
 // NewHandler собирает публичные маршруты и сохраняет обратную совместимость тестов.
@@ -98,7 +99,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, cookieSecure: cookieSecure,
+		staffAuth: staffAuth, cookieSecure: cookieSecure, loginLimiter: newStaffLoginLimiter(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -141,8 +142,23 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.loginLimiter == nil {
+		h.logger.Error("ограничитель попыток входа не настроен")
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "temporarily_unavailable"})
+		return
+	}
+	finish, retryAfter, allowed := h.loginLimiter.begin(loginClientIP(r), input.Email)
+	if !allowed {
+		w.Header().Set("Retry-After", formatRetryAfter(retryAfter))
+		writeJSON(w, http.StatusTooManyRequests, apiErrorResponse{Error: "rate_limited"})
+		return
+	}
+	outcome := loginOutcomeNeutral
+	defer func() { finish(outcome) }()
+
 	result, err := h.staffAuth.Login(r.Context(), input.Email, input.Password)
 	if errors.Is(err, service.ErrInvalidStaffCredentials) {
+		outcome = loginOutcomeFailure
 		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "invalid_credentials"})
 		return
 	}
@@ -156,6 +172,7 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
 		return
 	}
+	outcome = loginOutcomeSuccess
 
 	setStaffAuthCookies(w, result.SessionToken, result.CSRFToken, result.ExpiresAt, h.cookieSecure)
 	writeJSON(w, http.StatusOK, staffLoginResponse{Staff: staffIdentityResponse{
