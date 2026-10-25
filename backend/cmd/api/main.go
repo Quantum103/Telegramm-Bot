@@ -44,13 +44,14 @@ func run(logger *slog.Logger) error {
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB,
-		DialTimeout: cfg.Redis.ConnectTimeout, ReadTimeout: 2*time.Second,
-		WriteTimeout: 2*time.Second, PoolSize: 16, MinIdleConns: 2,
+		DialTimeout: cfg.Redis.ConnectTimeout, ReadTimeout: 2 * time.Second,
+		WriteTimeout: 2 * time.Second, PoolSize: 16, MinIdleConns: 2,
 		PoolTimeout: time.Second, MaxRetries: -1,
 	})
 	redisCtx, cancelRedis := context.WithTimeout(context.Background(), cfg.Redis.ConnectTimeout)
 	if err := redisClient.Ping(redisCtx).Err(); err != nil {
-		cancelRedis(); _ = redisClient.Close()
+		cancelRedis()
+		_ = redisClient.Close()
 		return fmt.Errorf("подключиться к Redis для лимитера входа: %w", err)
 	}
 	cancelRedis()

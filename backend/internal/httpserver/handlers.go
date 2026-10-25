@@ -101,7 +101,9 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if limiter == nil { limiter = newStaffLoginLimiter() }
+	if limiter == nil {
+		limiter = newStaffLoginLimiter()
+	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
 		staffAuth: staffAuth, cookieSecure: cookieSecure, loginLimiter: limiter,
@@ -169,7 +171,9 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	completed := false
 	complete := func(outcome StaffLoginAttemptOutcome) bool {
-		if completed { return true }
+		if completed {
+			return true
+		}
 		completed = true
 		if err := finish(outcome); err != nil {
 			h.logger.Error("не удалось завершить учёт попытки входа", "error", err)
@@ -188,12 +192,16 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.staffAuth.Login(r.Context(), input.Email, input.Password)
 	if errors.Is(err, service.ErrInvalidStaffCredentials) {
-		if !complete(LoginOutcomeFailure) { return }
+		if !complete(LoginOutcomeFailure) {
+			return
+		}
 		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "invalid_credentials"})
 		return
 	}
 	if err != nil {
-		if !complete(LoginOutcomeNeutral) { return }
+		if !complete(LoginOutcomeNeutral) {
+			return
+		}
 		h.logger.Error("ошибка входа сотрудника", "error", err)
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
 		return
@@ -204,7 +212,9 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
 		return
 	}
-	if !complete(LoginOutcomeSuccess) { return }
+	if !complete(LoginOutcomeSuccess) {
+		return
+	}
 
 	setStaffAuthCookies(w, result.SessionToken, result.CSRFToken, result.ExpiresAt, h.cookieSecure)
 	writeJSON(w, http.StatusOK, staffLoginResponse{Staff: staffIdentityResponse{

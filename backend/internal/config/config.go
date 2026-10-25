@@ -22,9 +22,9 @@ type Config struct {
 }
 
 type RedisConfig struct {
-	Addr string
-	Password string
-	DB int
+	Addr           string
+	Password       string
+	DB             int
 	ConnectTimeout time.Duration
 }
 
@@ -77,12 +77,20 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, fmt.Errorf("REDIS_ADDR must be a valid host:port address")
 	}
 	cfg.Redis.Password = stringValue(lookup, "REDIS_PASSWORD", "")
-	if strings.TrimSpace(cfg.Redis.Password) == "" { return Config{}, fmt.Errorf("REDIS_PASSWORD is required") }
+	if strings.TrimSpace(cfg.Redis.Password) == "" {
+		return Config{}, fmt.Errorf("REDIS_PASSWORD is required")
+	}
 	redisDB, err := intValue(lookup, "REDIS_DB", 0)
-	if err != nil { return Config{}, err }
-	if redisDB < 0 || redisDB > 15 { return Config{}, fmt.Errorf("REDIS_DB must be between 0 and 15") }
+	if err != nil {
+		return Config{}, err
+	}
+	if redisDB < 0 || redisDB > 15 {
+		return Config{}, fmt.Errorf("REDIS_DB must be between 0 and 15")
+	}
 	cfg.Redis.DB = redisDB
-	if cfg.Redis.ConnectTimeout, err = durationValue(lookup, "REDIS_CONNECT_TIMEOUT", 3*time.Second); err != nil { return Config{}, err }
+	if cfg.Redis.ConnectTimeout, err = durationValue(lookup, "REDIS_CONNECT_TIMEOUT", 3*time.Second); err != nil {
+		return Config{}, err
+	}
 
 	cfg.Database.Host = strings.TrimSpace(stringValue(lookup, "DATABASE_HOST", ""))
 	cfg.Database.Name = strings.TrimSpace(stringValue(lookup, "DATABASE_NAME", ""))

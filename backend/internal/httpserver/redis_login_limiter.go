@@ -80,21 +80,27 @@ end
 return 1
 `)
 
-type RedisStaffLoginLimiter struct { client redis.UniversalClient }
+type RedisStaffLoginLimiter struct{ client redis.UniversalClient }
 
 func NewRedisStaffLoginLimiter(client redis.UniversalClient) *RedisStaffLoginLimiter {
 	return &RedisStaffLoginLimiter{client: client}
 }
 
 func (l *RedisStaffLoginLimiter) Ping(ctx context.Context) error {
-	if l == nil || l.client == nil { return errors.New("Redis login limiter client is not configured") }
+	if l == nil || l.client == nil {
+		return errors.New("Redis login limiter client is not configured")
+	}
 	return l.client.Ping(ctx).Err()
 }
 
 func (l *RedisStaffLoginLimiter) Begin(ctx context.Context, clientIP, email string) (func(StaffLoginAttemptOutcome) error, time.Duration, bool, error) {
-	if l == nil || l.client == nil { return nil, 0, false, errors.New("Redis login limiter client is not configured") }
+	if l == nil || l.client == nil {
+		return nil, 0, false, errors.New("Redis login limiter client is not configured")
+	}
 	var randomID [18]byte
-	if _, err := rand.Read(randomID[:]); err != nil { return nil, 0, false, fmt.Errorf("generate login attempt identifier: %w", err) }
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return nil, 0, false, fmt.Errorf("generate login attempt identifier: %w", err)
+	}
 	attemptID := base64.RawURLEncoding.EncodeToString(randomID[:])
 	keys := redisLoginKeys(clientIP, email)
 	raw, err := beginStaffLoginScript.Run(ctx, l.client, keys,
@@ -104,9 +110,13 @@ func (l *RedisStaffLoginLimiter) Begin(ctx context.Context, clientIP, email stri
 		staffLoginIPConcurrencyLimit, staffLoginAccountConcurrency,
 		staffLoginInFlightTTL.Milliseconds(),
 	).Result()
-	if err != nil { return nil, 0, false, fmt.Errorf("reserve login attempt in Redis: %w", err) }
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("reserve login attempt in Redis: %w", err)
+	}
 	values, ok := raw.([]interface{})
-	if !ok || len(values) != 2 { return nil, 0, false, errors.New("Redis login limiter returned malformed reservation result") }
+	if !ok || len(values) != 2 {
+		return nil, 0, false, errors.New("Redis login limiter returned malformed reservation result")
+	}
 	allowedValue, okAllowed := values[0].(int64)
 	waitMS, okWait := values[1].(int64)
 	if !okAllowed || !okWait || (allowedValue != 0 && allowedValue != 1) || waitMS < 0 {
@@ -114,7 +124,9 @@ func (l *RedisStaffLoginLimiter) Begin(ctx context.Context, clientIP, email stri
 	}
 	if allowedValue == 0 {
 		wait := time.Duration(waitMS) * time.Millisecond
-		if wait <= 0 { wait = time.Second }
+		if wait <= 0 {
+			wait = time.Second
+		}
 		return nil, wait, false, nil
 	}
 	var once sync.Once
@@ -123,17 +135,23 @@ func (l *RedisStaffLoginLimiter) Begin(ctx context.Context, clientIP, email stri
 		once.Do(func() {
 			outcomeName := "neutral"
 			switch outcome {
-			case LoginOutcomeFailure: outcomeName = "failure"
-			case LoginOutcomeSuccess: outcomeName = "success"
+			case LoginOutcomeFailure:
+				outcomeName = "failure"
+			case LoginOutcomeSuccess:
+				outcomeName = "success"
 			case LoginOutcomeNeutral:
-			default: finishErr = errors.New("invalid staff login attempt outcome"); return
+			default:
+				finishErr = errors.New("invalid staff login attempt outcome")
+				return
 			}
 			finishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			_, finishErr = finishStaffLoginScript.Run(finishCtx, l.client, keys,
 				attemptID, outcomeName, staffLoginIPWindow.Milliseconds(), staffLoginAccountWindow.Milliseconds(),
 			).Result()
-			if finishErr != nil { finishErr = fmt.Errorf("finish login attempt in Redis: %w", finishErr) }
+			if finishErr != nil {
+				finishErr = fmt.Errorf("finish login attempt in Redis: %w", finishErr)
+			}
 		})
 		return finishErr
 	}

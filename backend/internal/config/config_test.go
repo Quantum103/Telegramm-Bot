@@ -19,8 +19,8 @@ func validEnvironment() map[string]string {
 		"DATABASE_NAME":     "bible_platform",
 		"DATABASE_USER":     "bible_app",
 		"DATABASE_PASSWORD": "test-password",
-		"REDIS_ADDR": "localhost:6379",
-		"REDIS_PASSWORD": "test-redis-password",
+		"REDIS_ADDR":        "localhost:6379",
+		"REDIS_PASSWORD":    "test-redis-password",
 	}
 }
 

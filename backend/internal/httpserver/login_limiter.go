@@ -1,8 +1,8 @@
 package httpserver
 
 import (
-	"context"
 	"container/list"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net"
@@ -278,7 +278,9 @@ func formatRetryAfter(wait time.Duration) string {
 
 func (l *staffLoginLimiter) Begin(_ context.Context, clientIP, email string) (func(StaffLoginAttemptOutcome) error, time.Duration, bool, error) {
 	finish, retryAfter, allowed := l.begin(clientIP, email)
-	if !allowed { return nil, retryAfter, false, nil }
+	if !allowed {
+		return nil, retryAfter, false, nil
+	}
 	return func(outcome StaffLoginAttemptOutcome) error { finish(outcome); return nil }, 0, true, nil
 }
 func (l *staffLoginLimiter) Ping(context.Context) error { return nil }
