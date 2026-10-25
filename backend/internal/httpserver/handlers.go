@@ -207,7 +207,9 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.SessionToken == "" || result.CSRFToken == "" || !result.ExpiresAt.After(time.Now()) {
-		if !complete(LoginOutcomeNeutral) { return }
+		if !complete(LoginOutcomeNeutral) {
+			return
+		}
 		h.logger.Error("сервис авторизации вернул неполные данные сессии")
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
 		return

@@ -58,10 +58,11 @@ func TestRedisStaffLoginLimiterSharesFailureCountsAcrossClients(t *testing.T) {
 	}
 }
 func TestRedisStaffLoginLimiterSharesConcurrencyReservations(t *testing.T) {
-	clientA,clientB:=integrationRedisClient(t),integrationRedisClient(t)
-	limiterA,limiterB:=NewRedisStaffLoginLimiter(clientA),NewRedisStaffLoginLimiter(clientB)
-	ip,email:=uniqueLimiterIdentity(t)
-	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+	clientA, clientB := integrationRedisClient(t), integrationRedisClient(t)
+	limiterA, limiterB := NewRedisStaffLoginLimiter(clientA), NewRedisStaffLoginLimiter(clientB)
+	ip, email := uniqueLimiterIdentity(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	finishA, _, allowed, err := limiterA.Begin(ctx, ip, email)
 	if err != nil || !allowed {
 		t.Fatalf("first reservation: allowed=%v err=%v", allowed, err)
