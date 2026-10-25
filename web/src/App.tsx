@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { listCourseLessons, listCourses, type Course, type Lesson } from './api'
 
 type Page = 'overview' | 'courses' | 'lessons' | 'students' | 'analytics' | 'settings'
 type HealthState = 'checking' | 'connected' | 'error'
@@ -31,11 +32,6 @@ const students = [
   { name: 'Елена Волкова', email: 'e.volkova@example.com', course: 'Основы изучения Библии', progress: 58, initials: 'ЕВ', color: 'peach' },
   { name: 'Даниил Смирнов', email: 'd.smirnov@example.com', course: 'История ранней церкви', progress: 34, initials: 'ДС', color: 'blue' },
 ]
-const lessons = [
-  { title: 'Как читать Библию', course: 'Основы изучения Библии', duration: '12 мин', status: 'Опубликован' },
-  { title: 'Контекст и историческая эпоха', course: 'Основы изучения Библии', duration: '18 мин', status: 'Опубликован' },
-  { title: 'Пролог Евангелия от Иоанна', course: 'Евангелие от Иоанна', duration: '15 мин', status: 'Черновик' },
-]
 const activities = [
   { initials: 'АП', color: 'mint', title: 'Анна Петрова', detail: 'завершила урок «Введение в курс»', time: '12 минут назад' },
   { initials: 'МС', color: 'lavender', title: 'Михаил Соколов', detail: 'продолжил курс «Евангелие от Иоанна»', time: '38 минут назад' },
@@ -59,6 +55,13 @@ function App() {
   const [healthMessage, setHealthMessage] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [apiCourses, setApiCourses] = useState<Course[]>([])
+  const [coursesState, setCoursesState] = useState<'loading' | 'loaded' | 'error'>('loading')
+  const [coursesError, setCoursesError] = useState('')
+  const [selectedCourseID, setSelectedCourseID] = useState<number | null>(null)
+  const [apiLessons, setApiLessons] = useState<Lesson[]>([])
+  const [lessonsState, setLessonsState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+  const [lessonsError, setLessonsError] = useState('')
   const checkBackend = useCallback(async () => {
     setHealthState('checking')
     setHealthMessage('')
@@ -74,10 +77,43 @@ function App() {
     }
   }, [])
   useEffect(() => { void checkBackend() }, [checkBackend])
+  useEffect(() => {
+    const controller = new AbortController()
+    void listCourses(controller.signal).then((items) => {
+      setApiCourses(items)
+      setCoursesState('loaded')
+      setSelectedCourseID((current) => current ?? items[0]?.id ?? null)
+      setCoursesError('')
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      setCoursesState('error')
+      setCoursesError(error instanceof Error ? error.message : 'Не удалось загрузить курсы.')
+    })
+    return () => controller.abort()
+  }, [])
+  useEffect(() => {
+    if (activePage !== 'lessons' || selectedCourseID === null) return
+    const controller = new AbortController()
+    setLessonsState('loading')
+    setLessonsError('')
+    void listCourseLessons(selectedCourseID, controller.signal).then((items) => {
+      setApiLessons(items)
+      setLessonsState('loaded')
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      setLessonsState('error')
+      setLessonsError(error instanceof Error ? error.message : 'Не удалось загрузить уроки.')
+    })
+    return () => controller.abort()
+  }, [activePage, selectedCourseID])
   const filteredCourses = useMemo(() => {
     const query = searchTerm.trim().toLocaleLowerCase('ru-RU')
-    return query ? courses.filter((course) => (course.title + ' ' + course.category + ' ' + course.status).toLocaleLowerCase('ru-RU').includes(query)) : courses
-  }, [searchTerm])
+    return query ? apiCourses.filter((course) => (course.title + ' ' + course.slug + ' ' + (course.description ?? '')).toLocaleLowerCase('ru-RU').includes(query)) : apiCourses
+  }, [apiCourses, searchTerm])
+  const filteredLessons = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase('ru-RU')
+    return query ? apiLessons.filter((lesson) => (lesson.title + ' ' + (lesson.description ?? '')).toLocaleLowerCase('ru-RU').includes(query)) : apiLessons
+  }, [apiLessons, searchTerm])
   const navigate = (page: Page) => { setActivePage(page); setSidebarOpen(false) }
   const statusLabel = healthState === 'connected' ? 'Сервер доступен' : healthState === 'checking' ? 'Проверка сервера' : 'Демо-режим'
 
@@ -116,9 +152,9 @@ function App() {
           </section>
         </>}
 
-        {activePage === 'courses' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">ОБУЧАЮЩИЕ ПРОГРАММЫ</p><h1>Курсы</h1><p className="page-subtitle">Обзор курсов и демонстрационных показателей обучения.</p></div><span className="soft-pill">{courses.length} примера</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Все курсы</h2><p>Список для демонстрации будущего интерфейса управления</p></div><span className="soft-pill"><Icon name="filter" size={14} /> Все статусы</span></div><div className="table-scroll"><table><thead><tr><th>Название курса</th><th>Участники</th><th>Прогресс</th><th>Статус</th><th /></tr></thead><tbody>{filteredCourses.map((course) => <tr key={course.id}><td><div className="table-course"><div className={'course-thumb course-thumb--' + course.color}>{course.initials}</div><div><strong>{course.title}</strong><span>{course.category}</span></div></div></td><td>{course.students}</td><td><div className="table-progress"><div className="progress-track"><span style={{ width: course.progress + '%' }} /></div><span>{course.progress}%</span></div></td><td><span className={'status-pill' + (course.status === 'Черновик' ? ' status-pill--draft' : '')}><i />{course.status}</span></td><td><button className="row-action" aria-label={'Открыть ' + course.title} onClick={() => navigate('lessons')}><Icon name="chevron" size={17} /></button></td></tr>)}{filteredCourses.length === 0 && <tr><td colSpan={5} className="empty-state">По запросу «{searchTerm}» ничего не найдено.</td></tr>}</tbody></table></div></div></section>}
+        {activePage === 'courses' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">ОБУЧАЮЩИЕ ПРОГРАММЫ</p><h1>Курсы</h1><p className="page-subtitle">Опубликованные курсы из backend API.</p></div><span className="soft-pill">{coursesState === 'loaded' ? apiCourses.length : '—'} курсов</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Все курсы</h2><p>Каталог загружается из базы данных через backend.</p></div><span className="soft-pill"><Icon name="filter" size={14} /> Опубликованные</span></div>{coursesState === 'loading' && <p className="catalog-message" role="status">Загружаем курсы…</p>}{coursesState === 'error' && <div className="catalog-error" role="alert"><span>{coursesError}</span><button className="secondary-button" onClick={() => { setCoursesState('loading'); setCoursesError(''); void listCourses().then((items) => { setApiCourses(items); setCoursesState('loaded'); setSelectedCourseID((current) => current ?? items[0]?.id ?? null) }).catch((error: unknown) => { setCoursesState('error'); setCoursesError(error instanceof Error ? error.message : 'Не удалось загрузить курсы.') }) }}>Повторить</button></div>}{coursesState === 'loaded' && <div className="table-scroll"><table><thead><tr><th>Название курса</th><th>Уроки</th><th>Дата публикации</th><th /></tr></thead><tbody>{filteredCourses.map((course) => <tr key={course.id}><td><div className="table-course"><div className="course-thumb course-thumb--mint">{course.title.trim().slice(0, 2).toLocaleUpperCase('ru-RU')}</div><div><strong>{course.title}</strong><span>{course.description || course.slug}</span></div></div></td><td>{course.lesson_count}</td><td>{course.published_at ? new Date(course.published_at).toLocaleDateString('ru-RU') : '—'}</td><td><button className="row-action" aria-label={'Посмотреть уроки курса ' + course.title} onClick={() => { setSelectedCourseID(course.id); navigate('lessons') }}><Icon name="chevron" size={17} /></button></td></tr>)}{filteredCourses.length === 0 && <tr><td colSpan={4} className="empty-state">{searchTerm.trim() ? 'По запросу ничего не найдено.' : 'Опубликованных курсов пока нет.'}</td></tr>}</tbody></table></div>}</div></section>}
 
-        {activePage === 'lessons' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">УЧЕБНЫЕ МАТЕРИАЛЫ</p><h1>Уроки</h1><p className="page-subtitle">Пример структуры библиотеки уроков.</p></div><span className="soft-pill">{lessons.length} примера</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Библиотека уроков</h2><p>Уроки сгруппированы по учебным курсам</p></div></div><div className="lesson-list">{lessons.filter((lesson) => (lesson.title + ' ' + lesson.course).toLocaleLowerCase('ru-RU').includes(searchTerm.trim().toLocaleLowerCase('ru-RU'))).map((lesson) => <div className="lesson-row" key={lesson.title}><div className="lesson-icon"><Icon name="book" /></div><div className="lesson-copy"><strong>{lesson.title}</strong><span>{lesson.course}</span></div><span className="lesson-duration"><Icon name="clock" size={14} />{lesson.duration}</span><span className={'status-pill' + (lesson.status === 'Черновик' ? ' status-pill--draft' : '')}><i />{lesson.status}</span></div>)}</div></div></section>}
+        {activePage === 'lessons' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">УЧЕБНЫЕ МАТЕРИАЛЫ</p><h1>Уроки</h1><p className="page-subtitle">Опубликованные уроки выбранного курса из backend API.</p></div><span className="soft-pill">{lessonsState === 'loaded' ? apiLessons.length : '—'} уроков</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Библиотека уроков</h2><p>Выберите курс, чтобы посмотреть его опубликованные уроки.</p></div><label className="course-select-label"><span>Курс</span><select value={selectedCourseID ?? ''} onChange={(event) => setSelectedCourseID(event.target.value ? Number(event.target.value) : null)} disabled={coursesState !== 'loaded' || apiCourses.length === 0}><option value="">Выберите курс</option>{apiCourses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select></label></div>{coursesState === 'error' && <p className="catalog-message" role="alert">Не удалось загрузить список курсов: {coursesError}</p>}{coursesState === 'loading' && <p className="catalog-message" role="status">Загружаем список курсов…</p>}{coursesState === 'loaded' && selectedCourseID === null && <p className="catalog-message">Нет опубликованных курсов, для которых можно показать уроки.</p>}{lessonsState === 'loading' && <p className="catalog-message" role="status">Загружаем уроки…</p>}{lessonsState === 'error' && <div className="catalog-error" role="alert"><span>{lessonsError}</span><button className="secondary-button" onClick={() => { if (selectedCourseID === null) return; setLessonsState('loading'); void listCourseLessons(selectedCourseID).then((items) => { setApiLessons(items); setLessonsState('loaded'); setLessonsError('') }).catch((error: unknown) => { setLessonsState('error'); setLessonsError(error instanceof Error ? error.message : 'Не удалось загрузить уроки.') }) }}>Повторить</button></div>}{lessonsState === 'loaded' && <div className="lesson-list">{filteredLessons.map((lesson) => <div className="lesson-row" key={lesson.id}><div className="lesson-icon"><Icon name="book" /></div><div className="lesson-copy"><strong>{lesson.title}</strong><span>{lesson.description || 'Урок опубликован'}</span></div><span className="lesson-duration"><Icon name="layers" size={14} />{lesson.question_count} вопр.</span><span className="status-pill"><i />Опубликован</span></div>)}{filteredLessons.length === 0 && <p className="catalog-message">{searchTerm.trim() ? 'По запросу ничего не найдено.' : 'В этом курсе пока нет опубликованных уроков.'}</p>}</div>}</div></section>}
 
         {activePage === 'students' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">СООБЩЕСТВО УЧЕНИКОВ</p><h1>Ученики</h1><p className="page-subtitle">Пример списка участников и их учебного прогресса.</p></div><span className="soft-pill">{students.length} примера</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Все ученики</h2><p>Демонстрационные профили и прогресс прохождения курсов</p></div></div><div className="table-scroll"><table><thead><tr><th>Ученик</th><th>Курс</th><th>Прогресс</th><th>Статус</th></tr></thead><tbody>{students.filter((student) => (student.name + ' ' + student.email + ' ' + student.course).toLocaleLowerCase('ru-RU').includes(searchTerm.trim().toLocaleLowerCase('ru-RU'))).map((student) => <tr key={student.email}><td><div className="table-course"><div className={'avatar avatar--' + student.color}>{student.initials}</div><div><strong>{student.name}</strong><span>{student.email}</span></div></div></td><td>{student.course}</td><td><div className="table-progress"><div className="progress-track"><span style={{ width: student.progress + '%' }} /></div><span>{student.progress}%</span></div></td><td><span className="status-pill"><i />Активен</span></td></tr>)}</tbody></table></div></div></section>}
 
