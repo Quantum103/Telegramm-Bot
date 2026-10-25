@@ -300,3 +300,109 @@ func TestCreateDraftLessonStoresStaffActorAndAuditEvent(t *testing.T) {
 			actorID, action, entityType, entityID, auditedCourseID, versionNumber, status)
 	}
 }
+
+
+func TestCreateQuestionStoresStaffActorAndAuditEvent(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	prefix := fmt.Sprintf("staff-question-audit-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('Question author', $1, 'active')
+		RETURNING id
+	`, prefix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("create staff account: %v", err)
+	}
+
+	var courseID, lessonID, versionID, questionID int64
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		if questionID > 0 {
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'question' AND entity_id = $1", questionID); err != nil {
+				t.Errorf("cleanup question audit event: %v", err)
+			}
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM lesson_questions WHERE id = $1", questionID); err != nil {
+				t.Errorf("cleanup question: %v", err)
+			}
+		}
+		if lessonID > 0 {
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'lesson' AND entity_id = $1", lessonID); err != nil {
+				t.Errorf("cleanup lesson audit event: %v", err)
+			}
+		}
+		if courseID > 0 {
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'course' AND entity_id = $1", courseID); err != nil {
+				t.Errorf("cleanup course audit event: %v", err)
+			}
+			if lessonID > 0 {
+				if _, err := pool.Exec(cleanupCtx, "DELETE FROM course_lessons WHERE course_id = $1", courseID); err != nil {
+					t.Errorf("cleanup course lesson links: %v", err)
+				}
+			}
+			if versionID > 0 {
+				if _, err := pool.Exec(cleanupCtx, "DELETE FROM lesson_versions WHERE id = $1", versionID); err != nil {
+					t.Errorf("cleanup lesson version: %v", err)
+				}
+			}
+			if lessonID > 0 {
+				if _, err := pool.Exec(cleanupCtx, "DELETE FROM lessons WHERE id = $1", lessonID); err != nil {
+					t.Errorf("cleanup lesson: %v", err)
+				}
+			}
+			if _, err := pool.Exec(cleanupCtx, "DELETE FROM courses WHERE id = $1", courseID); err != nil {
+				t.Errorf("cleanup course: %v", err)
+			}
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_accounts WHERE id = $1", staffID); err != nil {
+			t.Errorf("cleanup staff account: %v", err)
+		}
+	})
+
+	repo := NewCatalogRepository(pool)
+	authoring := service.NewAuthoringService(repo)
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: prefix, Title: "Question audit course", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create audited course: %v", err)
+	}
+	courseID = course.ID
+
+	lesson, err := authoring.CreateDraftLesson(ctx, domain.CreateLessonParams{
+		CourseID: course.ID, Title: "Question audit lesson", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create audited lesson: %v", err)
+	}
+	lessonID, versionID = lesson.ID, lesson.LessonVersionID
+
+	question, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
+		LessonVersionID: versionID, QuestionNumber: 1, Prompt: "Question for auditing",
+		ExpectedAnswer: "An internal expected answer", AnswerType: "text", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("create audited question: %v", err)
+	}
+	questionID = question.ID
+
+	var actorID, entityID, auditedVersionID int64
+	var action, entityType, number, answerType string
+	if err := pool.QueryRow(ctx, `
+		SELECT actor_staff_id, action, entity_type, entity_id,
+		       details->>'lesson_version_id', details->>'question_number', details->>'answer_type'
+		FROM audit_events
+		WHERE entity_type = 'question' AND entity_id = $1
+		ORDER BY id DESC LIMIT 1
+	`, question.ID).Scan(&actorID, &action, &entityType, &entityID, &auditedVersionID, &number, &answerType); err != nil {
+		t.Fatalf("read question audit event: %v", err)
+	}
+	if actorID != staffID || action != "question.draft.create" || entityType != "question" ||
+		entityID != question.ID || auditedVersionID != versionID || number != "1" || answerType != "text" {
+		t.Fatalf("unexpected question audit event: actor=%d action=%q entity=%q id=%d version=%d number=%q type=%q",
+			actorID, action, entityType, entityID, auditedVersionID, number, answerType)
+	}
+}

@@ -51,4 +51,5 @@ type CreateQuestionParams struct {
 	Options             []QuestionOptionInput
 	CommonMistakes      []CommonMistake
 	BiblePassages       []BiblePassageInput
+	CreatedByStaffID    int64
 }

@@ -406,6 +406,10 @@ type fakeStaffAuthoringAPI struct {
 	createLessonParams domain.CreateLessonParams
 	createLessonResult domain.Lesson
 	createLessonErr    error
+	createQuestionCalls int
+	createQuestionParams domain.CreateQuestionParams
+	createQuestionResult domain.LessonQuestion
+	createQuestionErr error
 }
 
 func (f *fakeStaffAuthoringAPI) CreateDraftCourse(_ context.Context, params domain.CreateCourseParams) (domain.Course, error) {
@@ -418,6 +422,12 @@ func (f *fakeStaffAuthoringAPI) CreateDraftLesson(_ context.Context, params doma
 	f.createLessonCalls++
 	f.createLessonParams = params
 	return f.createLessonResult, f.createLessonErr
+}
+
+func (f *fakeStaffAuthoringAPI) CreateQuestion(_ context.Context, params domain.CreateQuestionParams) (domain.LessonQuestion, error) {
+	f.createQuestionCalls++
+	f.createQuestionParams = params
+	return f.createQuestionResult, f.createQuestionErr
 }
 
 func TestStaffCreateDraftCourseUsesAuthenticatedActorAndCSRF(t *testing.T) {
@@ -537,5 +547,75 @@ func TestStaffCreateDraftLessonUsesAuthenticatedActorAndCoursePath(t *testing.T)
 	}
 	if strings.Contains(response.Body.String(), csrfToken) || strings.Contains(response.Body.String(), "staff_session") {
 		t.Fatal("lesson creation response leaked authentication material")
+	}
+}
+
+
+func TestStaffCreateQuestionUsesAuthenticatedActorAndVersionPath(t *testing.T) {
+	csrfToken := "csrf-question-test-token-0123456789"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, DisplayName: "Admin", Email: "admin@example.test",
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	createdAt := time.Now().UTC()
+	authoring := &fakeStaffAuthoringAPI{createQuestionResult: domain.LessonQuestion{
+		ID: 301, LessonVersionID: 124, QuestionNumber: 1, Prompt: "Question text",
+		ExpectedAnswer: "Internal expected answer", AnswerType: "text", CreatedAt: createdAt, UpdatedAt: createdAt,
+	}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	makeRequest := func(body string, includeCSRF bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "https://admin.example.test/api/v1/staff/admin/lesson-versions/124/questions",
+			strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://admin.example.test")
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+		if includeCSRF {
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
+			request.Header.Set("X-CSRF-Token", csrfToken)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	payload := `{"question_number":1,"prompt":"Question text","expected_answer":"Internal expected answer","answer_type":"text"}`
+	withoutCSRF := makeRequest(payload, false)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("request without CSRF status = %d, want %d; body=%s", withoutCSRF.Code, http.StatusForbidden, withoutCSRF.Body.String())
+	}
+	if authoring.createQuestionCalls != 0 {
+		t.Fatal("authoring service was called without a valid CSRF token")
+	}
+
+	withUntrustedVersionID := makeRequest(`{"lesson_version_id":999,"question_number":1,"prompt":"Question text","expected_answer":"Answer","answer_type":"text"}`, true)
+	if withUntrustedVersionID.Code != http.StatusBadRequest {
+		t.Fatalf("request with caller-supplied lesson_version_id status = %d, want %d; body=%s", withUntrustedVersionID.Code, http.StatusBadRequest, withUntrustedVersionID.Body.String())
+	}
+	if authoring.createQuestionCalls != 0 {
+		t.Fatal("request with caller-supplied lesson_version_id reached the authoring service")
+	}
+
+	response := makeRequest(payload, true)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("valid request status = %d, want %d; body=%s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	if authoring.createQuestionCalls != 1 {
+		t.Fatalf("create question calls = %d, want 1", authoring.createQuestionCalls)
+	}
+	params := authoring.createQuestionParams
+	if params.LessonVersionID != 124 {
+		t.Fatalf("LessonVersionID = %d, want path version ID 124", params.LessonVersionID)
+	}
+	if params.CreatedByStaffID != identity.StaffID {
+		t.Fatalf("CreatedByStaffID = %d, want authenticated staff ID %d", params.CreatedByStaffID, identity.StaffID)
+	}
+	if strings.Contains(response.Body.String(), "Internal expected answer") || strings.Contains(response.Body.String(), csrfToken) ||
+		strings.Contains(response.Body.String(), "staff_session") {
+		t.Fatal("question creation response leaked internal answer or authentication material")
 	}
 }

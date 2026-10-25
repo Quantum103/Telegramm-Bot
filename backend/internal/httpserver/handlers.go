@@ -48,6 +48,7 @@ type StaffAuthAPI interface {
 type StaffAuthoringAPI interface {
 	CreateDraftCourse(context.Context, domain.CreateCourseParams) (domain.Course, error)
 	CreateDraftLesson(context.Context, domain.CreateLessonParams) (domain.Lesson, error)
+	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
 }
 
 type staffLoginRequest struct {
@@ -64,6 +65,27 @@ type staffCreateDraftCourseRequest struct {
 type staffCreateDraftLessonRequest struct {
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
+}
+
+type staffCreateQuestionRequest struct {
+	QuestionNumber      int                           `json:"question_number"`
+	Prompt              string                        `json:"prompt"`
+	ExpectedAnswer      string                        `json:"expected_answer"`
+	AnswerType          string                        `json:"answer_type"`
+	ExpectedExplanation *string                       `json:"expected_explanation"`
+	Criteria            []domain.QuestionCriterionInput `json:"criteria"`
+	Options             []domain.QuestionOptionInput    `json:"options"`
+	CommonMistakes      []domain.CommonMistake          `json:"common_mistakes"`
+	BiblePassages       []domain.BiblePassageInput      `json:"bible_passages"`
+}
+
+type staffCreatedQuestionResponse struct {
+	ID              int64     `json:"id"`
+	LessonVersionID int64     `json:"lesson_version_id"`
+	QuestionNumber  int       `json:"question_number"`
+	AnswerType      string    `json:"answer_type"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type staffIdentityResponse struct {
@@ -152,6 +174,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		if h.authoring != nil {
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses", h.staffCreateDraftCourse)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/lessons", h.staffCreateDraftLesson)
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
 		}
 		mux.Handle("/api/v1/staff/admin/", h.staffSessionMiddleware(staffAdminMux))
 	}
@@ -322,6 +345,51 @@ func (h handlers) staffCreateDraftLesson(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toLessonResponse(lesson))
+}
+
+func (h handlers) staffCreateQuestion(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
+	if !ok || identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	versionID, ok := parsePositiveID(w, r.PathValue("versionID"))
+	if !ok {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input staffCreateQuestionRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiErrorResponse{Error: "request_too_large"})
+		} else {
+			writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		}
+		return
+	}
+
+	question, err := h.authoring.CreateQuestion(r.Context(), domain.CreateQuestionParams{
+		LessonVersionID: versionID,
+		QuestionNumber: input.QuestionNumber, Prompt: input.Prompt, ExpectedAnswer: input.ExpectedAnswer,
+		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation,
+		Criteria: input.Criteria, Options: input.Options, CommonMistakes: input.CommonMistakes,
+		BiblePassages: input.BiblePassages, CreatedByStaffID: identity.StaffID,
+	})
+	if err != nil {
+		h.writeAPIError(w, err, "создать вопрос черновой версии урока")
+		return
+	}
+	writeJSON(w, http.StatusCreated, staffCreatedQuestionResponse{
+		ID: question.ID, LessonVersionID: question.LessonVersionID,
+		QuestionNumber: question.QuestionNumber, AnswerType: question.AnswerType,
+		CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
+	})
 }
 
 func (h handlers) staffLogout(w http.ResponseWriter, r *http.Request) {

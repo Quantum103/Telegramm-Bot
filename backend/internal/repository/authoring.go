@@ -134,6 +134,12 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 }
 
 func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, params domain.CreateQuestionParams) (domain.LessonQuestion, error) {
+	if params.CreatedByStaffID < 0 || len(params.Prompt) > 4000 || len(params.ExpectedAnswer) > 4000 ||
+		len(params.Options) > 20 || len(params.Criteria) > 50 ||
+		len(params.CommonMistakes) > 50 || len(params.BiblePassages) > 20 ||
+		(params.ExpectedExplanation != nil && len(*params.ExpectedExplanation) > 4000) {
+		return domain.LessonQuestion{}, ErrInvalidInput
+	}
 	if err := validateQuestionCreation(&params); err != nil {
 		return domain.LessonQuestion{}, err
 	}
@@ -290,6 +296,17 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 		})
 	}
 
+	if params.CreatedByStaffID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'question.draft.create', 'question', $2,
+			        jsonb_build_object('lesson_version_id', $3::bigint,
+			                           'question_number', $4::integer,
+			                           'answer_type', $5::text))
+		`, params.CreatedByStaffID, question.ID, params.LessonVersionID, params.QuestionNumber, params.AnswerType); err != nil {
+			return domain.LessonQuestion{}, mapDatabaseError("записать аудит создания вопроса", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.LessonQuestion{}, mapDatabaseError("зафиксировать создание вопроса и материалов", err)
 	}

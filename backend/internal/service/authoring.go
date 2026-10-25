@@ -59,7 +59,12 @@ func (s *AuthoringService) CreateQuestion(ctx context.Context, params domain.Cre
 	params.ExpectedAnswer = strings.TrimSpace(params.ExpectedAnswer)
 	params.AnswerType = strings.TrimSpace(params.AnswerType)
 	if params.LessonVersionID <= 0 || params.QuestionNumber <= 0 ||
-		params.Prompt == "" || params.ExpectedAnswer == "" {
+		params.Prompt == "" || len(params.Prompt) > 4000 ||
+		params.ExpectedAnswer == "" || len(params.ExpectedAnswer) > 4000 ||
+		params.AnswerType == "" || params.CreatedByStaffID < 0 ||
+		len(params.Options) > 20 || len(params.Criteria) > 50 ||
+		len(params.CommonMistakes) > 50 || len(params.BiblePassages) > 20 ||
+		(params.ExpectedExplanation != nil && len(*params.ExpectedExplanation) > 4000) {
 		return domain.LessonQuestion{}, domain.ErrInvalidInput
 	}
 	return s.store.CreateQuestionWithMaterials(ctx, params)
