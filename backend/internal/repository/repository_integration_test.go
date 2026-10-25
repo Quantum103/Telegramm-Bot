@@ -38,7 +38,7 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		if _, err := pool.Exec(cleanupCtx, "TRUNCATE TABLE students, courses, lessons RESTART IDENTITY CASCADE"); err != nil {
+		if _, err := pool.Exec(cleanupCtx, "TRUNCATE TABLE students, courses, lessons, audit_events RESTART IDENTITY CASCADE"); err != nil {
 			t.Errorf("очистить тестовые данные: %v", err)
 			return
 		}
