@@ -16,10 +16,16 @@ func makeDOCX(t *testing.T, entries map[string]string) []byte {
 	zw := zip.NewWriter(&buf)
 	for name, value := range entries {
 		w, err := zw.Create(name)
-		if err != nil { t.Fatal(err) }
-		if _, err := io.WriteString(w, value); err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(w, value); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := zw.Close(); err != nil { t.Fatal(err) }
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return buf.Bytes()
 }
 
@@ -31,14 +37,21 @@ const validDocument = `<?xml version="1.0" encoding="UTF-8"?>
 func TestParseExtractsParagraphText(t *testing.T) {
 	input := makeDOCX(t, map[string]string{"word/": "", documentPart: validDocument})
 	got, err := Parse(bytes.NewReader(input))
-	if err != nil { t.Fatalf("Parse() error = %v", err) }
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
 	want := "Первый абзац\nВторой\tабзац\nстрока"
-	if got.Text != want { t.Fatalf("Parse().Text = %q, want %q", got.Text, want) }
+	if got.Text != want {
+		t.Fatalf("Parse().Text = %q, want %q", got.Text, want)
+	}
 }
 
 func TestParseRejectsMalformedAndUnsupportedArchives(t *testing.T) {
 	dtd := "<!DOC" + "TYPE document [<!ENTITY x \"bad\">]><document><p><t>&x;</t></p></document>"
-	cases := []struct { name string; data []byte }{
+	cases := []struct {
+		name string
+		data []byte
+	}{
 		{"not zip", []byte("not a zip archive")},
 		{"missing document", makeDOCX(t, map[string]string{"word/styles.xml": "<styles/>"})},
 		{"malformed xml", makeDOCX(t, map[string]string{documentPart: "<w:document><w:p>"})},
@@ -66,7 +79,9 @@ func TestParseRejectsOversizedInput(t *testing.T) {
 
 func TestParseRejectsTooManyEntries(t *testing.T) {
 	entries := map[string]string{documentPart: validDocument}
-	for i := 0; i < maxEntries; i++ { entries[fmt.Sprintf("extra/%03d.txt", i)] = "" }
+	for i := 0; i < maxEntries; i++ {
+		entries[fmt.Sprintf("extra/%03d.txt", i)] = ""
+	}
 	input := makeDOCX(t, entries)
 	if _, err := Parse(bytes.NewReader(input)); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("Parse() error = %v, want ErrTooLarge", err)
