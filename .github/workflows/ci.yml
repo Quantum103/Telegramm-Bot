@@ -9,6 +9,7 @@ on:
       - "stage-4.1/**"
       - "stage-4.2/**"
       - "stage-4.3/**"
+      - "feature/**"
   pull_request:
     branches:
       - main
