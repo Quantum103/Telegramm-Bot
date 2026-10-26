@@ -26,7 +26,7 @@ type LessonImport struct {
 
 // ParseCourse parses extracted DOCX text using this explicit paragraph format:
 //
-//	Course: <title>     (in Russian: Курс: <title>)
+//	Курс: <название>
 //	Slug: <lowercase-ascii-slug>
 //	Описание курса:     (optional; following paragraphs form the course description)
 //	Урок: <lesson title>
@@ -76,6 +76,9 @@ func ParseCourse(text string) (CourseImport, error) {
 			line := strings.TrimSpace(lines[index])
 			if strings.HasPrefix(line, "Урок: ") {
 				break
+			}
+			if line == "Описание курса:" {
+				return CourseImport{}, ErrInvalidStructure
 			}
 			if line != "" {
 				description = append(description, line)
