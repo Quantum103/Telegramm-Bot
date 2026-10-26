@@ -66,6 +66,7 @@ func TestStaffDOCXPreviewRequiresAdminAndReturnsTextWithoutPersistence(t *testin
 	request.Header.Set("Origin", "https://admin.example.test")
 	request.Header.Set("X-CSRF-Token", "csrf-token")
 	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
@@ -109,6 +110,7 @@ func TestStaffDOCXPreviewRejectsCuratorAndInvalidFile(t *testing.T) {
 			request.Header.Set("Origin", "https://admin.example.test")
 			request.Header.Set("X-CSRF-Token", "csrf-token")
 			request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			if recorder.Code != tt.wantStatus {
@@ -130,6 +132,7 @@ func TestStaffDOCXPreviewRejectsOversizedUpload(t *testing.T) {
 	request.Header.Set("Origin", "https://admin.example.test")
 	request.Header.Set("X-CSRF-Token", "csrf-token")
 	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusRequestEntityTooLarge {
@@ -148,6 +151,7 @@ func TestStaffDOCXPreviewRequiresMultipartContentType(t *testing.T) {
 	request.Header.Set("Origin", "https://admin.example.test")
 	request.Header.Set("X-CSRF-Token", "csrf-token")
 	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnsupportedMediaType {
