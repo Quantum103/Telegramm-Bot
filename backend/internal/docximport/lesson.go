@@ -355,7 +355,7 @@ func validateImportedQuestion(question *QuestionImport) error {
 				return lessonError(question.Number, "у вопроса с множественным выбором нет правильного ответа")
 			}
 		default:
-			return lessonError(question.Number, "у вопроса с вариантами ответа отсутствует маркер правильного ответа")
+			return lessonError(question.Number, "у вопроса с вариантами ответа нет правильного ответа")
 		}
 		question.AnswerType = question.choiceMarkerType
 	}
