@@ -16,6 +16,7 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/docximport"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
@@ -247,6 +248,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		// The whole namespace is protected, so route handlers cannot accidentally bypass auth/CSRF.
 		staffAdminMux := http.NewServeMux()
 		if h.authoring != nil {
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/import/docx/preview", h.staffPreviewDOCX)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/staff/{staffID}/roles", h.staffAssignRole)
 			staffAdminMux.HandleFunc("DELETE /api/v1/staff/admin/staff/{staffID}/roles/{roleCode}", h.staffRevokeRole)
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses", h.staffListCourses)
