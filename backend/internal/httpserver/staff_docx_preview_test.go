@@ -110,7 +110,7 @@ func TestStaffDOCXPreviewRejectsCuratorAndInvalidFile(t *testing.T) {
 			request.Header.Set("Origin", "https://admin.example.test")
 			request.Header.Set("X-CSRF-Token", "csrf-token")
 			request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
-	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
+			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			if recorder.Code != tt.wantStatus {
