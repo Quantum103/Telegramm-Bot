@@ -10,7 +10,7 @@ import (
 
 var (
 	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
-	questionHeaderPattern    = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)$`)
+	questionHeaderPattern     = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)$`)
 	bibleReferencePattern    = regexp.MustCompile(`^(.+?)\s+(\d+):(\d+)(?:\s*[-–—]\s*(\d+))?$`)
 	answerMarkerPattern      = regexp.MustCompile(`^\s*\[\s*(.*?)\s*\]\s*(.*?)\s*$`)
 )
@@ -37,17 +37,17 @@ type LessonImport struct {
 // QuestionImport contains one question and the materials explicitly found in the document.
 type QuestionImport struct {
 	Number              int
-	Prompt               string
-	AnswerType           string
-	ExpectedAnswer       string
-	ExpectedExplanation  *string
-	Note                 *string
-	Options              []OptionImport
-	BiblePassages        []BiblePassageImport
-	bibleReferences      string
-	scriptureText        string
-	seenFields           map[string]bool
-	choiceMarkerType     string
+	Prompt              string
+	AnswerType          string
+	ExpectedAnswer      string
+	ExpectedExplanation *string
+	Note                *string
+	Options             []OptionImport
+	BiblePassages       []BiblePassageImport
+	bibleReferences     string
+	scriptureText       string
+	seenFields          map[string]bool
+	choiceMarkerType    string
 }
 
 type OptionImport struct {
@@ -308,11 +308,11 @@ func appendTextLine(existing, line string) string {
 
 func validateImportedQuestion(question *QuestionImport) error {
 	for field, value := range map[string]string{
-		"Библейские ссылки": question.bibleReferences,
-		"Текст Писания": question.scriptureText,
+		"Библейские ссылки":    question.bibleReferences,
+		"Текст Писания":        question.scriptureText,
 		"Предполагаемый ответ": question.ExpectedAnswer,
-		"Объяснение": valueOf(question.ExpectedExplanation),
-		"Пометка": valueOf(question.Note),
+		"Объяснение":           valueOf(question.ExpectedExplanation),
+		"Пометка":              valueOf(question.Note),
 	} {
 		if question.seenFields[field] && strings.TrimSpace(value) == "" {
 			return lessonError(question.Number, fmt.Sprintf("поле «%s» пусто", field))
