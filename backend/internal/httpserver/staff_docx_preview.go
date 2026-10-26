@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	maxDOCXUploadBytes = 8 << 20
+	maxDOCXUploadBytes       = 8 << 20
 	maxDOCXMultipartOverhead = 64 << 10
 )
 

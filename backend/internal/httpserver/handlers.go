@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/docximport"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
