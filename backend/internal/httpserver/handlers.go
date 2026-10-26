@@ -264,7 +264,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		}
 		mux.Handle("/api/v1/staff/admin/", h.staffAdminMiddleware(staffAdminMux))
 	}
-	return mux
+	return securityHeaders(mux)
 }
 
 func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
