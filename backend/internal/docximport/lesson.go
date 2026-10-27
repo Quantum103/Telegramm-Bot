@@ -11,36 +11,10 @@ import (
 
 var (
 	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
-	questionHeaderPattern     = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)package docximport
-
-import (
-	"errors"
-	"fmt"
-	"html"
-	"regexp"
-	"strconv"
-	"strings"
-)
-
-var (
-	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
-	)
+	questionHeaderPattern     = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)$`)
 	lessonTitlePrefixPattern  = regexp.MustCompile(`(?i)^Урок\s+\d+\s*[.:—–-]?\s*`)
 	markdownHeadingPattern    = regexp.MustCompile(`^#{1,6}\s+`)
-	introHeaderPattern        = regexp.MustCompile(`(?i)^Введение(?:\s*:\s*(.*))?package docximport
-
-import (
-	"errors"
-	"fmt"
-	"html"
-	"regexp"
-	"strconv"
-	"strings"
-)
-
-var (
-	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
-	)
+	introHeaderPattern        = regexp.MustCompile(`(?i)^Введение(?:\s*:\s*(.*))?$`)
 	bibleReferencePattern     = regexp.MustCompile(`^(.+?)\s+(\d+):(\d+)(?:\s*[-–—]\s*(\d+))?$`)
 	answerMarkerPattern       = regexp.MustCompile(`^\s*\[\s*(.*?)\s*\]\s*(.*?)\s*$`)
 )
@@ -151,7 +125,7 @@ func ParseLesson(text string) (LessonImport, error) {
 			continue
 		}
 
-		// Обычный DOCX использует визуальный заголовок «Урок 01. ...» без текстовой метки.
+		// Обычный DOCX использует заголовок «Урок 01. ...» без текстовой метки.
 		if !titleSeen && !introSeen && current == nil && len(result.Questions) == 0 {
 			title := strings.TrimSpace(lessonTitlePrefixPattern.ReplaceAllString(line, ""))
 			if title != line {
