@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   getStaffSession, listCourseLessons, listStaffCourses, loginStaff, logoutStaff,
   type Course, type Lesson, type StaffIdentity,
@@ -78,13 +78,19 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [courses, setCourses] = useState<Course[]>([])
-  const [coursesState, setCoursesState] = useState<'loading' | 'loaded' | 'error'>('idle' as 'loading')
+  const [coursesState, setCoursesState] = useState<'loading' | 'loaded' | 'error'>('loading')
   const [coursesError, setCoursesError] = useState('')
   const [coursesRevision, setCoursesRevision] = useState(0)
   const [selectedCourseID, setSelectedCourseID] = useState<number | null>(null)
   const [lessons, setLessons] = useState<Lesson[]>([])
   const [lessonsState, setLessonsState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [lessonsError, setLessonsError] = useState('')
+
+  const onSessionExpired = useCallback(() => {
+    setStaff(null)
+    setAuthError('Сессия завершена. Войдите в систему ещё раз.')
+    setAuthState('signed-out')
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -254,7 +260,7 @@ function App() {
 
         {activePage === 'lessons' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">УЧЕБНЫЕ МАТЕРИАЛЫ</p><h1>Уроки</h1><p className="page-subtitle">Опубликованные уроки выбранного курса.</p></div><span className="soft-pill">{lessonsState === 'loaded' ? lessons.length : '—'} уроков</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Библиотека уроков</h2><p>Выберите опубликованный курс из базы данных.</p></div><label className="course-select-label"><span>Курс</span><select value={selectedCourseID ?? ''} onChange={(event) => setSelectedCourseID(event.target.value ? Number(event.target.value) : null)} disabled={publishedCourses.length === 0}><option value="">Выберите курс</option>{publishedCourses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select></label></div>{publishedCourses.length === 0 && coursesState === 'loaded' && <p className="catalog-message">Пока нет опубликованных курсов. Черновые уроки можно импортировать в разделе «Импорт DOCX».</p>}{lessonsState === 'loading' && <p className="catalog-message" role="status">Загружаем уроки…</p>}{lessonsState === 'error' && <div className="catalog-error" role="alert"><span>{lessonsError}</span><button className="secondary-button" onClick={() => setCoursesRevision((revision) => revision + 1)}>Обновить данные</button></div>}{lessonsState === 'loaded' && selectedCourseID !== null && <div className="lesson-list">{filteredLessons.map((lesson) => <div className="lesson-row" key={lesson.id}><div className="lesson-icon"><Icon name="book" /></div><div className="lesson-copy"><strong>{lesson.title}</strong><span>{lesson.description || 'Опубликованный урок'}</span></div><span className="lesson-duration"><Icon name="layers" size={14} />{lesson.question_count} вопр.</span><span className="status-pill"><i />Опубликован</span></div>)}{filteredLessons.length === 0 && <p className="catalog-message">{searchTerm.trim() ? 'По запросу ничего не найдено.' : 'В выбранном курсе пока нет опубликованных уроков.'}</p>}</div>}</div></section>}
 
-        {activePage === 'docx-import' && <DocxImportPage staff={staff} onSessionExpired={() => { setStaff(null); setAuthError('Сессия завершена. Войдите в систему ещё раз.'); setAuthState('signed-out') }} />}
+        {activePage === 'docx-import' && <DocxImportPage staff={staff} onSessionExpired={onSessionExpired} />}
 
         <footer className="page-footer"><span>© 2026 Слово · Обучающая платформа</span><span>Вход выполнен: {staff.email}</span></footer>
       </div>
