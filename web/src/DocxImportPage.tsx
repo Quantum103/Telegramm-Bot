@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
-  createStaffDraftCourse, getStaffSession, importDOCXToDraft, listStaffCourses,
-  loginStaff, logoutStaff, previewDOCX, type Course, type DOCXPreview,
-  type ImportedDraftLesson, type StaffIdentity,
+  createStaffDraftCourse, importDOCXToDraft, listStaffCourses, previewDOCX,
+  type Course, type DOCXPreview, type ImportedDraftLesson, type StaffIdentity,
 } from './api'
 import './docx-import.css'
 
@@ -11,14 +10,7 @@ const maxDOCXBytes = 8 * 1024 * 1024
 const previewLimit = 12_000
 const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 
-export default function DocxImportPage() {
-  const [authState, setAuthState] = useState<'checking' | 'signed-out' | 'signed-in'>('checking')
-  const [staff, setStaff] = useState<StaffIdentity | null>(null)
-  const [authMessage, setAuthMessage] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [loginBusy, setLoginBusy] = useState(false)
-  const [logoutBusy, setLogoutBusy] = useState(false)
+export default function DocxImportPage({ staff, onSessionExpired }: { staff: StaffIdentity; onSessionExpired: () => void }) {
 
   const [courses, setCourses] = useState<Course[]>([])
   const [coursesState, setCoursesState] = useState<RequestState>('idle')
@@ -43,25 +35,7 @@ export default function DocxImportPage() {
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    const controller = new AbortController()
-    void getStaffSession(controller.signal).then((session) => {
-      if (controller.signal.aborted) return
-      if (session) {
-        setStaff(session.staff)
-        setAuthState('signed-in')
-      } else {
-        setAuthState('signed-out')
-      }
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return
-      setAuthMessage(errorText(error, 'Не удалось проверить административную сессию.'))
-      setAuthState('signed-out')
-    })
-    return () => controller.abort()
-  }, [])
-
-  useEffect(() => {
-    if (authState !== 'signed-in' || !staff) return
+    if (!staff) return
     const controller = new AbortController()
     setCoursesState('loading')
     setCoursesError('')
@@ -79,51 +53,10 @@ export default function DocxImportPage() {
       const message = errorText(error, 'Не удалось загрузить курсы для импорта.')
       setCoursesError(message)
       setCoursesState('error')
-      if (message.includes('Сессия завершена')) {
-        setStaff(null)
-        setAuthState('signed-out')
-        setAuthMessage(message)
-      }
+      if (message.includes('Сессия завершена')) onSessionExpired()
     })
     return () => controller.abort()
-  }, [authState, staff, coursesRevision])
-
-  async function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setAuthMessage('')
-    setLoginBusy(true)
-    try {
-      const identity = await loginStaff(email, password)
-      setStaff(identity)
-      setPassword('')
-      setAuthState('signed-in')
-    } catch (error: unknown) {
-      setAuthMessage(errorText(error, 'Не удалось войти в систему.'))
-    } finally {
-      setLoginBusy(false)
-    }
-  }
-
-  async function handleLogout() {
-    setLogoutBusy(true)
-    setAuthMessage('')
-    try {
-      await logoutStaff()
-      setStaff(null)
-      setAuthState('signed-out')
-      setCourses([])
-      setSelectedCourseID(null)
-      setFile(null)
-      setPreview(null)
-      setPreviewedFile(null)
-      setImportedLesson(null)
-      if (fileInput.current) fileInput.current.value = ''
-    } catch (error: unknown) {
-      setAuthMessage(errorText(error, 'Не удалось завершить сессию.'))
-    } finally {
-      setLogoutBusy(false)
-    }
-  }
+  }, [staff, coursesRevision, onSessionExpired])
 
   function chooseFile(next: File | null) {
     setFile(next)
@@ -219,26 +152,6 @@ export default function DocxImportPage() {
     }
   }
 
-  if (authState === 'checking') {
-    return <section className="section-page docx-import-page"><div className="panel docx-panel docx-centered"><p className="catalog-message" role="status">Проверяем административную сессию…</p></div></section>
-  }
-
-  if (authState === 'signed-out' || !staff) {
-    return <section className="section-page docx-import-page">
-      <div className="welcome-row"><div><p className="eyebrow">АДМИНИСТРИРОВАНИЕ</p><h1>Импорт DOCX</h1><p className="page-subtitle">Войдите, чтобы загрузить библейский урок в черновик.</p></div></div>
-      <div className="panel docx-panel docx-auth-panel">
-        <div className="docx-panel-heading"><div><h2>Вход сотрудника</h2><p>Используется существующая серверная сессия с cookie и CSRF-защитой.</p></div></div>
-        {authMessage && <p className="docx-message docx-message--error" role="alert">{authMessage}</p>}
-        <form className="docx-form" onSubmit={handleLogin}>
-          <label className="docx-field"><span>Email</span><input className="docx-input" type="email" autoComplete="username" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-          <label className="docx-field"><span>Пароль</span><input className="docx-input" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          <button className="primary-button" type="submit" disabled={loginBusy}>{loginBusy ? 'Входим…' : 'Войти'}</button>
-        </form>
-        <p className="docx-footnote">Пароль не сохраняется после успешного входа. Права на создание курса и импорт проверяет сервер.</p>
-      </div>
-    </section>
-  }
-
   const previewText = preview?.text ?? ''
   const visiblePreview = previewText.slice(0, previewLimit)
   const previewTruncated = previewText.length > previewLimit
@@ -246,10 +159,8 @@ export default function DocxImportPage() {
   return <section className="section-page docx-import-page">
     <div className="welcome-row">
       <div><p className="eyebrow">АДМИНИСТРИРОВАНИЕ</p><h1>Импорт DOCX</h1><p className="page-subtitle">Проверьте извлечённый текст и сохраните урок в виде черновика.</p></div>
-      <button className="secondary-button docx-logout" type="button" onClick={() => void handleLogout()} disabled={logoutBusy}>{logoutBusy ? 'Выходим…' : 'Выйти из аккаунта'}</button>
     </div>
     <div className="docx-session-line"><span className="docx-session-dot" /><span>Вход выполнен: <strong>{staff.display_name || staff.email}</strong> ({staff.email}). Для импорта нужна роль администратора.</span></div>
-    {authMessage && <p className="docx-message docx-message--error" role="alert">{authMessage}</p>}
 
     {coursesState === 'error' && <div className="docx-message docx-message--error" role="alert"><span>{coursesError}</span><button className="secondary-button" type="button" onClick={() => setCoursesRevision((revision) => revision + 1)}>Повторить загрузку курсов</button></div>}
 
