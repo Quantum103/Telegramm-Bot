@@ -109,6 +109,7 @@ type LessonQuestion struct {
 	ExpectedAnswer      string              `json:"-"`
 	AnswerType          string              `json:"answer_type"`
 	ExpectedExplanation *string             `json:"-"`
+	Note                *string             `json:"-"`
 	Criteria            []QuestionCriterion `json:"-"`
 	CommonMistakes      []CommonMistake     `json:"-"`
 	BiblePassages       []BiblePassage      `json:"-"`

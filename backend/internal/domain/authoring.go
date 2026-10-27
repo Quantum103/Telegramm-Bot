@@ -18,6 +18,31 @@ type CreateLessonParams struct {
 	CreatedByStaffID int64
 }
 
+// ImportDraftLessonParams — проверенное содержимое урока для атомарного импорта в черновик.
+type ImportDraftLessonParams struct {
+	CourseID         int64
+	Title            string
+	Description      *string
+	Questions        []ImportDraftQuestionParams
+	CreatedByStaffID int64
+}
+
+type ImportDraftQuestionParams struct {
+	Number              int
+	Prompt              string
+	AnswerType          string
+	ExpectedAnswer      string
+	ExpectedExplanation *string
+	Note                *string
+	Options             []ImportDraftOptionInput
+	BiblePassages       []BiblePassageInput
+}
+
+type ImportDraftOptionInput struct {
+	Text      string
+	IsCorrect bool
+}
+
 type QuestionCriterionInput struct {
 	Key         string
 	Description string
@@ -49,6 +74,7 @@ type CreateQuestionParams struct {
 	ExpectedAnswer      string
 	AnswerType          string
 	ExpectedExplanation *string
+	Note                *string
 	Criteria            []QuestionCriterionInput
 	Options             []QuestionOptionInput
 	CommonMistakes      []CommonMistake

@@ -84,6 +84,7 @@ func (r *ContentRepository) listQuestionsForVersion(ctx context.Context, lessonV
 			q.expected_answer,
 			q.answer_type,
 			q.expected_explanation,
+			q.note,
 			COALESCE((
 				SELECT jsonb_agg(
 					jsonb_build_object(
@@ -152,19 +153,27 @@ func (r *ContentRepository) listQuestionsForVersion(ctx context.Context, lessonV
 	questions := make([]LessonQuestion, 0)
 	for rows.Next() {
 		var question LessonQuestion
+		var expectedAnswer pgtype.Text
 		var explanation pgtype.Text
+		var note pgtype.Text
 		var criteriaJSON, optionsJSON, mistakesJSON, passagesJSON []byte
 		if err := rows.Scan(
 			&question.ID, &question.LessonVersionID, &question.QuestionNumber,
-			&question.Prompt, &question.ExpectedAnswer, &question.AnswerType,
-			&explanation, &criteriaJSON, &optionsJSON, &mistakesJSON, &passagesJSON,
+			&question.Prompt, &expectedAnswer, &question.AnswerType,
+			&explanation, &note, &criteriaJSON, &optionsJSON, &mistakesJSON, &passagesJSON,
 			&question.CreatedAt, &question.UpdatedAt,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать вопрос урока", err)
 		}
+		if expectedAnswer.Valid {
+			question.ExpectedAnswer = expectedAnswer.String
+		}
 		if explanation.Valid {
 			value := explanation.String
 			question.ExpectedExplanation = &value
+		}
+		if note.Valid {
+			question.Note = &note.String
 		}
 		if err := json.Unmarshal(criteriaJSON, &question.Criteria); err != nil {
 			return nil, mapDatabaseError("разобрать критерии вопроса", err)

@@ -133,6 +133,162 @@ func (r *CatalogRepository) CreateDraftLesson(ctx context.Context, params domain
 	}, nil
 }
 
+// ImportDraftLesson creates the lesson, questions and source materials in one transaction.
+func (r *CatalogRepository) ImportDraftLesson(ctx context.Context, params domain.ImportDraftLessonParams) (domain.Lesson, error) {
+	params.Title = strings.TrimSpace(params.Title)
+	if params.CourseID <= 0 || params.CreatedByStaffID <= 0 || params.Title == "" ||
+		len(params.Title) > 200 || len(params.Questions) == 0 || len(params.Questions) > 200 ||
+		(params.Description != nil && len(strings.TrimSpace(*params.Description)) > 4000) {
+		return domain.Lesson{}, ErrInvalidInput
+	}
+	if params.Description != nil {
+		value := strings.TrimSpace(*params.Description)
+		if value == "" {
+			params.Description = nil
+		} else {
+			params.Description = &value
+		}
+	}
+
+	questions := make([]domain.CreateQuestionParams, len(params.Questions))
+	seenNumbers := make(map[int]struct{}, len(params.Questions))
+	for index, imported := range params.Questions {
+		if imported.Number <= 0 {
+			return domain.Lesson{}, ErrInvalidInput
+		}
+		if _, exists := seenNumbers[imported.Number]; exists {
+			return domain.Lesson{}, ErrInvalidInput
+		}
+		seenNumbers[imported.Number] = struct{}{}
+		question := domain.CreateQuestionParams{
+			LessonVersionID: 1, QuestionNumber: imported.Number, Prompt: imported.Prompt,
+			ExpectedAnswer: imported.ExpectedAnswer, AnswerType: imported.AnswerType,
+			ExpectedExplanation: imported.ExpectedExplanation, Note: imported.Note,
+			BiblePassages: imported.BiblePassages, CreatedByStaffID: params.CreatedByStaffID,
+		}
+		for optionIndex, option := range imported.Options {
+			question.Options = append(question.Options, domain.QuestionOptionInput{
+				Key: string(rune('A' + optionIndex)), Text: option.Text, IsCorrect: option.IsCorrect,
+			})
+		}
+		if err := validateQuestionCreation(&question); err != nil {
+			return domain.Lesson{}, err
+		}
+		questions[index] = question
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Lesson{}, mapDatabaseError("начать транзакцию импорта урока", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var courseTitle, courseStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT title, status FROM courses WHERE id = $1 FOR UPDATE
+	`, params.CourseID).Scan(&courseTitle, &courseStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Lesson{}, ErrNotFound
+		}
+		return domain.Lesson{}, mapDatabaseError("проверить курс для импорта урока", err)
+	}
+	if courseStatus != "draft" {
+		return domain.Lesson{}, ErrInvalidState
+	}
+
+	var position int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(MAX(position), 0) + 1
+		FROM course_lessons WHERE course_id = $1
+	`, params.CourseID).Scan(&position); err != nil {
+		return domain.Lesson{}, mapDatabaseError("определить позицию импортируемого урока", err)
+	}
+
+	var lessonID, versionID int64
+	if err := tx.QueryRow(ctx, "INSERT INTO lessons DEFAULT VALUES RETURNING id").Scan(&lessonID); err != nil {
+		return domain.Lesson{}, mapDatabaseError("создать импортируемый урок", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO lesson_versions (lesson_id, version_number, title, description, status, created_by_staff_id)
+		VALUES ($1, 1, $2, $3, 'draft', $4)
+		RETURNING id
+	`, lessonID, params.Title, cleanOptional(params.Description), params.CreatedByStaffID).Scan(&versionID); err != nil {
+		return domain.Lesson{}, mapDatabaseError("создать черновую версию импортируемого урока", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO course_lessons (course_id, lesson_id, position)
+		VALUES ($1, $2, $3)
+	`, params.CourseID, lessonID, position); err != nil {
+		return domain.Lesson{}, mapDatabaseError("добавить импортируемый урок в курс", err)
+	}
+
+	for _, questionParams := range questions {
+		var questionID int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO lesson_questions (
+				lesson_version_id, question_number, prompt, expected_answer,
+				answer_type, expected_explanation, note
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id
+		`, versionID, questionParams.QuestionNumber, questionParams.Prompt,
+			cleanAnswerText(questionParams.ExpectedAnswer), questionParams.AnswerType,
+			cleanOptional(questionParams.ExpectedExplanation), cleanOptional(questionParams.Note)).
+			Scan(&questionID); err != nil {
+			return domain.Lesson{}, mapDatabaseError("сохранить вопрос импортируемого урока", err)
+		}
+
+		for optionIndex, option := range questionParams.Options {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO question_options (question_id, option_key, option_text, sort_order, is_correct)
+				VALUES ($1, $2, $3, $4, $5)
+			`, questionID, option.Key, option.Text, optionIndex+1, option.IsCorrect); err != nil {
+				return domain.Lesson{}, mapDatabaseError("сохранить вариант импортируемого вопроса", err)
+			}
+		}
+
+		for passageIndex, passage := range questionParams.BiblePassages {
+			var passageID int64
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO bible_passages (
+					book_name, chapter, start_verse, end_verse, translation_name, passage_text, source_note
+				)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				RETURNING id
+			`, passage.BookName, passage.Chapter, passage.StartVerse, passage.EndVerse,
+				cleanOptional(passage.TranslationName), cleanOptional(passage.PassageText),
+				cleanOptional(passage.SourceNote)).Scan(&passageID); err != nil {
+				return domain.Lesson{}, mapDatabaseError("сохранить библейский отрывок импортируемого вопроса", err)
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO question_bible_passages (question_id, passage_id, sort_order)
+				VALUES ($1, $2, $3)
+			`, questionID, passageID, passageIndex+1); err != nil {
+				return domain.Lesson{}, mapDatabaseError("связать импортируемый вопрос с библейским отрывком", err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+		VALUES ($1, 'lesson.docx.import', 'lesson', $2,
+		        jsonb_build_object('course_id', $3::bigint, 'lesson_version_id', $4::bigint,
+		                           'question_count', $5::integer, 'status', 'draft'))
+	`, params.CreatedByStaffID, lessonID, params.CourseID, versionID, len(questions)); err != nil {
+		return domain.Lesson{}, mapDatabaseError("записать аудит импорта урока", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Lesson{}, mapDatabaseError("зафиксировать импорт урока", err)
+	}
+
+	return domain.Lesson{
+		ID: lessonID, CourseID: params.CourseID, CourseTitle: courseTitle,
+		Position: position, LessonVersionID: versionID, VersionNumber: 1,
+		Title: params.Title, Description: cleanOptionalString(params.Description),
+		QuestionCount: len(questions),
+	}, nil
+}
+
 // UpdateDraftLessonVersion changes only editable metadata on a draft version.
 // The content update and its audit record commit as a single transaction.
 func (r *CatalogRepository) UpdateDraftLessonVersion(ctx context.Context, versionID int64, title string, description *string, updatedByStaffID int64) error {
@@ -210,7 +366,8 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	if params.CreatedByStaffID < 0 || len(params.Prompt) > 4000 || len(params.ExpectedAnswer) > 4000 ||
 		len(params.Options) > 20 || len(params.Criteria) > 50 ||
 		len(params.CommonMistakes) > 50 || len(params.BiblePassages) > 20 ||
-		(params.ExpectedExplanation != nil && len(*params.ExpectedExplanation) > 4000) {
+		(params.ExpectedExplanation != nil && len(strings.TrimSpace(*params.ExpectedExplanation)) > 4000) ||
+		(params.Note != nil && len(strings.TrimSpace(*params.Note)) > 4000) {
 		return domain.LessonQuestion{}, ErrInvalidInput
 	}
 	if err := validateQuestionCreation(&params); err != nil {
@@ -240,12 +397,13 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO lesson_questions (
 			lesson_version_id, question_number, prompt, expected_answer,
-			answer_type, expected_explanation
+			answer_type, expected_explanation, note
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
 	`, params.LessonVersionID, params.QuestionNumber, strings.TrimSpace(params.Prompt),
-		strings.TrimSpace(params.ExpectedAnswer), params.AnswerType, cleanOptional(params.ExpectedExplanation),
+		cleanAnswerText(params.ExpectedAnswer), params.AnswerType, cleanOptional(params.ExpectedExplanation),
+		cleanOptional(params.Note),
 	).Scan(&question.ID, &question.CreatedAt, &question.UpdatedAt); err != nil {
 		return domain.LessonQuestion{}, mapDatabaseError("создать вопрос урока", err)
 	}
@@ -255,6 +413,7 @@ func (r *CatalogRepository) CreateQuestionWithMaterials(ctx context.Context, par
 	question.ExpectedAnswer = strings.TrimSpace(params.ExpectedAnswer)
 	question.AnswerType = params.AnswerType
 	question.ExpectedExplanation = cleanOptionalString(params.ExpectedExplanation)
+	question.Note = cleanOptionalString(params.Note)
 
 	batch := &pgx.Batch{}
 	batchCount := len(params.Options) + len(params.Criteria) + len(params.CommonMistakes)
@@ -391,7 +550,8 @@ func (r *CatalogRepository) UpdateQuestionWithMaterials(ctx context.Context, que
 		len(params.Prompt) > 4000 || len(params.ExpectedAnswer) > 4000 ||
 		len(params.Options) > 20 || len(params.Criteria) > 50 ||
 		len(params.CommonMistakes) > 50 || len(params.BiblePassages) > 20 ||
-		(params.ExpectedExplanation != nil && len(*params.ExpectedExplanation) > 4000) {
+		(params.ExpectedExplanation != nil && len(strings.TrimSpace(*params.ExpectedExplanation)) > 4000) ||
+		(params.Note != nil && len(strings.TrimSpace(*params.Note)) > 4000) {
 		return domain.LessonQuestion{}, ErrInvalidInput
 	}
 	if err := validateQuestionCreation(&params); err != nil {
@@ -433,11 +593,11 @@ func (r *CatalogRepository) UpdateQuestionWithMaterials(ctx context.Context, que
 	if err := tx.QueryRow(ctx, `
 		UPDATE lesson_questions
 		SET question_number = $1, prompt = $2, expected_answer = $3,
-		    answer_type = $4, expected_explanation = $5, updated_at = now()
-		WHERE id = $6 AND lesson_version_id = $7
+		    answer_type = $4, expected_explanation = $5, note = $6, updated_at = now()
+		WHERE id = $7 AND lesson_version_id = $8
 		RETURNING updated_at
-	`, params.QuestionNumber, params.Prompt, params.ExpectedAnswer, params.AnswerType,
-		cleanOptional(params.ExpectedExplanation), questionID, params.LessonVersionID).Scan(&question.UpdatedAt); err != nil {
+	`, params.QuestionNumber, params.Prompt, cleanAnswerText(params.ExpectedAnswer), params.AnswerType,
+		cleanOptional(params.ExpectedExplanation), cleanOptional(params.Note), questionID, params.LessonVersionID).Scan(&question.UpdatedAt); err != nil {
 		return domain.LessonQuestion{}, mapDatabaseError("обновить основной текст вопроса", err)
 	}
 
@@ -491,6 +651,7 @@ func (r *CatalogRepository) UpdateQuestionWithMaterials(ctx context.Context, que
 	question.ExpectedAnswer = params.ExpectedAnswer
 	question.AnswerType = params.AnswerType
 	question.ExpectedExplanation = cleanOptionalString(params.ExpectedExplanation)
+	question.Note = cleanOptionalString(params.Note)
 	question.Options = make([]domain.QuestionOption, 0, len(params.Options))
 	for index, option := range params.Options {
 		var optionID int64
@@ -912,8 +1073,9 @@ func (r *CatalogRepository) PublishCourse(ctx context.Context, courseID, publish
 
 func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 	if params.LessonVersionID <= 0 || params.QuestionNumber <= 0 ||
-		strings.TrimSpace(params.Prompt) == "" || strings.TrimSpace(params.ExpectedAnswer) == "" ||
-		(params.ExpectedExplanation != nil && len(strings.TrimSpace(*params.ExpectedExplanation)) > 4000) {
+		strings.TrimSpace(params.Prompt) == "" || len(strings.TrimSpace(params.ExpectedAnswer)) > 4000 ||
+		(params.ExpectedExplanation != nil && len(strings.TrimSpace(*params.ExpectedExplanation)) > 4000) ||
+		(params.Note != nil && len(strings.TrimSpace(*params.Note)) > 4000) {
 		return ErrInvalidInput
 	}
 	params.Prompt = strings.TrimSpace(params.Prompt)
@@ -921,7 +1083,7 @@ func validateQuestionCreation(params *domain.CreateQuestionParams) error {
 	params.AnswerType = strings.TrimSpace(params.AnswerType)
 	switch params.AnswerType {
 	case "text":
-		if len(params.Options) != 0 {
+		if strings.TrimSpace(params.ExpectedAnswer) == "" || len(params.Options) != 0 {
 			return ErrInvalidInput
 		}
 	case "single_choice", "multiple_choice":
@@ -1018,6 +1180,14 @@ func validCourseSlug(slug string) bool {
 		previousHyphen = false
 	}
 	return true
+}
+
+func cleanAnswerText(value string) any {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return nil
+	}
+	return cleaned
 }
 
 func cleanOptional(value *string) any {
