@@ -1,0 +1,45 @@
+.docx-import-page { display: grid; gap: 16px; }
+.docx-panel { width: 100%; max-width: 960px; padding: 22px; }
+.docx-auth-panel { max-width: 520px; }
+.docx-centered { max-width: 620px; }
+.docx-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 20px; }
+.docx-panel-heading h2 { margin: 0; color: #2d3a34; font-size: 14px; font-weight: 750; }
+.docx-panel-heading p { margin: 6px 0 0; color: #8b9891; font-size: 11px; line-height: 1.6; }
+.docx-form { display: grid; gap: 15px; }
+.docx-field { display: grid; gap: 7px; color: #64736a; font-size: 11px; font-weight: 650; }
+.docx-input { width: 100%; min-width: 0; min-height: 40px; padding: 10px 11px; border: 1px solid #dfe8e2; border-radius: 8px; background: #fff; color: #35453c; font: inherit; font-size: 12px; font-weight: 450; }
+.docx-input:focus { outline: 2px solid #a6d5c0; outline-offset: 1px; border-color: #6fb393; }
+.docx-input:disabled { background: #f5f7f5; color: #98a39c; }
+.docx-file-input { padding: 7px; }
+.docx-file-input::file-selector-button { margin-right: 12px; padding: 7px 10px; border: 1px solid #dfe8e2; border-radius: 6px; background: #f5f8f6; color: #476055; font: inherit; cursor: pointer; }
+.docx-file-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: -4px 0 0; color: #88958d; font-size: 10px; }
+.docx-file-meta strong { overflow-wrap: anywhere; color: #43564b; font-weight: 650; }
+.docx-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.docx-actions .primary-button, .docx-actions .secondary-button, .docx-form > .primary-button, .docx-form > .secondary-button { margin-top: 0; min-height: 40px; font-size: 11px; }
+.docx-actions button:disabled, .docx-form button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
+.docx-footnote { margin: 0; color: #97a29b; font-size: 10px; line-height: 1.7; }
+.docx-session-line { display: flex; align-items: center; gap: 9px; color: #829087; font-size: 11px; line-height: 1.5; }
+.docx-session-line strong { color: #44564b; font-weight: 700; }
+.docx-session-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #58a980; }
+.docx-logout { margin-top: 0; }
+.docx-course-form { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: end; }
+.docx-preview-block { margin-top: 20px; padding-top: 18px; border-top: 1px solid #edf1ee; }
+.docx-preview-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.docx-preview-header h3 { margin: 0; color: #44534a; font-size: 12px; font-weight: 750; }
+.docx-preview-header span { color: #8d9a92; font-size: 10px; }
+.docx-preview-text { max-height: 320px; overflow: auto; margin: 0; padding: 14px; border: 1px solid #e8eeea; border-radius: 8px; background: #fafcfb; color: #536259; font: 11px/1.75 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.docx-preview-block .docx-message { margin-bottom: 0; }
+.docx-message { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; padding: 12px 14px; border: 1px solid transparent; border-radius: 8px; font-size: 11px; line-height: 1.6; }
+.docx-message--error { border-color: #f0d6d3; background: #fff8f7; color: #9f5d56; }
+.docx-message--success { border-color: #d8eadf; background: #f4fbf6; color: #327754; }
+.docx-message--info { margin-top: 12px; border-color: #e0eae4; background: #f7faf8; color: #7c8d82; }
+.docx-message strong { font-size: 12px; }
+.docx-message--success span { flex-basis: 100%; }
+.docx-message button { margin: 0; min-height: 32px; }
+@media (max-width: 760px) {
+  .docx-panel { padding: 17px; }
+  .docx-course-form { grid-template-columns: minmax(0, 1fr); }
+  .docx-logout { align-self: flex-start; }
+  .docx-actions { flex-direction: column; align-items: stretch; }
+  .docx-actions button { width: 100%; white-space: normal; }
+}

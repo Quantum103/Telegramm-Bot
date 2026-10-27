@@ -3,6 +3,7 @@ export type Course = {
   slug: string
   title: string
   description?: string
+  status: string
   published_at?: string
   lesson_count: number
 }
@@ -20,8 +21,39 @@ export type Lesson = {
   question_count: number
 }
 
+export type StaffIdentity = {
+  id: number
+  display_name: string
+  email: string
+}
+
+export type StaffSession = {
+  staff: StaffIdentity
+  expires_at: string
+}
+
+export type DOCXPreview = {
+  text: string
+  characters: number
+}
+
+export type ImportedDraftLesson = {
+  id: number
+  course_id: number
+  course_title: string
+  position: number
+  lesson_version_id: number
+  version_number: number
+  title: string
+  description?: string
+  question_count: number
+}
+
 type CoursesResponse = { courses: Course[] }
 type LessonsResponse = { lessons: Lesson[] }
+type StaffLoginResponse = { staff: StaffIdentity }
+type StaffCoursesResponse = { courses: Course[] }
+type APIErrorBody = { error?: string; detail?: string }
 
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, {
@@ -31,30 +63,164 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
     credentials: 'same-origin',
     signal,
   })
-
   if (!response.ok) {
     throw new Error(response.status === 404 ? 'Запрошенные данные не найдены.' : 'Не удалось загрузить данные с сервера.')
   }
-
   return response.json() as Promise<T>
+}
+
+function asAPIErrorBody(value: unknown): APIErrorBody {
+  if (typeof value !== 'object' || value === null) return {}
+  const candidate = value as Record<string, unknown>
+  return {
+    ...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+    ...(typeof candidate.detail === 'string' ? { detail: candidate.detail } : {}),
+  }
+}
+
+function errorMessage(status: number, body: APIErrorBody): string {
+  if (body.error === 'invalid_lesson_document' && body.detail) {
+    return `Структура DOCX не прошла проверку: ${body.detail}`
+  }
+  const messages: Record<string, string> = {
+    invalid_credentials: 'Неверный адрес электронной почты или пароль.',
+    rate_limited: 'Слишком много попыток входа. Повторите попытку позже.',
+    unauthorized: 'Сессия завершена. Войдите в систему ещё раз.',
+    insufficient_permissions: 'Для этого действия нужна роль администратора.',
+    csrf_token_invalid: 'Проверка безопасности не прошла. Перезагрузите страницу и войдите снова.',
+    origin_not_allowed: 'Запрос отклонён проверкой источника. Перезагрузите страницу и повторите попытку.',
+    invalid_request: 'Проверьте введённые данные.',
+    invalid_input: 'Данные не прошли проверку. Проверьте поля и повторите попытку.',
+    not_found: 'Курс не найден.',
+    invalid_state: 'Импорт доступен только в черновой курс.',
+    invalid_docx: 'Не удалось прочитать DOCX. Проверьте файл и его формат.',
+    invalid_multipart: 'Не удалось прочитать загрузку файла. Повторите попытку.',
+    content_type_must_be_multipart: 'Для загрузки нужен файл DOCX.',
+    docx_file_required: 'Выберите файл с расширением .docx.',
+    exactly_one_file_required: 'За один раз можно загрузить только один файл.',
+    file_too_large: 'Файл превышает допустимый размер 8 МБ.',
+    request_too_large: 'Размер запроса превышает допустимый предел.',
+    internal_error: 'На сервере произошла ошибка. Попробуйте позже.',
+    temporarily_unavailable: 'Сервис временно недоступен. Попробуйте позже.',
+  }
+  if (body.error && messages[body.error]) return messages[body.error]
+  if (status === 401) return 'Сессия завершена. Войдите в систему ещё раз.'
+  if (status === 403) return 'Доступ запрещён. Для импорта нужна роль администратора.'
+  if (status === 413) return 'Файл превышает допустимый размер 8 МБ.'
+  if (status === 404) return 'Запрошенный ресурс не найден.'
+  return 'Не удалось выполнить запрос. Попробуйте ещё раз.'
+}
+
+async function readJSONResponse<T>(response: Response): Promise<T> {
+  const value: unknown = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(errorMessage(response.status, asAPIErrorBody(value)))
+  return value as T
+}
+
+function csrfToken(): string {
+  const cookie = document.cookie
+    .split(';')
+    .map((item) => item.trim())
+    .find((item) => item.startsWith('staff_csrf='))
+  if (!cookie || cookie.length === 'staff_csrf='.length) {
+    throw new Error('Не найден токен защиты запроса. Обновите страницу и войдите снова.')
+  }
+  return decodeURIComponent(cookie.slice('staff_csrf='.length))
+}
+
+function csrfHeaders(): Record<string, string> {
+  return { 'X-CSRF-Token': csrfToken() }
 }
 
 export async function listCourses(signal?: AbortSignal): Promise<Course[]> {
   const body = await getJSON<CoursesResponse>('/api/v1/courses', signal)
-  if (!body || !Array.isArray(body.courses)) {
-    throw new Error('Сервер вернул некорректный список курсов.')
-  }
+  if (!body || !Array.isArray(body.courses)) throw new Error('Сервер вернул некорректный список курсов.')
   return body.courses
 }
 
 export async function listCourseLessons(courseID: number, signal?: AbortSignal): Promise<Lesson[]> {
-  if (!Number.isSafeInteger(courseID) || courseID <= 0) {
-    throw new Error('Некорректный идентификатор курса.')
-  }
-
+  if (!Number.isSafeInteger(courseID) || courseID <= 0) throw new Error('Некорректный идентификатор курса.')
   const body = await getJSON<LessonsResponse>(`/api/v1/courses/${courseID}/lessons`, signal)
-  if (!body || !Array.isArray(body.lessons)) {
-    throw new Error('Сервер вернул некорректный список уроков.')
-  }
+  if (!body || !Array.isArray(body.lessons)) throw new Error('Сервер вернул некорректный список уроков.')
   return body.lessons
+}
+
+export async function getStaffSession(signal?: AbortSignal): Promise<StaffSession | null> {
+  const response = await fetch('/api/v1/staff/auth/me', {
+    method: 'GET', headers: { Accept: 'application/json' }, cache: 'no-store',
+    credentials: 'same-origin', signal,
+  })
+  if (response.status === 401) return null
+  return readJSONResponse<StaffSession>(response)
+}
+
+export async function loginStaff(email: string, password: string): Promise<StaffIdentity> {
+  const response = await fetch('/api/v1/staff/auth/login', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ email: email.trim(), password }),
+  })
+  const body = await readJSONResponse<StaffLoginResponse>(response)
+  if (!body?.staff || !Number.isSafeInteger(body.staff.id) || !body.staff.email) {
+    throw new Error('Сервер вернул некорректный ответ входа.')
+  }
+  return body.staff
+}
+
+export async function logoutStaff(): Promise<void> {
+  const response = await fetch('/api/v1/staff/auth/logout', {
+    method: 'POST', headers: { Accept: 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+  })
+  if (response.status === 204) return
+  const body: unknown = await response.json().catch(() => null)
+  throw new Error(errorMessage(response.status, asAPIErrorBody(body)))
+}
+
+export async function listStaffCourses(signal?: AbortSignal): Promise<Course[]> {
+  const response = await fetch('/api/v1/staff/admin/courses', {
+    method: 'GET', headers: { Accept: 'application/json' },
+    cache: 'no-store', credentials: 'same-origin', signal,
+  })
+  const body = await readJSONResponse<StaffCoursesResponse>(response)
+  if (!body || !Array.isArray(body.courses)) {
+    throw new Error('Сервер вернул некорректный список курсов для администратора.')
+  }
+  return body.courses
+}
+
+export async function createStaffDraftCourse(title: string, slug: string): Promise<Course> {
+  const response = await fetch('/api/v1/staff/admin/courses', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ title: title.trim(), slug: slug.trim(), description: null }),
+  })
+  return readJSONResponse<Course>(response)
+}
+
+export async function previewDOCX(file: File): Promise<DOCXPreview> {
+  const form = new FormData()
+  form.append('document', file)
+  const response = await fetch('/api/v1/staff/admin/import/docx/preview', {
+    method: 'POST', headers: { Accept: 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: form,
+  })
+  const body = await readJSONResponse<DOCXPreview>(response)
+  if (typeof body?.text !== 'string' || typeof body.characters !== 'number') {
+    throw new Error('Сервер вернул некорректный предпросмотр документа.')
+  }
+  return body
+}
+
+export async function importDOCXToDraft(courseID: number, file: File): Promise<ImportedDraftLesson> {
+  if (!Number.isSafeInteger(courseID) || courseID <= 0) throw new Error('Выберите черновой курс.')
+  const form = new FormData()
+  form.append('document', file)
+  const response = await fetch(`/api/v1/staff/admin/courses/${courseID}/import/docx`, {
+    method: 'POST', headers: { Accept: 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: form,
+  })
+  return readJSONResponse<ImportedDraftLesson>(response)
 }
