@@ -53,9 +53,9 @@ func run(logger *slog.Logger) error {
 	}
 	if bootstrapResult.Created {
 		if bootstrapResult.GeneratedPassword != "" {
-			logger.Warn("создан первый администратор; сохраните пароль сейчас, повторно он не будет показан",
+			logger.Warn("создан первый администратор; сохраните начальный пароль сейчас, повторно он не будет показан",
 				"email", bootstrapResult.Email,
-				"temporary_password", bootstrapResult.GeneratedPassword,
+				"initial_password", bootstrapResult.GeneratedPassword,
 				"warning", "не публикуйте эти логи и сохраните пароль в менеджере паролей",
 			)
 		} else {
