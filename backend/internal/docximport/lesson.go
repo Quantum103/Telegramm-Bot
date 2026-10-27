@@ -11,7 +11,7 @@ import (
 var (
 	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
 	questionHeaderPattern     = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)$`)
-	bibleReferencePattern    = regexp.MustCompile(`^(.+?)\s+(\d+):(\d+)(?:\s*[-–—]\s*(\d+))?$`)
+	bibleReferencePattern     = regexp.MustCompile(`^(.+?)\s+(\d+):(\d+)(?:\s*[-–—]\s*(\d+))?$`)
 	answerMarkerPattern      = regexp.MustCompile(`^\s*\[\s*(.*?)\s*\]\s*(.*?)\s*$`)
 )
 
