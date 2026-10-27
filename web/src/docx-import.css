@@ -43,3 +43,15 @@
   .docx-actions { flex-direction: column; align-items: stretch; }
   .docx-actions button { width: 100%; white-space: normal; }
 }
+
+.publish-lesson-list { display: grid; border: 1px solid #edf1ee; border-radius: 9px; overflow: hidden; }
+.publish-lesson-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 13px 14px; border-bottom: 1px solid #edf1ee; }
+.publish-lesson-row:last-child { border-bottom: 0; }
+.publish-lesson-copy { display: grid; flex: 1 1 190px; gap: 5px; min-width: 0; }
+.publish-lesson-copy strong { color: #44564b; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.publish-lesson-copy span { color: #91a097; font-size: 10px; }
+.publish-action { min-height: 34px; margin: 0; white-space: nowrap; }
+.publish-hint { flex-basis: 100%; color: #9f7a43; font-size: 10px; }
+.publish-course-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #edf1ee; }
+.publish-course-footer .docx-footnote { flex: 1 1 260px; }
+.publish-course-footer .primary-button { margin: 0; white-space: nowrap; }
