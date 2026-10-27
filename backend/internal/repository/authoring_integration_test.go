@@ -1056,7 +1056,6 @@ func TestUpdateDraftLessonVersionRollsBackWhenAuditInsertFails(t *testing.T) {
 	}
 }
 
-
 func TestImportDraftLessonPersistsAndRollsBackAtomically(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
