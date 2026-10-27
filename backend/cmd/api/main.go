@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/bootstrapadmin"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/config"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/database"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/httpserver"
@@ -41,6 +42,30 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+
+	bootstrapCtx, cancelBootstrap := context.WithTimeout(context.Background(), cfg.Database.ConnectTimeout)
+	bootstrapResult, err := bootstrapadmin.EnsureInitialAdministrator(
+		bootstrapCtx, pool, os.Getenv("BOOTSTRAP_ADMIN_EMAIL"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
+	)
+	cancelBootstrap()
+	if err != nil {
+		return fmt.Errorf("инициализировать первого администратора: %w", err)
+	}
+	if bootstrapResult.Created {
+		if bootstrapResult.GeneratedPassword != "" {
+			logger.Warn("создан первый администратор; сохраните пароль сейчас, повторно он не будет показан",
+				"email", bootstrapResult.Email,
+				"temporary_password", bootstrapResult.GeneratedPassword,
+				"warning", "не публикуйте эти логи и сохраните пароль в менеджере паролей",
+			)
+		} else {
+			logger.Info("создан первый администратор с паролем из BOOTSTRAP_ADMIN_PASSWORD",
+				"email", bootstrapResult.Email,
+			)
+		}
+	} else {
+		logger.Info("первоначальная регистрация администратора пропущена: активный администратор уже существует")
+	}
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB,
