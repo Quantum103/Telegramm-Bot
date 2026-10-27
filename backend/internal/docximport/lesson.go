@@ -307,6 +307,17 @@ func appendTextLine(existing, line string) string {
 }
 
 func validateImportedQuestion(question *QuestionImport) error {
+	question.ExpectedAnswer = strings.TrimSpace(question.ExpectedAnswer)
+	question.bibleReferences = strings.TrimSpace(question.bibleReferences)
+	question.scriptureText = strings.TrimSpace(question.scriptureText)
+	if question.ExpectedExplanation != nil {
+		value := strings.TrimSpace(*question.ExpectedExplanation)
+		question.ExpectedExplanation = &value
+	}
+	if question.Note != nil {
+		value := strings.TrimSpace(*question.Note)
+		question.Note = &value
+	}
 	for field, value := range map[string]string{
 		"Библейские ссылки":    question.bibleReferences,
 		"Текст Писания":        question.scriptureText,
