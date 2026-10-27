@@ -32,6 +32,20 @@ export type StaffSession = {
   expires_at: string
 }
 
+export type StaffLesson = {
+  id: number
+  course_id: number
+  course_title: string
+  position: number
+  lesson_version_id: number
+  version_number: number
+  version_status: 'draft' | 'published' | 'archived'
+  title: string
+  description?: string
+  published_at?: string
+  question_count: number
+}
+
 export type DOCXPreview = {
   text: string
   characters: number
@@ -53,6 +67,7 @@ type CoursesResponse = { courses: Course[] }
 type LessonsResponse = { lessons: Lesson[] }
 type StaffLoginResponse = { staff: StaffIdentity }
 type StaffCoursesResponse = { courses: Course[] }
+type StaffLessonsResponse = { lessons: StaffLesson[] }
 type APIErrorBody = { error?: string; detail?: string }
 
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -198,6 +213,36 @@ export async function createStaffDraftCourse(title: string, slug: string): Promi
     body: JSON.stringify({ title: title.trim(), slug: slug.trim(), description: null }),
   })
   return readJSONResponse<Course>(response)
+}
+
+export async function listStaffLessonsForCourse(courseID: number, signal?: AbortSignal): Promise<StaffLesson[]> {
+  if (!Number.isSafeInteger(courseID) || courseID <= 0) throw new Error('Некорректный идентификатор курса.')
+  const body = await readJSONResponse<StaffLessonsResponse>(await fetch(
+    `/api/v1/staff/admin/courses/${courseID}/lessons`,
+    { method: 'GET', headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin', signal },
+  ))
+  if (!body || !Array.isArray(body.lessons)) throw new Error('Сервер вернул некорректный список уроков курса.')
+  return body.lessons
+}
+
+export async function publishStaffLessonVersion(versionID: number): Promise<void> {
+  if (!Number.isSafeInteger(versionID) || versionID <= 0) throw new Error('Некорректный идентификатор версии урока.')
+  const response = await fetch(`/api/v1/staff/admin/lesson-versions/${versionID}/publish`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: '{}',
+  })
+  await readJSONResponse<unknown>(response)
+}
+
+export async function publishStaffCourse(courseID: number): Promise<void> {
+  if (!Number.isSafeInteger(courseID) || courseID <= 0) throw new Error('Некорректный идентификатор курса.')
+  const response = await fetch(`/api/v1/staff/admin/courses/${courseID}/publish`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: '{}',
+  })
+  await readJSONResponse<unknown>(response)
 }
 
 export async function previewDOCX(file: File): Promise<DOCXPreview> {
