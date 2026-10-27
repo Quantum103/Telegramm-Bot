@@ -226,3 +226,139 @@ func TestStaffDOCXImportParsesLessonAndSavesDraft(t *testing.T) {
 		t.Fatal("import response must not be cacheable")
 	}
 }
+
+
+func TestStaffDOCXImportPreservesMultipleChoiceAndFreeTextQuestions(t *testing.T) {
+	const mixedXML = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>Название урока: Разные типы вопросов</w:t></w:r></w:p>
+<w:p><w:r><w:t>Вводный текст: Вводная часть.</w:t></w:r></w:p>
+<w:p><w:r><w:t>Вопрос 2: Для чего изучать Слово Божье?</w:t></w:r></w:p>
+<w:p><w:r><w:t>Библейские ссылки: 2 Тимофею 3:16–17</w:t></w:r></w:p>
+<w:p><w:r><w:t>Текст Писания: Всё Писание богодухновенно и полезно.</w:t></w:r></w:p>
+<w:p><w:r><w:t>Пометка: Для ведущего.</w:t></w:r></w:p>
+<w:p><w:r><w:t>[] Чтобы чувствовать постоянный страх</w:t></w:r></w:p>
+<w:p><w:r><w:t>[правильные ответы] Чтобы совершенствоваться</w:t></w:r></w:p>
+<w:p><w:r><w:t>[правильные ответы] Чтобы быть готовыми к добрым делам</w:t></w:r></w:p>
+<w:p><w:r><w:t>Объяснение: Писание помогает подготовиться к добрым делам.</w:t></w:r></w:p>
+<w:p><w:r><w:t>Вопрос 3: Какой силой были наделены пророки?</w:t></w:r></w:p>
+<w:p><w:r><w:t>Библейские ссылки: 2 Петра 1:21</w:t></w:r></w:p>
+<w:p><w:r><w:t>Текст Писания: Изрекали его святые Божии человеки, будучи движимы Духом Святым.</w:t></w:r></w:p>
+<w:p><w:r><w:t>Предполагаемый ответ: Святые люди Божьи были движимы Духом Святым.</w:t></w:r></w:p>
+<w:p><w:r><w:t>Объяснение: Ответ следует из текста стиха.</w:t></w:r></w:p>
+</w:body></w:document>`
+	api := &fakeStaffAuthAPI{authIdentity: domain.StaffSessionIdentity{
+		StaffID: 7, DisplayName: "Admin", Email: "admin@example.test",
+		Roles: []string{"administrator"}, CSRFTokenHash: auth.HashToken("csrf-token"),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	authoring := &fakeStaffAuthoringAPI{importLessonResult: domain.Lesson{
+		ID: 51, CourseID: 12, LessonVersionID: 52, VersionNumber: 1,
+		Title: "Разные типы вопросов", QuestionCount: 2,
+	}}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, api, authoring, nil, true,
+	)
+	body, contentType := previewMultipart(t, "mixed-lesson.docx", docxBytes(t, mixedXML))
+	request := httptest.NewRequest(
+		http.MethodPost, "https://admin.example.test/api/v1/staff/admin/courses/12/import/docx", body,
+	)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Origin", "https://admin.example.test")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+	if authoring.importLessonCalls != 1 {
+		t.Fatalf("ImportDraftLesson calls = %d, want 1", authoring.importLessonCalls)
+	}
+	got := authoring.importLessonParams
+	if got.Title != "Разные типы вопросов" || got.Description == nil ||
+		*got.Description != "Вводная часть." || len(got.Questions) != 2 {
+		t.Fatalf("unexpected imported lesson metadata: %+v", got)
+	}
+
+	multiple := got.Questions[0]
+	if multiple.Number != 2 || multiple.AnswerType != "multiple_choice" ||
+		multiple.ExpectedAnswer != "" || multiple.Note == nil || *multiple.Note != "Для ведущего." ||
+		multiple.ExpectedExplanation == nil ||
+		*multiple.ExpectedExplanation != "Писание помогает подготовиться к добрым делам." ||
+		len(multiple.Options) != 3 || multiple.Options[0].IsCorrect ||
+		!multiple.Options[1].IsCorrect || !multiple.Options[2].IsCorrect {
+		t.Fatalf("unexpected multiple-choice question: %+v", multiple)
+	}
+	if len(multiple.BiblePassages) != 1 ||
+		multiple.BiblePassages[0].BookName != "2 Тимофею" ||
+		multiple.BiblePassages[0].Chapter != 3 ||
+		multiple.BiblePassages[0].StartVerse != 16 ||
+		multiple.BiblePassages[0].EndVerse != 17 ||
+		multiple.BiblePassages[0].PassageText == nil ||
+		*multiple.BiblePassages[0].PassageText != "Всё Писание богодухновенно и полезно." {
+		t.Fatalf("unexpected multiple-choice Bible passage: %+v", multiple.BiblePassages)
+	}
+
+	freeText := got.Questions[1]
+	if freeText.Number != 3 || freeText.AnswerType != "text" ||
+		freeText.ExpectedAnswer != "Святые люди Божьи были движимы Духом Святым." ||
+		len(freeText.Options) != 0 ||
+		freeText.ExpectedExplanation == nil ||
+		*freeText.ExpectedExplanation != "Ответ следует из текста стиха." {
+		t.Fatalf("unexpected free-text question: %+v", freeText)
+	}
+	if len(freeText.BiblePassages) != 1 ||
+		freeText.BiblePassages[0].BookName != "2 Петра" ||
+		freeText.BiblePassages[0].Chapter != 1 ||
+		freeText.BiblePassages[0].StartVerse != 21 ||
+		freeText.BiblePassages[0].EndVerse != 21 {
+		t.Fatalf("unexpected free-text Bible passage: %+v", freeText.BiblePassages)
+	}
+}
+
+func TestStaffDOCXImportRejectsInvalidLessonWithoutPersistence(t *testing.T) {
+	const invalidXML = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>Название урока: Урок без вопросов</w:t></w:r></w:p>
+</w:body></w:document>`
+	api := &fakeStaffAuthAPI{authIdentity: domain.StaffSessionIdentity{
+		StaffID: 7, DisplayName: "Admin", Email: "admin@example.test",
+		Roles: []string{"administrator"}, CSRFTokenHash: auth.HashToken("csrf-token"),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	authoring := &fakeStaffAuthoringAPI{}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, api, authoring, nil, true,
+	)
+	body, contentType := previewMultipart(t, "invalid-lesson.docx", docxBytes(t, invalidXML))
+	request := httptest.NewRequest(
+		http.MethodPost, "https://admin.example.test/api/v1/staff/admin/courses/12/import/docx", body,
+	)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Origin", "https://admin.example.test")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "session"})
+	request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: "csrf-token"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if authoring.importLessonCalls != 0 {
+		t.Fatalf("invalid lesson triggered ImportDraftLesson %d times, want 0", authoring.importLessonCalls)
+	}
+	var response staffDOCXImportErrorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != "invalid_lesson_document" || response.Detail == "" {
+		t.Fatalf("unexpected validation error: %+v", response)
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("validation error response must not be cacheable")
+	}
+}
