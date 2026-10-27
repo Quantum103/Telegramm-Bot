@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
-  createStaffDraftCourse, importDOCXToDraft, listStaffCourses, previewDOCX,
-  type Course, type DOCXPreview, type ImportedDraftLesson, type StaffIdentity,
+  createStaffDraftCourse, importDOCXToDraft, listStaffCourses, listStaffLessonsForCourse,
+  previewDOCX, publishStaffCourse, publishStaffLessonVersion,
+  type Course, type DOCXPreview, type ImportedDraftLesson, type StaffIdentity, type StaffLesson,
 } from './api'
 import './docx-import.css'
 
@@ -18,6 +19,14 @@ export default function DocxImportPage({ staff, onSessionExpired }: { staff: Sta
   const [coursesRevision, setCoursesRevision] = useState(0)
   const draftCourses = useMemo(() => courses.filter((item) => item.status === 'draft'), [courses])
   const [selectedCourseID, setSelectedCourseID] = useState<number | null>(null)
+  const [courseLessons, setCourseLessons] = useState<StaffLesson[]>([])
+  const [lessonsState, setLessonsState] = useState<RequestState>('idle')
+  const [lessonsError, setLessonsError] = useState('')
+  const [lessonsRevision, setLessonsRevision] = useState(0)
+  const [publishingLessonVersionID, setPublishingLessonVersionID] = useState<number | null>(null)
+  const [publishingCourse, setPublishingCourse] = useState(false)
+  const [publishMessage, setPublishMessage] = useState('')
+  const [publishError, setPublishError] = useState('')
 
   const [courseTitle, setCourseTitle] = useState('')
   const [courseSlug, setCourseSlug] = useState('')
@@ -57,6 +66,70 @@ export default function DocxImportPage({ staff, onSessionExpired }: { staff: Sta
     })
     return () => controller.abort()
   }, [staff, coursesRevision, onSessionExpired])
+
+  useEffect(() => {
+    if (!staff || coursesState !== 'loaded' || selectedCourseID === null ||
+      !draftCourses.some((course) => course.id === selectedCourseID)) {
+      setCourseLessons([])
+      setLessonsState('idle')
+      setLessonsError('')
+      return
+    }
+    const controller = new AbortController()
+    setLessonsState('loading')
+    setLessonsError('')
+    void listStaffLessonsForCourse(selectedCourseID, controller.signal).then((items) => {
+      if (controller.signal.aborted) return
+      setCourseLessons(items)
+      setLessonsState('loaded')
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      const message = errorText(error, 'Не удалось загрузить уроки курса.')
+      setLessonsError(message)
+      setLessonsState('error')
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    })
+    return () => controller.abort()
+  }, [staff, coursesState, selectedCourseID, draftCourses, lessonsRevision, onSessionExpired])
+
+  async function handlePublishLesson(lesson: StaffLesson) {
+    if (lesson.version_status !== 'draft' || lesson.question_count < 1) return
+    setPublishingLessonVersionID(lesson.lesson_version_id)
+    setPublishMessage('')
+    setPublishError('')
+    try {
+      await publishStaffLessonVersion(lesson.lesson_version_id)
+      setPublishMessage(`Урок «${lesson.title}» опубликован. Теперь можно опубликовать курс.`)
+      setLessonsRevision((revision) => revision + 1)
+      setCoursesRevision((revision) => revision + 1)
+    } catch (error: unknown) {
+      const message = errorText(error, 'Не удалось опубликовать урок.')
+      setPublishError(message)
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    } finally {
+      setPublishingLessonVersionID(null)
+    }
+  }
+
+  async function handlePublishCourse() {
+    if (selectedCourseID === null || !courseLessons.some((lesson) => lesson.version_status === 'published')) return
+    const currentCourse = courses.find((course) => course.id === selectedCourseID)
+    if (!currentCourse || currentCourse.status !== 'draft') return
+    setPublishingCourse(true)
+    setPublishMessage('')
+    setPublishError('')
+    try {
+      await publishStaffCourse(selectedCourseID)
+      setPublishMessage(`Курс «${currentCourse.title}» опубликован и теперь доступен ученикам.`)
+      setCoursesRevision((revision) => revision + 1)
+    } catch (error: unknown) {
+      const message = errorText(error, 'Не удалось опубликовать курс.')
+      setPublishError(message)
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    } finally {
+      setPublishingCourse(false)
+    }
+  }
 
   function chooseFile(next: File | null) {
     setFile(next)
@@ -200,6 +273,28 @@ export default function DocxImportPage({ staff, onSessionExpired }: { staff: Sta
         <p className="docx-message docx-message--info">Текст извлечён. Окончательная проверка структуры выполняется при импорте.</p>
       </div>}
     </div>
+
+    {publishError && <p className="docx-message docx-message--error" role="alert">{publishError}</p>}
+    {publishMessage && <p className="docx-message docx-message--success" role="status">{publishMessage}</p>}
+
+    {coursesState === 'loaded' && selectedCourseID !== null && draftCourses.some((course) => course.id === selectedCourseID) && <div className="panel docx-panel">
+      <div className="docx-panel-heading"><div><h2>Публикация курса</h2><p>Сначала опубликуйте хотя бы один урок после проверки его вопросов, затем опубликуйте сам курс.</p></div><span className="soft-pill">Черновик</span></div>
+      {lessonsState === 'loading' && <p className="catalog-message" role="status">Загружаем уроки курса…</p>}
+      {lessonsState === 'error' && <div className="catalog-error" role="alert"><span>{lessonsError}</span><button className="secondary-button" type="button" onClick={() => setLessonsRevision((revision) => revision + 1)}>Повторить</button></div>}
+      {lessonsState === 'loaded' && courseLessons.length === 0 && <p className="catalog-message">В этом курсе пока нет уроков. Сначала импортируйте DOCX.</p>}
+      {lessonsState === 'loaded' && courseLessons.length > 0 && <div className="publish-lesson-list">
+        {courseLessons.map((lesson) => <div className="publish-lesson-row" key={lesson.lesson_version_id}>
+          <div className="publish-lesson-copy"><strong>{lesson.title}</strong><span>Версия {lesson.version_number} · {lesson.question_count} вопросов</span></div>
+          <span className={'course-state course-state--' + lesson.version_status}>{lesson.version_status === 'published' ? 'Опубликован' : lesson.version_status === 'draft' ? 'Черновик' : 'Архив'}</span>
+          {lesson.version_status === 'draft' && <button className="secondary-button publish-action" type="button" disabled={lesson.question_count < 1 || publishingLessonVersionID !== null || publishingCourse} onClick={() => void handlePublishLesson(lesson)}>{publishingLessonVersionID === lesson.lesson_version_id ? 'Публикуем…' : 'Опубликовать урок'}</button>}
+          {lesson.version_status === 'draft' && lesson.question_count < 1 && <span className="publish-hint">Добавьте хотя бы один вопрос</span>}
+        </div>)}
+      </div>}
+      <div className="publish-course-footer">
+        <p className="docx-footnote">Курс можно опубликовать, когда в нём есть хотя бы один опубликованный урок. Публикация не удаляет черновики.</p>
+        <button className="primary-button" type="button" disabled={publishingCourse || publishingLessonVersionID !== null || !courseLessons.some((lesson) => lesson.version_status === 'published') || lessonsState !== 'loaded'} onClick={() => void handlePublishCourse()}>{publishingCourse ? 'Публикуем курс…' : 'Опубликовать курс'}</button>
+      </div>
+    </div>}
 
     {importedLesson && <div className="docx-message docx-message--success" role="status">
       <strong>Черновик сохранён: {importedLesson.title}</strong>
