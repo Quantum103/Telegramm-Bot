@@ -135,6 +135,73 @@ func TestParseLessonAllowsOptionalQuestionFields(t *testing.T) {
 	}
 }
 
+func TestParseLessonSupportsFormattedDOCXStructure(t *testing.T) {
+	input := `# Урок 01. Библия — забытое сокровище
+
+## Введение: Библия — сокровище, которое стоит открыть
+Этот вводный раздел помогает понять ценность Писания.
+Здесь может быть второй абзац.
+
+## Вопрос 1: Что, по словам Христа, является истиной?
+**Библейские ссылки:** Иоанна 17:17
+**Текст Писания:** Освяти их истиною Твоею; слово Твое есть истина.
+[] Учение церкви
+[правильный ответ] Слово Божье
+
+## Вопрос 2: Для чего нам предлагается изучать Слово Божье?
+**Библейские ссылки:** 2 Тимофею 3:16–17
+**Пометка:** Используйте обе подходящие формулировки.
+[] Чтобы чувствовать постоянный страх
+[правильные ответы] Чтобы совершенствоваться
+[правильные ответы] Чтобы быть готовыми к добрым делам
+
+## Вопрос 3: Какой силой были наделены пророки Господни?
+**Предполагаемый ответ:** Святые люди Божьи были движимы Духом Святым.
+**Объяснение:** Священное Писание объясняет происхождение пророчества.`
+
+	got, err := ParseLesson(input)
+	if err != nil {
+		t.Fatalf("ParseLesson() error = %v", err)
+	}
+	if got.Title != "Библия — забытое сокровище" {
+		t.Fatalf("title = %q", got.Title)
+	}
+	if got.Description == nil ||
+		!strings.Contains(*got.Description, "Библия — сокровище, которое стоит открыть") ||
+		!strings.Contains(*got.Description, "Этот вводный раздел помогает понять ценность Писания.") ||
+		!strings.Contains(*got.Description, "Здесь может быть второй абзац.") {
+		t.Fatalf("introduction was not preserved: %v", got.Description)
+	}
+	if len(got.Questions) != 3 {
+		t.Fatalf("questions = %d, want 3", len(got.Questions))
+	}
+	if q := got.Questions[0]; q.AnswerType != "single_choice" ||
+		len(q.Options) != 2 || q.Options[0].IsCorrect || !q.Options[1].IsCorrect ||
+		len(q.BiblePassages) != 1 || q.BiblePassages[0].Reference != "Иоанна 17:17" {
+		t.Fatalf("single-choice question was not parsed correctly: %+v", q)
+	}
+	if q := got.Questions[1]; q.AnswerType != "multiple_choice" ||
+		len(q.Options) != 3 || q.Options[0].IsCorrect || !q.Options[1].IsCorrect || !q.Options[2].IsCorrect ||
+		q.Note == nil || *q.Note != "Используйте обе подходящие формулировки." {
+		t.Fatalf("multiple-choice question was not parsed correctly: %+v", q)
+	}
+	if q := got.Questions[2]; q.AnswerType != "text" || len(q.Options) != 0 ||
+		q.ExpectedAnswer != "Святые люди Божьи были движимы Духом Святым." ||
+		q.ExpectedExplanation == nil || *q.ExpectedExplanation != "Священное Писание объясняет происхождение пророчества." {
+		t.Fatalf("free-text question was not parsed correctly: %+v", q)
+	}
+}
+
+func TestParseLessonDecodesHTMLCharacterEntities(t *testing.T) {
+	got, err := ParseLesson("Урок 01. Библия &#x2014; сокровище\nВопрос 1: Что такое истина?\nПредполагаемый ответ: Слово Божье.")
+	if err != nil {
+		t.Fatalf("ParseLesson() error = %v", err)
+	}
+	if got.Title != "Библия — сокровище" {
+		t.Fatalf("title = %q, want decoded entity", got.Title)
+	}
+}
+
 func TestParseLessonRejectsInvalidDocuments(t *testing.T) {
 	tests := []struct {
 		name string
@@ -146,6 +213,7 @@ func TestParseLessonRejectsInvalidDocuments(t *testing.T) {
 		{"duplicate question number", "Название урока: Тест\nВопрос 1: Первый\nПредполагаемый ответ: Ответ\nВопрос 1: Второй\nПредполагаемый ответ: Ответ", "повторяется"},
 		{"missing prompt", "Название урока: Тест\nВопрос 1:\nПредполагаемый ответ: Ответ", "формулировка"},
 		{"no correct answer", "Название урока: Тест\nВопрос 1: Выберите\n[] Первый\n[] Второй", "нет правильного ответа"},
+		{"one correct multiple-choice answer", "Название урока: Тест\nВопрос 1: Выберите\n[правильные ответы] Первый\n[] Второй", "не менее двух правильных ответов"},
 		{"multiple correct answers for single choice", "Название урока: Тест\nВопрос 1: Выберите\n[правильный ответ] Первый\n[правильный ответ] Второй", "несколько правильных"},
 		{"mixed markers", "Название урока: Тест\nВопрос 1: Выберите\n[правильный ответ] Первый\n[правильные ответы] Второй", "смешаны маркеры"},
 		{"empty option", "Название урока: Тест\nВопрос 1: Выберите\n[правильный ответ] ", "вариант ответа пуст"},

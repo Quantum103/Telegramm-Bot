@@ -3,6 +3,7 @@ package docximport
 import (
 	"errors"
 	"fmt"
+	"html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10,7 +11,36 @@ import (
 
 var (
 	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
-	questionHeaderPattern     = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)$`)
+	questionHeaderPattern     = regexp.MustCompile(`^Вопрос\s+([^:]+):\s*(.*)package docximport
+
+import (
+	"errors"
+	"fmt"
+	"html"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var (
+	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
+	)
+	lessonTitlePrefixPattern  = regexp.MustCompile(`(?i)^Урок\s+\d+\s*[.:—–-]?\s*`)
+	markdownHeadingPattern    = regexp.MustCompile(`^#{1,6}\s+`)
+	introHeaderPattern        = regexp.MustCompile(`(?i)^Введение(?:\s*:\s*(.*))?package docximport
+
+import (
+	"errors"
+	"fmt"
+	"html"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var (
+	ErrInvalidLessonStructure = errors.New("invalid lesson document structure")
+	)
 	bibleReferencePattern     = regexp.MustCompile(`^(.+?)\s+(\d+):(\d+)(?:\s*[-–—]\s*(\d+))?$`)
 	answerMarkerPattern       = regexp.MustCompile(`^\s*\[\s*(.*?)\s*\]\s*(.*?)\s*$`)
 )
@@ -98,7 +128,7 @@ func ParseLesson(text string) (LessonImport, error) {
 	}
 
 	for lineIndex, rawLine := range lines {
-		line := strings.TrimSpace(rawLine)
+		line := normalizeDOCXLine(rawLine)
 		if line == "" {
 			if current != nil && currentField != "" {
 				appendQuestionFieldLine(current, currentField, "")
@@ -121,15 +151,35 @@ func ParseLesson(text string) (LessonImport, error) {
 			continue
 		}
 
+		// Обычный DOCX использует визуальный заголовок «Урок 01. ...» без текстовой метки.
+		if !titleSeen && !introSeen && current == nil && len(result.Questions) == 0 {
+			title := strings.TrimSpace(lessonTitlePrefixPattern.ReplaceAllString(line, ""))
+			if title != line {
+				if title == "" || len(title) > maxLessonTitleBytes {
+					return LessonImport{}, lessonError(0, "название урока отсутствует или превышает допустимую длину")
+				}
+				result.Title = title
+				titleSeen = true
+				continue
+			}
+		}
+
+		introValue, isIntroHeader := "", false
 		if strings.HasPrefix(line, "Вводный текст:") {
+			introValue = strings.TrimSpace(strings.TrimPrefix(line, "Вводный текст:"))
+			isIntroHeader = true
+		} else if match := introHeaderPattern.FindStringSubmatch(line); match != nil {
+			introValue = strings.TrimSpace(match[1])
+			isIntroHeader = true
+		}
+		if isIntroHeader {
 			if !titleSeen || introSeen || current != nil || len(result.Questions) > 0 {
 				return LessonImport{}, lessonError(0, "поле «Вводный текст» повторяется или расположено неверно")
 			}
 			introSeen = true
 			introEnded = false
-			value := strings.TrimSpace(strings.TrimPrefix(line, "Вводный текст:"))
-			if value != "" {
-				intro = append(intro, value)
+			if introValue != "" {
+				intro = append(intro, introValue)
 			}
 			continue
 		}
@@ -255,6 +305,17 @@ func ParseLesson(text string) (LessonImport, error) {
 	return result, nil
 }
 
+func normalizeDOCXLine(raw string) string {
+	line := strings.TrimSpace(html.UnescapeString(raw))
+	line = markdownHeadingPattern.ReplaceAllString(line, "")
+	line = strings.TrimSpace(line)
+	// Поддерживаем текст, скопированный из Markdown-представления исходного DOCX.
+	line = strings.ReplaceAll(line, "**", "")
+	line = strings.ReplaceAll(line, "__", "")
+	line = strings.ReplaceAll(line, "\u00a0", " ")
+	return strings.TrimSpace(line)
+}
+
 func parseQuestionField(line string) (name, value string, ok bool) {
 	fields := []string{
 		"Библейские ссылки:",
@@ -364,6 +425,9 @@ func validateImportedQuestion(question *QuestionImport) error {
 		case "multiple_choice":
 			if correct == 0 {
 				return lessonError(question.Number, "у вопроса с множественным выбором нет правильного ответа")
+			}
+			if correct < 2 {
+				return lessonError(question.Number, "у вопроса с множественным выбором должно быть не менее двух правильных ответов")
 			}
 		default:
 			return lessonError(question.Number, "у вопроса с вариантами ответа нет правильного ответа")

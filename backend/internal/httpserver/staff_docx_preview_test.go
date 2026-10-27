@@ -227,7 +227,6 @@ func TestStaffDOCXImportParsesLessonAndSavesDraft(t *testing.T) {
 	}
 }
 
-
 func TestStaffDOCXImportPreservesMultipleChoiceAndFreeTextQuestions(t *testing.T) {
 	const mixedXML = `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
