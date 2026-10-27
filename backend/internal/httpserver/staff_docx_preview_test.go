@@ -176,7 +176,6 @@ func TestStaffDOCXPreviewRequiresMultipartContentType(t *testing.T) {
 	}
 }
 
-
 func TestStaffDOCXImportParsesLessonAndSavesDraft(t *testing.T) {
 	api := &fakeStaffAuthAPI{authIdentity: domain.StaffSessionIdentity{
 		StaffID: 7, DisplayName: "Admin", Email: "admin@example.test",

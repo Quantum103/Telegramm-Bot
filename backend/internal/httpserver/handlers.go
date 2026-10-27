@@ -84,7 +84,7 @@ type staffQuestionResponse struct {
 	Prompt              string                        `json:"prompt"`
 	ExpectedAnswer      string                        `json:"expected_answer"`
 	AnswerType          string                        `json:"answer_type"`
-	ExpectedExplanation *string                       `json:"expected_explanation,omitempty"`	
+	ExpectedExplanation *string                       `json:"expected_explanation,omitempty"`
 	Note                *string                       `json:"note,omitempty"`
 	Criteria            []domain.QuestionCriterion    `json:"criteria"`
 	Options             []staffQuestionOptionResponse `json:"options"`
@@ -428,7 +428,7 @@ func (h handlers) staffListQuestionsForVersion(w http.ResponseWriter, r *http.Re
 			QuestionNumber: question.QuestionNumber, Prompt: question.Prompt,
 			ExpectedAnswer: question.ExpectedAnswer, AnswerType: question.AnswerType,
 			ExpectedExplanation: question.ExpectedExplanation, Note: question.Note,
-			Criteria:            question.Criteria, Options: make([]staffQuestionOptionResponse, 0, len(question.Options)),
+			Criteria: question.Criteria, Options: make([]staffQuestionOptionResponse, 0, len(question.Options)),
 			CommonMistakes: question.CommonMistakes, BiblePassages: question.BiblePassages,
 			CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
 		}
