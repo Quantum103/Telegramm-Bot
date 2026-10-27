@@ -1148,7 +1148,7 @@ func TestImportDraftLessonPersistsAndRollsBackAtomically(t *testing.T) {
 		t.Fatalf("некорректный импортированный урок: %+v", imported)
 	}
 
-	questions, err := NewCatalogRepository(pool).ListQuestionsForStaffVersion(ctx, imported.LessonVersionID)
+	questions, err := NewContentRepository(pool).ListQuestionsForStaffVersion(ctx, imported.LessonVersionID)
 	if err != nil {
 		t.Fatalf("прочитать импортированные вопросы: %v", err)
 	}
