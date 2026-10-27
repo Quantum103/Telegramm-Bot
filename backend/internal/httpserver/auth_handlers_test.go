@@ -527,6 +527,10 @@ type fakeStaffAuthoringAPI struct {
 	createLessonParams             domain.CreateLessonParams
 	createLessonResult             domain.Lesson
 	createLessonErr                error
+	importLessonCalls              int
+	importLessonParams             domain.ImportDraftLessonParams
+	importLessonResult             domain.Lesson
+	importLessonErr                error
 	updateLessonVersionCalls       int
 	updateLessonVersionID          int64
 	updateLessonVersionTitle       string
@@ -595,6 +599,12 @@ func (f *fakeStaffAuthoringAPI) CreateDraftLesson(_ context.Context, params doma
 	f.createLessonCalls++
 	f.createLessonParams = params
 	return f.createLessonResult, f.createLessonErr
+}
+
+func (f *fakeStaffAuthoringAPI) ImportDraftLesson(_ context.Context, params domain.ImportDraftLessonParams) (domain.Lesson, error) {
+	f.importLessonCalls++
+	f.importLessonParams = params
+	return f.importLessonResult, f.importLessonErr
 }
 
 func (f *fakeStaffAuthoringAPI) UpdateDraftLessonVersion(_ context.Context, versionID int64, title string, description *string, staffID int64) error {

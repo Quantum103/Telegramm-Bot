@@ -54,6 +54,7 @@ type StaffAuthoringAPI interface {
 	UpdateDraftLessonVersion(context.Context, int64, string, *string, int64) error
 	CreateDraftRevision(context.Context, int64, int64) (domain.Lesson, error)
 	CreateQuestion(context.Context, domain.CreateQuestionParams) (domain.LessonQuestion, error)
+	ImportDraftLesson(context.Context, domain.ImportDraftLessonParams) (domain.Lesson, error)
 	UpdateQuestion(context.Context, int64, domain.CreateQuestionParams, int64) (domain.LessonQuestion, error)
 	PublishLessonVersion(context.Context, int64, int64) error
 	PublishCourse(context.Context, int64, int64) error
@@ -83,7 +84,8 @@ type staffQuestionResponse struct {
 	Prompt              string                        `json:"prompt"`
 	ExpectedAnswer      string                        `json:"expected_answer"`
 	AnswerType          string                        `json:"answer_type"`
-	ExpectedExplanation *string                       `json:"expected_explanation,omitempty"`
+	ExpectedExplanation *string                       `json:"expected_explanation,omitempty"`	
+	Note                *string                       `json:"note,omitempty"`
 	Criteria            []domain.QuestionCriterion    `json:"criteria"`
 	Options             []staffQuestionOptionResponse `json:"options"`
 	CommonMistakes      []domain.CommonMistake        `json:"common_mistakes"`
@@ -140,6 +142,7 @@ type staffCreateQuestionRequest struct {
 	ExpectedAnswer      string                          `json:"expected_answer"`
 	AnswerType          string                          `json:"answer_type"`
 	ExpectedExplanation *string                         `json:"expected_explanation"`
+	Note                *string                         `json:"note"`
 	Criteria            []domain.QuestionCriterionInput `json:"criteria"`
 	Options             []domain.QuestionOptionInput    `json:"options"`
 	CommonMistakes      []domain.CommonMistake          `json:"common_mistakes"`
@@ -248,6 +251,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 		staffAdminMux := http.NewServeMux()
 		if h.authoring != nil {
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/import/docx/preview", h.staffPreviewDOCX)
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/courses/{courseID}/import/docx", h.staffImportDOCX)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/staff/{staffID}/roles", h.staffAssignRole)
 			staffAdminMux.HandleFunc("DELETE /api/v1/staff/admin/staff/{staffID}/roles/{roleCode}", h.staffRevokeRole)
 			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/courses", h.staffListCourses)
@@ -423,7 +427,7 @@ func (h handlers) staffListQuestionsForVersion(w http.ResponseWriter, r *http.Re
 			ID: question.ID, LessonVersionID: question.LessonVersionID,
 			QuestionNumber: question.QuestionNumber, Prompt: question.Prompt,
 			ExpectedAnswer: question.ExpectedAnswer, AnswerType: question.AnswerType,
-			ExpectedExplanation: question.ExpectedExplanation,
+			ExpectedExplanation: question.ExpectedExplanation, Note: question.Note,
 			Criteria:            question.Criteria, Options: make([]staffQuestionOptionResponse, 0, len(question.Options)),
 			CommonMistakes: question.CommonMistakes, BiblePassages: question.BiblePassages,
 			CreatedAt: question.CreatedAt, UpdatedAt: question.UpdatedAt,
@@ -624,7 +628,7 @@ func (h handlers) staffCreateQuestion(w http.ResponseWriter, r *http.Request) {
 	question, err := h.authoring.CreateQuestion(r.Context(), domain.CreateQuestionParams{
 		LessonVersionID: versionID,
 		QuestionNumber:  input.QuestionNumber, Prompt: input.Prompt, ExpectedAnswer: input.ExpectedAnswer,
-		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation,
+		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation, Note: input.Note,
 		Criteria: input.Criteria, Options: input.Options, CommonMistakes: input.CommonMistakes,
 		BiblePassages: input.BiblePassages, CreatedByStaffID: identity.StaffID,
 	})
@@ -673,7 +677,7 @@ func (h handlers) staffUpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	question, err := h.authoring.UpdateQuestion(r.Context(), questionID, domain.CreateQuestionParams{
 		LessonVersionID: versionID,
 		QuestionNumber:  input.QuestionNumber, Prompt: input.Prompt, ExpectedAnswer: input.ExpectedAnswer,
-		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation,
+		AnswerType: input.AnswerType, ExpectedExplanation: input.ExpectedExplanation, Note: input.Note,
 		Criteria: input.Criteria, Options: input.Options, CommonMistakes: input.CommonMistakes,
 		BiblePassages: input.BiblePassages,
 	}, identity.StaffID)
