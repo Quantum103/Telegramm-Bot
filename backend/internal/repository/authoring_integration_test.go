@@ -1055,3 +1055,165 @@ func TestUpdateDraftLessonVersionRollsBackWhenAuditInsertFails(t *testing.T) {
 		t.Fatalf("failed update left %d update audit events, want 0", auditCount)
 	}
 }
+
+
+func TestImportDraftLessonPersistsAndRollsBackAtomically(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	prefix := fmt.Sprintf("docx-import-%d", time.Now().UnixNano())
+	var staffID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, account_status)
+		VALUES ('DOCX importer', $1, 'active')
+		RETURNING id
+	`, prefix+"@example.test").Scan(&staffID); err != nil {
+		t.Fatalf("создать сотрудника для импорта: %v", err)
+	}
+	authoring := service.NewAuthoringService(NewCatalogRepository(pool))
+	course, err := authoring.CreateDraftCourse(ctx, domain.CreateCourseParams{
+		Slug: prefix, Title: "Курс для DOCX-импорта", CreatedByStaffID: staffID,
+	})
+	if err != nil {
+		t.Fatalf("создать курс для импорта: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		lessonIDs := queryIDsForImportCleanup(t, pool, cleanupCtx,
+			"SELECT lesson_id FROM course_lessons WHERE course_id = $1", course.ID)
+		versionIDs := queryIDsForImportCleanup(t, pool, cleanupCtx,
+			"SELECT id FROM lesson_versions WHERE lesson_id = ANY($1::bigint[])", lessonIDs)
+		questionIDs := queryIDsForImportCleanup(t, pool, cleanupCtx,
+			"SELECT id FROM lesson_questions WHERE lesson_version_id = ANY($1::bigint[])", versionIDs)
+		passageIDs := queryIDsForImportCleanup(t, pool, cleanupCtx,
+			"SELECT DISTINCT passage_id FROM question_bible_passages WHERE question_id = ANY($1::bigint[])", questionIDs)
+
+		statements := []struct {
+			name string
+			sql  string
+			args []any
+		}{
+			{"аудит", "DELETE FROM audit_events WHERE actor_staff_id = $1", []any{staffID}},
+			{"связи библейских отрывков", "DELETE FROM question_bible_passages WHERE question_id = ANY($1::bigint[])", []any{questionIDs}},
+			{"варианты", "DELETE FROM question_options WHERE question_id = ANY($1::bigint[])", []any{questionIDs}},
+			{"критерии", "DELETE FROM question_criteria WHERE question_id = ANY($1::bigint[])", []any{questionIDs}},
+			{"типичные ошибки", "DELETE FROM question_common_mistakes WHERE question_id = ANY($1::bigint[])", []any{questionIDs}},
+			{"вопросы", "DELETE FROM lesson_questions WHERE id = ANY($1::bigint[])", []any{questionIDs}},
+			{"библейские отрывки", `DELETE FROM bible_passages p WHERE p.id = ANY($1::bigint[])
+				AND NOT EXISTS (SELECT 1 FROM question_bible_passages link WHERE link.passage_id = p.id)`, []any{passageIDs}},
+			{"версии", "DELETE FROM lesson_versions WHERE id = ANY($1::bigint[])", []any{versionIDs}},
+			{"связи урока с курсом", "DELETE FROM course_lessons WHERE course_id = $1", []any{course.ID}},
+			{"уроки", "DELETE FROM lessons WHERE id = ANY($1::bigint[])", []any{lessonIDs}},
+			{"курс", "DELETE FROM courses WHERE id = $1", []any{course.ID}},
+			{"сотрудник", "DELETE FROM staff_accounts WHERE id = $1", []any{staffID}},
+		}
+		for _, statement := range statements {
+			if _, err := pool.Exec(cleanupCtx, statement.sql, statement.args...); err != nil {
+				t.Errorf("cleanup %s: %v", statement.name, err)
+			}
+		}
+	})
+
+	expectedExplanation := "Пояснение для ведущего."
+	note := "Не показывать ученику."
+	passageText := "Освяти их истиною Твоею; слово Твое есть истина."
+	imported, err := authoring.ImportDraftLesson(ctx, domain.ImportDraftLessonParams{
+		CourseID: course.ID, Title: "Урок из DOCX", Description: stringPtr("Вводный текст."),
+		CreatedByStaffID: staffID,
+		Questions: []domain.ImportDraftQuestionParams{
+			{
+				Number: 1, Prompt: "Что сказано в тексте?", AnswerType: "single_choice",
+				ExpectedExplanation: &expectedExplanation, Note: &note,
+				Options: []domain.ImportDraftOptionInput{
+					{Text: "Первый вариант"},
+					{Text: "Верный вариант", IsCorrect: true},
+				},
+				BiblePassages: []domain.BiblePassageInput{{
+					BookName: "Иоанна", Chapter: 17, StartVerse: 17, EndVerse: 17,
+					PassageText: &passageText,
+				}},
+			},
+			{
+				Number: 2, Prompt: "Как ответить своими словами?", AnswerType: "text",
+				ExpectedAnswer: "Ответ свободной формы.",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("импортировать черновик: %v", err)
+	}
+	if imported.ID <= 0 || imported.LessonVersionID <= 0 || imported.VersionNumber != 1 ||
+		imported.QuestionCount != 2 || imported.Title != "Урок из DOCX" {
+		t.Fatalf("некорректный импортированный урок: %+v", imported)
+	}
+
+	questions, err := NewContentRepository(pool).ListQuestionsForStaffVersion(ctx, imported.LessonVersionID)
+	if err != nil {
+		t.Fatalf("прочитать импортированные вопросы: %v", err)
+	}
+	if len(questions) != 2 || questions[0].AnswerType != "single_choice" || questions[0].ExpectedAnswer != "" ||
+		questions[0].Note == nil || *questions[0].Note != note ||
+		questions[0].ExpectedExplanation == nil || *questions[0].ExpectedExplanation != expectedExplanation ||
+		len(questions[0].Options) != 2 || questions[0].Options[0].Key != "A" ||
+		questions[0].Options[0].IsCorrect || !questions[0].Options[1].IsCorrect ||
+		len(questions[0].BiblePassages) != 1 || questions[0].BiblePassages[0].BookName != "Иоанна" ||
+		questions[0].BiblePassages[0].PassageText == nil || *questions[0].BiblePassages[0].PassageText != passageText {
+		t.Fatalf("потеряны материалы первого вопроса: %+v", questions)
+	}
+	if questions[1].AnswerType != "text" || questions[1].ExpectedAnswer != "Ответ свободной формы." {
+		t.Fatalf("потерян эталон свободного ответа: %+v", questions[1])
+	}
+	var status string
+	if err := pool.QueryRow(ctx, "SELECT status FROM lesson_versions WHERE id = $1", imported.LessonVersionID).Scan(&status); err != nil {
+		t.Fatalf("проверить статус версии: %v", err)
+	}
+	if status != "draft" {
+		t.Fatalf("status = %q, want draft", status)
+	}
+
+	var lessonCountBefore int64
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM lessons").Scan(&lessonCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	_, err = authoring.ImportDraftLesson(ctx, domain.ImportDraftLessonParams{
+		CourseID: course.ID, Title: "Не должен сохраниться", CreatedByStaffID: 9_000_000_000_000_000_000,
+		Questions: []domain.ImportDraftQuestionParams{{
+			Number: 1, Prompt: "Вопрос", AnswerType: "text", ExpectedAnswer: "Ответ",
+		}},
+	})
+	if err == nil {
+		t.Fatal("импорт с несуществующим сотрудником должен завершиться ошибкой")
+	}
+	var lessonCountAfter int64
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM lessons").Scan(&lessonCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if lessonCountAfter != lessonCountBefore {
+		t.Fatalf("после отката изменилось количество lessons: до=%d после=%d", lessonCountBefore, lessonCountAfter)
+	}
+}
+
+func queryIDsForImportCleanup(t *testing.T, pool *pgxpool.Pool, ctx context.Context, query string, arg any) []int64 {
+	t.Helper()
+	rows, err := pool.Query(ctx, query, arg)
+	if err != nil {
+		t.Errorf("получить ID для очистки теста: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Errorf("прочитать ID для очистки теста: %v", err)
+			return nil
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Errorf("обойти ID для очистки теста: %v", err)
+	}
+	return ids
+}
