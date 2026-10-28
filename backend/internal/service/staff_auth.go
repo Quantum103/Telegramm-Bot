@@ -26,14 +26,14 @@ type StaffAuthStore interface {
 }
 
 type StaffLoginResult struct {
-	StaffID      int64
-	DisplayName  string
+	StaffID            int64
+	DisplayName        string
 	Email              string
 	Roles              []string
 	MustChangePassword bool
 	SessionToken       string
-	CSRFToken    string
-	ExpiresAt    time.Time
+	CSRFToken          string
+	ExpiresAt          time.Time
 }
 
 type StaffAuthService struct {
@@ -92,7 +92,7 @@ func (s *StaffAuthService) Login(ctx context.Context, email, password string) (S
 		StaffID: credentials.ID, DisplayName: credentials.DisplayName,
 		Email: credentials.Email, Roles: append([]string(nil), credentials.Roles...),
 		MustChangePassword: credentials.MustChangePassword,
-		SessionToken: sessionToken, CSRFToken: csrfToken, ExpiresAt: expiresAt,
+		SessionToken:       sessionToken, CSRFToken: csrfToken, ExpiresAt: expiresAt,
 	}, nil
 }
 

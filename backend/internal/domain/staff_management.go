@@ -15,7 +15,7 @@ type StaffAccountSummary struct {
 
 // CreatedStaffAccount возвращает временный пароль только в ответе операции создания.
 type CreatedStaffAccount struct {
-	Account          StaffAccountSummary
+	Account           StaffAccountSummary
 	TemporaryPassword string
 }
 

@@ -13,17 +13,21 @@ type passwordChangeTestStore struct {
 	credentials domain.StaffCredentials
 	updatedHash string
 	updateCalls int
-	updateErr error
+	updateErr   error
 }
 
 func (s *passwordChangeTestStore) GetCredentialsByEmail(context.Context, string) (domain.StaffCredentials, error) {
 	return s.credentials, nil
 }
-func (s *passwordChangeTestStore) CreateSession(context.Context, domain.StaffSession) error { return nil }
+func (s *passwordChangeTestStore) CreateSession(context.Context, domain.StaffSession) error {
+	return nil
+}
 func (s *passwordChangeTestStore) GetActiveSessionByTokenHash(context.Context, [32]byte) (domain.StaffSessionIdentity, error) {
 	return domain.StaffSessionIdentity{}, nil
 }
-func (s *passwordChangeTestStore) RevokeSessionByTokenHash(context.Context, [32]byte) error { return nil }
+func (s *passwordChangeTestStore) RevokeSessionByTokenHash(context.Context, [32]byte) error {
+	return nil
+}
 func (s *passwordChangeTestStore) GetCredentialsByID(_ context.Context, staffID int64) (domain.StaffCredentials, error) {
 	if staffID != s.credentials.ID {
 		return domain.StaffCredentials{}, domain.ErrNotFound

@@ -76,7 +76,6 @@ func (s *StaffManagementService) AssignCurator(ctx context.Context, actorID, stu
 	return s.store.AssignStudentCurator(ctx, actorID, studentID, curatorStaffID)
 }
 
-
 func (s *StaffManagementService) SetAccountStatus(ctx context.Context, actorID, targetID int64, status string) error {
 	if actorID <= 0 || targetID <= 0 || actorID == targetID || (status != "active" && status != "inactive") {
 		return domain.ErrInvalidInput

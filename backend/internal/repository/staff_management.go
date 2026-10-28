@@ -436,7 +436,6 @@ func (r *StaffManagementRepository) EndStudentCuratorAssignment(ctx context.Cont
 	return nil
 }
 
-
 func (r *StaffManagementRepository) SetStaffAccountStatus(ctx context.Context, actorID, targetID int64, status string) error {
 	if actorID <= 0 || targetID <= 0 || actorID == targetID || (status != "active" && status != "inactive") {
 		return ErrInvalidInput
@@ -448,7 +447,9 @@ func (r *StaffManagementRepository) SetStaffAccountStatus(ctx context.Context, a
 	defer func() { _ = tx.Rollback(ctx) }()
 	var adminRoleID int64
 	if err := tx.QueryRow(ctx, "SELECT id FROM staff_roles WHERE role_code = 'administrator' FOR UPDATE").Scan(&adminRoleID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) { return ErrInvalidState }
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidState
+		}
 		return mapDatabaseError("заблокировать роль администратора при смене статуса", err)
 	}
 	var actorIsAdmin bool
@@ -462,14 +463,20 @@ func (r *StaffManagementRepository) SetStaffAccountStatus(ctx context.Context, a
 	`, actorID, adminRoleID).Scan(&actorIsAdmin); err != nil {
 		return mapDatabaseError("проверить право изменения статуса сотрудника", err)
 	}
-	if !actorIsAdmin { return ErrInvalidState }
+	if !actorIsAdmin {
+		return ErrInvalidState
+	}
 
 	var oldStatus string
 	if err := tx.QueryRow(ctx, "SELECT account_status FROM staff_accounts WHERE id = $1 FOR UPDATE", targetID).Scan(&oldStatus); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) { return ErrNotFound }
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
 		return mapDatabaseError("получить статус сотрудника", err)
 	}
-	if oldStatus == status { return nil }
+	if oldStatus == status {
+		return nil
+	}
 
 	var targetIsAdmin bool
 	if err := tx.QueryRow(ctx, `
@@ -489,7 +496,9 @@ func (r *StaffManagementRepository) SetStaffAccountStatus(ctx context.Context, a
 		`, adminRoleID).Scan(&activeAdmins); err != nil {
 			return mapDatabaseError("проверить оставшихся администраторов", err)
 		}
-		if activeAdmins <= 1 { return ErrInvalidState }
+		if activeAdmins <= 1 {
+			return ErrInvalidState
+		}
 	}
 	if _, err := tx.Exec(ctx, "UPDATE staff_accounts SET account_status = $2, updated_at = now() WHERE id = $1", targetID, status); err != nil {
 		return mapDatabaseError("обновить статус сотрудника", err)
@@ -521,7 +530,9 @@ func (r *StaffManagementRepository) ResetStaffPassword(ctx context.Context, acto
 	defer func() { _ = tx.Rollback(ctx) }()
 	var adminRoleID int64
 	if err := tx.QueryRow(ctx, "SELECT id FROM staff_roles WHERE role_code = 'administrator' FOR UPDATE").Scan(&adminRoleID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) { return ErrInvalidState }
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidState
+		}
 		return mapDatabaseError("заблокировать роль администратора при сбросе пароля", err)
 	}
 	var actorIsAdmin bool
@@ -535,13 +546,19 @@ func (r *StaffManagementRepository) ResetStaffPassword(ctx context.Context, acto
 	`, actorID, adminRoleID).Scan(&actorIsAdmin); err != nil {
 		return mapDatabaseError("проверить право сброса пароля сотрудника", err)
 	}
-	if !actorIsAdmin { return ErrInvalidState }
+	if !actorIsAdmin {
+		return ErrInvalidState
+	}
 	var targetStatus string
 	if err := tx.QueryRow(ctx, "SELECT account_status FROM staff_accounts WHERE id = $1 FOR UPDATE", targetID).Scan(&targetStatus); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) { return ErrNotFound }
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
 		return mapDatabaseError("проверить статус сотрудника для сброса пароля", err)
 	}
-	if targetStatus != "active" { return ErrInvalidState }
+	if targetStatus != "active" {
+		return ErrInvalidState
+	}
 	if _, err := tx.Exec(ctx, "UPDATE staff_accounts SET password_hash = $2, must_change_password = TRUE, updated_at = now() WHERE id = $1", targetID, passwordHash); err != nil {
 		return mapDatabaseError("сохранить новый временный пароль сотрудника", err)
 	}
@@ -559,7 +576,6 @@ func (r *StaffManagementRepository) ResetStaffPassword(ctx context.Context, acto
 	}
 	return nil
 }
-
 
 func nullableInt64(value pgtype.Int8) any {
 	if !value.Valid {

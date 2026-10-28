@@ -98,7 +98,7 @@ func run(logger *slog.Logger) error {
 	)
 
 	server := &http.Server{
-		Addr:              cfg.HTTPAddr,
+		Addr: cfg.HTTPAddr,
 		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(
 			pool, logger, catalogService,
 			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),

@@ -33,7 +33,7 @@ type staffCreateAccountRequest struct {
 }
 
 type staffCreateAccountResponse struct {
-	Account          domain.StaffAccountSummary `json:"account"`
+	Account           domain.StaffAccountSummary `json:"account"`
 	TemporaryPassword string                    `json:"temporary_password"`
 }
 
@@ -148,7 +148,6 @@ func (h handlers) staffCreateAccount(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (h handlers) staffSetAccountStatus(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
 	identity, ok := r.Context().Value(staffSessionContextKey{}).(domain.StaffSessionIdentity)
@@ -157,7 +156,9 @@ func (h handlers) staffSetAccountStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	targetID, ok := parsePositiveID(w, r.PathValue("staffID"))
-	if !ok { return }
+	if !ok {
+		return
+	}
 	if targetID == identity.StaffID {
 		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "self_status_change_forbidden"})
 		return
@@ -187,7 +188,9 @@ func (h handlers) staffResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetID, ok := parsePositiveID(w, r.PathValue("staffID"))
-	if !ok { return }
+	if !ok {
+		return
+	}
 	temporaryPassword, err := h.management.ResetPassword(r.Context(), identity.StaffID, targetID)
 	if err != nil {
 		h.writeAPIError(w, err, "сбросить пароль сотрудника")

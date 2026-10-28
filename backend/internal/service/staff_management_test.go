@@ -10,13 +10,13 @@ import (
 )
 
 type staffManagementTestStore struct {
-	createCalls int
-	actorID int64
-	displayName string
-	email string
+	createCalls  int
+	actorID      int64
+	displayName  string
+	email        string
 	passwordHash string
-	roleCode string
-	createErr error
+	roleCode     string
+	createErr    error
 }
 
 func (s *staffManagementTestStore) ListStaffAccounts(context.Context, int64) ([]domain.StaffAccountSummary, error) {
@@ -36,11 +36,19 @@ func (s *staffManagementTestStore) CreateStaffAccount(_ context.Context, actorID
 func (s *staffManagementTestStore) ListStudentsForStaff(context.Context, int64) ([]domain.AdminStudent, error) {
 	return []domain.AdminStudent{}, nil
 }
-func (s *staffManagementTestStore) AssignStudentCurator(context.Context, int64, int64, int64) error { return nil }
-func (s *staffManagementTestStore) EndStudentCuratorAssignment(context.Context, int64, int64) error { return nil }
+func (s *staffManagementTestStore) AssignStudentCurator(context.Context, int64, int64, int64) error {
+	return nil
+}
+func (s *staffManagementTestStore) EndStudentCuratorAssignment(context.Context, int64, int64) error {
+	return nil
+}
 
-func (s *staffManagementTestStore) SetStaffAccountStatus(context.Context, int64, int64, string) error { return nil }
-func (s *staffManagementTestStore) ResetStaffPassword(context.Context, int64, int64, string) error { return nil }
+func (s *staffManagementTestStore) SetStaffAccountStatus(context.Context, int64, int64, string) error {
+	return nil
+}
+func (s *staffManagementTestStore) ResetStaffPassword(context.Context, int64, int64, string) error {
+	return nil
+}
 
 func TestCreateStaffAccountGeneratesTemporaryPasswordAndStoresOnlyHash(t *testing.T) {
 	store := &staffManagementTestStore{}
@@ -70,7 +78,7 @@ func TestCreateStaffAccountGeneratesTemporaryPasswordAndStoresOnlyHash(t *testin
 func TestCreateStaffAccountRejectsInvalidInputBeforeStore(t *testing.T) {
 	tests := []struct {
 		name, displayName, email, role string
-		actorID int64
+		actorID                        int64
 	}{
 		{name: "missing actor", actorID: 0, displayName: "Curator", email: "a@example.test", role: "curator"},
 		{name: "invalid email", actorID: 1, displayName: "Curator", email: "not an email", role: "curator"},
