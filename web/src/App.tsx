@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
-  getStaffSession, listCourseLessons, listStaffCourses, loginStaff, logoutStaff,
-  type Course, type Lesson, type StaffIdentity,
+  getStaffSession, listAdminStudents, listCourseLessons, listStaffCourses, loginStaff, logoutStaff,
+  type AdminStudent, type Course, type Lesson, type StaffIdentity,
 } from './api'
 import DocxImportPage from './DocxImportPage'
 import StudentsPage from './StudentsPage'
@@ -89,6 +89,10 @@ function App() {
   const [coursesState, setCoursesState] = useState<'loading' | 'loaded' | 'error'>('loading')
   const [coursesError, setCoursesError] = useState('')
   const [coursesRevision, setCoursesRevision] = useState(0)
+  const [dashboardStudents, setDashboardStudents] = useState<AdminStudent[]>([])
+  const [dashboardStudentsState, setDashboardStudentsState] = useState<'loading' | 'loaded' | 'error'>('loading')
+  const [dashboardStudentsError, setDashboardStudentsError] = useState('')
+  const [dashboardStatsRevision, setDashboardStatsRevision] = useState(0)
   const [selectedCourseID, setSelectedCourseID] = useState<number | null>(null)
   const [lessons, setLessons] = useState<Lesson[]>([])
   const [lessonsState, setLessonsState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
@@ -142,6 +146,31 @@ function App() {
     })
     return () => controller.abort()
   }, [authState, staff, coursesRevision])
+
+  useEffect(() => {
+    if (authState !== 'signed-in' || !staff || staff.must_change_password || activePage !== 'overview') return
+    if (!staff.roles.some((role) => role === 'administrator' || role === 'curator')) {
+      setDashboardStudents([])
+      setDashboardStudentsState('loaded')
+      setDashboardStudentsError('')
+      return
+    }
+    const controller = new AbortController()
+    setDashboardStudentsState('loading')
+    setDashboardStudentsError('')
+    void listAdminStudents(controller.signal).then((items) => {
+      if (controller.signal.aborted) return
+      setDashboardStudents(items)
+      setDashboardStudentsState('loaded')
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить статистику учеников.'
+      setDashboardStudentsError(message)
+      setDashboardStudentsState('error')
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    })
+    return () => controller.abort()
+  }, [authState, staff, activePage, dashboardStatsRevision, onSessionExpired])
 
   useEffect(() => {
     if (authState !== 'signed-in' || activePage !== 'lessons' || selectedCourseID === null) return
@@ -213,7 +242,10 @@ function App() {
     return query ? lessons.filter((lesson) => (lesson.title + ' ' + (lesson.description ?? '')).toLocaleLowerCase('ru-RU').includes(query)) : lessons
   }, [lessons, searchTerm])
   const publishedCourses = courses.filter((course) => course.status === 'published')
-  const draftCourses = courses.filter((course) => course.status === 'draft')
+  const registeredStudentCount = dashboardStudents.length
+  const learningStudentCount = dashboardStudents.filter((student) => student.in_progress_enrollments > 0).length
+  const completedStudentCount = dashboardStudents.filter((student) => student.completed_enrollments > 0).length
+  const isAdministrator = staff?.roles.includes('administrator') ?? false
   const navigate = (page: Page) => { setActivePage(page); setSidebarOpen(false); setSearchTerm('') }
 
   if (authState === 'checking') {
@@ -261,34 +293,48 @@ function App() {
           <section className="dashboard-hero" aria-labelledby="dashboard-hero-title">
             <div className="dashboard-hero-copy">
               <p className="dashboard-hero-kicker"><span aria-hidden="true" /> СЛОВО · РАБОЧЕЕ ПРОСТРАНСТВО</p>
-              <h1 id="dashboard-hero-title">Помогаем слову находить <span>место в жизни.</span></h1>
-              <p className="dashboard-hero-subtitle">Создавайте библейские уроки, управляйте курсами и сопровождайте учеников — без лишних шагов.</p>
+              <h1 id="dashboard-hero-title">Пусть Слово станет светом <span>на пути.</span></h1>
+              <div className="dashboard-primary-verse">
+                <span>ПСАЛОМ 118:105</span>
+                <blockquote>«Слово Твое — светильник ноге моей и свет стезе моей.»</blockquote>
+              </div>
               <div className="dashboard-hero-actions">
                 <button className="dashboard-hero-button" onClick={() => navigate('docx-import')}><Icon name="file-up" size={16} /> Импортировать урок <Icon name="chevron" size={15} /></button>
-                <span className="dashboard-hero-count"><Icon name="book" size={15} />{coursesState === 'loading' ? 'Загружаем библиотеку…' : coursesState === 'error' ? 'Каталог недоступен' : `${courses.length} курсов в каталоге`}</span>
               </div>
-              <p className="dashboard-hero-greeting">Добро пожаловать, {staff.display_name || staff.email}</p>
             </div>
             <div className="dashboard-hero-art" aria-hidden="true">
               <div className="hero-art-orbit hero-art-orbit--one" />
               <div className="hero-art-orbit hero-art-orbit--two" />
               <div className="hero-art-glow" />
               <div className="hero-art-book"><Icon name="book" size={54} /><span className="hero-art-book-line" /><span className="hero-art-book-dot" /></div>
-              <div className="hero-art-verse"><span>ПСАЛОМ 118:105</span><strong>Слово — свет для пути.</strong><i /></div>
               <span className="hero-art-spark hero-art-spark--one" />
               <span className="hero-art-spark hero-art-spark--two" />
             </div>
           </section>
-          <section className="stats-grid" aria-label="Курсы в базе данных">
-            <article className="stat-card"><div className="stat-top"><span>Всего курсов</span><span className="stat-icon stat-icon--mint"><Icon name="book" size={19} /></span></div><div className="stat-value">{coursesState === 'loading' ? '—' : courses.length}</div><div className="stat-foot"><span>Записи в базе данных</span></div></article>
-            <article className="stat-card"><div className="stat-top"><span>Опубликовано</span><span className="stat-icon stat-icon--lavender"><Icon name="layers" size={19} /></span></div><div className="stat-value">{coursesState === 'loading' ? '—' : publishedCourses.length}</div><div className="stat-foot"><span>Доступны ученикам</span></div></article>
-            <article className="stat-card"><div className="stat-top"><span>Черновики</span><span className="stat-icon stat-icon--blue"><Icon name="file-up" size={19} /></span></div><div className="stat-value">{coursesState === 'loading' ? '—' : draftCourses.length}</div><div className="stat-foot"><span>Можно продолжить редактировать</span></div></article>
+          <section className="stats-grid dashboard-student-stats" aria-label="Статистика учеников">
+            <article className="stat-card"><div className="stat-top"><span>{isAdministrator ? 'Зарегистрировано учеников' : 'Ученики у вас'}</span><span className="stat-icon stat-icon--mint"><Icon name="users" size={19} /></span></div><div className="stat-value">{dashboardStudentsState === 'loaded' ? registeredStudentCount : '—'}</div><div className="stat-foot"><span>{isAdministrator ? 'Все ученические профили' : 'Закреплённые профили'}</span></div></article>
+            <article className="stat-card"><div className="stat-top"><span>Сейчас проходят уроки</span><span className="stat-icon stat-icon--lavender"><Icon name="layers" size={19} /></span></div><div className="stat-value">{dashboardStudentsState === 'loaded' ? learningStudentCount : '—'}</div><div className="stat-foot"><span>Есть урок со статусом «В процессе»</span></div></article>
+            <article className="stat-card"><div className="stat-top"><span>Завершили хотя бы один урок</span><span className="stat-icon stat-icon--blue"><Icon name="book" size={19} /></span></div><div className="stat-value">{dashboardStudentsState === 'loaded' ? completedStudentCount : '—'}</div><div className="stat-foot"><span>Уникальные ученики с завершённым уроком</span></div></article>
           </section>
-          <section className="panel dashboard-courses">
-            <div className="panel-heading"><div><h2>Курсы</h2><p>Данные с сервера, без демонстрационных записей.</p></div><button className="text-button" onClick={() => navigate('courses')}>Все курсы <Icon name="chevron" size={15} /></button></div>
-            {coursesState === 'loading' && <p className="catalog-message" role="status">Загружаем курсы…</p>}
-            {coursesState === 'loaded' && courses.length === 0 && <div className="empty-panel"><p>В базе пока нет курсов.</p><button className="secondary-button" onClick={() => navigate('docx-import')}>Создать черновой курс</button></div>}
-            {coursesState === 'loaded' && courses.length > 0 && <div className="dashboard-course-list">{courses.slice(0, 5).map((course) => <button className="dashboard-course-row" key={course.id} onClick={() => { setSelectedCourseID(course.id); navigate(course.status === 'published' ? 'lessons' : 'courses') }}><span className="course-thumb course-thumb--mint">{course.title.trim().slice(0, 2).toLocaleUpperCase('ru-RU')}</span><span className="dashboard-course-main"><strong>{course.title}</strong><small>{course.lesson_count} уроков · {course.slug}</small></span><span className={'course-state course-state--' + course.status}>{course.status === 'published' ? 'Опубликован' : course.status === 'draft' ? 'Черновик' : 'Архив'}</span><Icon name="chevron" size={16} /></button>)}</div>}
+          {dashboardStudentsState === 'error' && <div className="health-notice health-notice--error" role="alert"><span className="health-dot" />Не удалось загрузить статистику учеников: {dashboardStudentsError}<button onClick={() => setDashboardStatsRevision((revision) => revision + 1)}><Icon name="refresh" size={14} /> Повторить</button></div>}
+          <section className="scripture-section" aria-labelledby="scripture-section-title">
+            <div className="scripture-heading">
+              <p className="eyebrow">ДЕЛИТЬСЯ СЛОВОМ</p>
+              <h2 id="scripture-section-title">Истина, которую стоит передавать дальше</h2>
+              <p>Изучая Писание вместе, мы помогаем мудрости и вере переходить от человека к человеку.</p>
+            </div>
+            <div className="scripture-cards">
+              <article className="scripture-card scripture-card--violet">
+                <div className="scripture-card-icon"><Icon name="book" size={19} /></div>
+                <blockquote>«Все Писание богодухновенно и полезно для научения…»</blockquote>
+                <span>2 ТИМОФЕЮ 3:16</span>
+              </article>
+              <article className="scripture-card scripture-card--orange">
+                <div className="scripture-card-icon"><Icon name="users" size={19} /></div>
+                <blockquote>«Наставь юношу при начале пути его: он не уклонится от него, когда и состарится.»</blockquote>
+                <span>ПРИТЧИ 22:6</span>
+              </article>
+            </div>
           </section>
         </>}
 
