@@ -242,7 +242,6 @@ function App() {
     return query ? lessons.filter((lesson) => (lesson.title + ' ' + (lesson.description ?? '')).toLocaleLowerCase('ru-RU').includes(query)) : lessons
   }, [lessons, searchTerm])
   const publishedCourses = courses.filter((course) => course.status === 'published')
-  const draftCourses = courses.filter((course) => course.status === 'draft')
   const registeredStudentCount = dashboardStudents.length
   const learningStudentCount = dashboardStudents.filter((student) => student.in_progress_enrollments > 0).length
   const completedStudentCount = dashboardStudents.filter((student) => student.completed_enrollments > 0).length
