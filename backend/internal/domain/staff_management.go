@@ -32,6 +32,7 @@ type AdminStudent struct {
 	CuratorStaffID         *int64     `json:"curator_staff_id,omitempty"`
 	CuratorDisplayName     *string    `json:"curator_display_name,omitempty"`
 	TotalEnrollments       int        `json:"total_enrollments"`
+	InProgressEnrollments  int        `json:"in_progress_enrollments"`
 	CompletedEnrollments   int        `json:"completed_enrollments"`
 	LastLearningActivityAt *time.Time `json:"last_learning_activity_at,omitempty"`
 }
