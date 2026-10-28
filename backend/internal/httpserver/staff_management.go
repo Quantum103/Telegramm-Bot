@@ -34,7 +34,7 @@ type staffCreateAccountRequest struct {
 
 type staffCreateAccountResponse struct {
 	Account           domain.StaffAccountSummary `json:"account"`
-	TemporaryPassword string                    `json:"temporary_password"`
+	TemporaryPassword string                     `json:"temporary_password"`
 }
 
 type staffAccountsResponse struct {
