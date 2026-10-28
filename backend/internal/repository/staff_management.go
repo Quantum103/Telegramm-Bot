@@ -187,6 +187,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		       student.preferred_name, student.account_status, student.registered_at, student.last_active_at,
 		       current_assignment.curator_staff_id, current_assignment.curator_display_name,
 		       COALESCE(progress.total_enrollments, 0)::INTEGER,
+		       COALESCE(progress.in_progress_enrollments, 0)::INTEGER,
 		       COALESCE(progress.completed_enrollments, 0)::INTEGER,
 		       progress.last_learning_activity_at
 		FROM students AS student
@@ -200,6 +201,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		) AS current_assignment ON TRUE
 		LEFT JOIN LATERAL (
 			SELECT count(*) AS total_enrollments,
+			       count(*) FILTER (WHERE enrollment.status = 'in_progress') AS in_progress_enrollments,
 			       count(*) FILTER (WHERE enrollment.status = 'completed') AS completed_enrollments,
 			       max(COALESCE(enrollment.last_activity_at, enrollment.updated_at)) AS last_learning_activity_at
 			FROM lesson_enrollments enrollment WHERE enrollment.student_id = student.id
@@ -222,7 +224,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			&student.ID, &student.TelegramID, &student.DisplayName, &username,
 			&preferredName, &student.AccountStatus, &student.RegisteredAt, &lastActiveAt,
 			&curatorID, &curatorName, &student.TotalEnrollments,
-			&student.CompletedEnrollments, &lastLearningAt,
+			&student.InProgressEnrollments, &student.CompletedEnrollments, &lastLearningAt,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать ученика с прогрессом", err)
 		}
