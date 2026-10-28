@@ -128,7 +128,7 @@ export default function StaffManagementPage({ staff, onSessionExpired }: { staff
     }
   }
 
-  return <section className="section-page">
+  return <section className="section-page section-page--staff">
     <div className="welcome-row"><div><p className="eyebrow">ДОСТУП И ПОЛНОМОЧИЯ</p><h1>Сотрудники</h1><p className="page-subtitle">Создавайте администраторов и кураторов без email-рассылки.</p></div></div>
     {error && <p className="auth-inline-error" role="alert">{error}</p>}
     {notice && <p className="management-notice" role="status">{notice}</p>}

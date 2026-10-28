@@ -86,7 +86,7 @@ export default function StudentsPage({ staff, onSessionExpired }: { staff: Staff
     }
   }
 
-  return <section className="section-page">
+  return <section className="section-page section-page--students">
     <div className="welcome-row">
       <div><p className="eyebrow">СОПРОВОЖДЕНИЕ УЧЕНИКОВ</p><h1>Ученики</h1>
         <p className="page-subtitle">{isAdmin ? 'Список учеников и их прогресс; назначайте и переводите кураторов.' : 'Здесь видны только ученики, назначенные вам.'}</p>
