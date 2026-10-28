@@ -56,6 +56,7 @@ export type AdminStudent = {
   curator_staff_id?: number
   curator_display_name?: string
   total_enrollments: number
+  in_progress_enrollments: number
   completed_enrollments: number
   last_learning_activity_at?: string
 }
