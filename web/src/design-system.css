@@ -447,7 +447,7 @@ tbody tr:hover { background: #faf9ff; }
   .hero-art-verse { right: -4px; }
 }
 @media (max-width: 850px) {
-  .sidebar { width: min(300px, 88vw); transform: translateX(-105%); transition: transform .28s cubic-bezier(.2,.75,.2,1); box-shadow: none; }
+  .sidebar { animation: none; width: min(300px, 88vw); transform: translateX(-105%); transition: transform .28s cubic-bezier(.2,.75,.2,1); box-shadow: none; }
   .sidebar--open { transform: translateX(0); box-shadow: 20px 0 55px rgb(5 5 15 / 38%); }
   .main-area { margin-left: 0; }
   .topbar { height: 67px; padding: 0 19px; }
