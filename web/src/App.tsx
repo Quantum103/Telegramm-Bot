@@ -258,7 +258,27 @@ function App() {
         {coursesState === 'error' && <div className="health-notice health-notice--error" role="alert"><span className="health-dot" />{coursesError}<button onClick={() => setCoursesRevision((revision) => revision + 1)}><Icon name="refresh" size={14} /> Повторить</button></div>}
 
         {activePage === 'overview' && <>
-          <section className="welcome-row"><div><p className="eyebrow">АДМИНИСТРАТИВНАЯ ПАНЕЛЬ</p><h1>Здравствуйте, {staff.display_name || staff.email}</h1><p className="page-subtitle">Здесь отображаются данные курсов, полученные из базы данных.</p></div><button className="primary-button" onClick={() => navigate('docx-import')}><Icon name="file-up" size={16} /> Импорт DOCX</button></section>
+          <section className="dashboard-hero" aria-labelledby="dashboard-hero-title">
+            <div className="dashboard-hero-copy">
+              <p className="dashboard-hero-kicker"><span aria-hidden="true" /> СЛОВО · РАБОЧЕЕ ПРОСТРАНСТВО</p>
+              <h1 id="dashboard-hero-title">Помогаем слову находить <span>место в жизни.</span></h1>
+              <p className="dashboard-hero-subtitle">Создавайте библейские уроки, управляйте курсами и сопровождайте учеников — без лишних шагов.</p>
+              <div className="dashboard-hero-actions">
+                <button className="dashboard-hero-button" onClick={() => navigate('docx-import')}><Icon name="file-up" size={16} /> Импортировать урок <Icon name="chevron" size={15} /></button>
+                <span className="dashboard-hero-count"><Icon name="book" size={15} />{coursesState === 'loading' ? 'Загружаем библиотеку…' : coursesState === 'error' ? 'Каталог недоступен' : `${courses.length} курсов в каталоге`}</span>
+              </div>
+              <p className="dashboard-hero-greeting">Добро пожаловать, {staff.display_name || staff.email}</p>
+            </div>
+            <div className="dashboard-hero-art" aria-hidden="true">
+              <div className="hero-art-orbit hero-art-orbit--one" />
+              <div className="hero-art-orbit hero-art-orbit--two" />
+              <div className="hero-art-glow" />
+              <div className="hero-art-book"><Icon name="book" size={54} /><span className="hero-art-book-line" /><span className="hero-art-book-dot" /></div>
+              <div className="hero-art-verse"><span>ПСАЛОМ 118:105</span><strong>Слово — свет для пути.</strong><i /></div>
+              <span className="hero-art-spark hero-art-spark--one" />
+              <span className="hero-art-spark hero-art-spark--two" />
+            </div>
+          </section>
           <section className="stats-grid" aria-label="Курсы в базе данных">
             <article className="stat-card"><div className="stat-top"><span>Всего курсов</span><span className="stat-icon stat-icon--mint"><Icon name="book" size={19} /></span></div><div className="stat-value">{coursesState === 'loading' ? '—' : courses.length}</div><div className="stat-foot"><span>Записи в базе данных</span></div></article>
             <article className="stat-card"><div className="stat-top"><span>Опубликовано</span><span className="stat-icon stat-icon--lavender"><Icon name="layers" size={19} /></span></div><div className="stat-value">{coursesState === 'loading' ? '—' : publishedCourses.length}</div><div className="stat-foot"><span>Доступны ученикам</span></div></article>
@@ -283,6 +303,18 @@ function App() {
         <footer className="page-footer"><span>© 2026 Слово · Обучающая платформа</span><span>Вход выполнен: {staff.email}</span></footer>
       </div>
     </main>
+    <nav className="mobile-nav" aria-label="Быстрая навигация">
+      {navigation.filter((item) => item.id === 'overview' || item.id === 'courses' || item.id === 'students').map((item) => (
+        <button key={item.id} className={'mobile-nav-item' + (activePage === item.id ? ' mobile-nav-item--active' : '')}
+          aria-current={activePage === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}>
+          <Icon name={item.icon} size={19} /><span>{item.label}</span>
+        </button>
+      ))}
+      <button className={'mobile-nav-item' + ((['overview', 'courses', 'students'] as Page[]).includes(activePage) ? '' : ' mobile-nav-item--active')}
+        type="button" aria-label="Открыть все разделы" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}>
+        <Icon name="menu" size={19} /><span>Ещё</span>
+      </button>
+    </nav>
   </div>
 }
 export default App
