@@ -109,6 +109,15 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 		t.Fatalf("администратор должен видеть всех тестовых учеников, got %d rows", len(adminView))
 	}
 
+	for _, student := range adminView {
+		if student.ID != studentID && student.ID != otherStudentID {
+			continue
+		}
+		if student.TotalEnrollments != 0 || student.InProgressEnrollments != 0 || student.CompletedEnrollments != 0 {
+			t.Errorf("новый ученик должен иметь нулевой прогресс, получено: %+v", student)
+		}
+	}
+
 	var activeCount, endedCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE status = 'active'), count(*) FILTER (WHERE status = 'ended')
