@@ -30,9 +30,17 @@ func (r *StaffAuthRepository) GetCredentialsByEmail(ctx context.Context, email s
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, display_name, email, password_hash, account_status
-		FROM staff_accounts
-		WHERE lower(email) = lower($1)
+		SELECT account.id, account.display_name, account.email, account.password_hash,
+		       account.account_status, account.must_change_password,
+		       ARRAY(
+		           SELECT DISTINCT role.role_code
+		           FROM staff_role_assignments assignment
+		           JOIN staff_roles role ON role.id = assignment.role_id
+		           WHERE assignment.staff_id = account.id AND assignment.revoked_at IS NULL
+		           ORDER BY role.role_code
+		       )
+		FROM staff_accounts account
+		WHERE lower(account.email) = lower($1)
 		LIMIT 2
 	`, email)
 	if err != nil {
@@ -51,6 +59,7 @@ func (r *StaffAuthRepository) GetCredentialsByEmail(ctx context.Context, email s
 	if err := rows.Scan(
 		&credentials.ID, &credentials.DisplayName, &credentials.Email,
 		&credentials.PasswordHash, &credentials.AccountStatus,
+		&credentials.MustChangePassword, &credentials.Roles,
 	); err != nil {
 		return domain.StaffCredentials{}, mapDatabaseError("прочитать учетные данные сотрудника", err)
 	}
@@ -61,6 +70,74 @@ func (r *StaffAuthRepository) GetCredentialsByEmail(ctx context.Context, email s
 		return domain.StaffCredentials{}, mapDatabaseError("прочитать учетные данные сотрудника", err)
 	}
 	return credentials, nil
+}
+
+// GetCredentialsByID returns credentials for an authenticated staff account.
+func (r *StaffAuthRepository) GetCredentialsByID(ctx context.Context, staffID int64) (domain.StaffCredentials, error) {
+	if staffID <= 0 {
+		return domain.StaffCredentials{}, ErrInvalidInput
+	}
+	var credentials domain.StaffCredentials
+	err := r.pool.QueryRow(ctx, `
+		SELECT account.id, account.display_name, account.email, account.password_hash,
+		       account.account_status, account.must_change_password,
+		       ARRAY(
+		           SELECT DISTINCT role.role_code
+		           FROM staff_role_assignments assignment
+		           JOIN staff_roles role ON role.id = assignment.role_id
+		           WHERE assignment.staff_id = account.id AND assignment.revoked_at IS NULL
+		           ORDER BY role.role_code
+		       )
+		FROM staff_accounts account
+		WHERE account.id = $1
+	`, staffID).Scan(
+		&credentials.ID, &credentials.DisplayName, &credentials.Email,
+		&credentials.PasswordHash, &credentials.AccountStatus,
+		&credentials.MustChangePassword, &credentials.Roles,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.StaffCredentials{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.StaffCredentials{}, mapDatabaseError("получить учётные данные сотрудника по ID", err)
+	}
+	return credentials, nil
+}
+
+// UpdatePasswordAndRevokeSessions changes the password and invalidates sessions atomically.
+func (r *StaffAuthRepository) UpdatePasswordAndRevokeSessions(ctx context.Context, staffID int64, passwordHash string) error {
+	if staffID <= 0 || passwordHash == "" {
+		return ErrInvalidInput
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return mapDatabaseError("начать смену пароля сотрудника", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
+		UPDATE staff_accounts
+		SET password_hash = $2, must_change_password = FALSE, updated_at = now()
+		WHERE id = $1 AND account_status = 'active'
+	`, staffID, passwordHash)
+	if err != nil {
+		return mapDatabaseError("сохранить новый пароль сотрудника", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, "UPDATE staff_sessions SET revoked_at = now() WHERE staff_id = $1 AND revoked_at IS NULL", staffID); err != nil {
+		return mapDatabaseError("отозвать сессии после смены пароля", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+		VALUES ($1, 'staff.password.change', 'staff_account', $1, jsonb_build_object('sessions_revoked', TRUE))
+	`, staffID); err != nil {
+		return mapDatabaseError("записать аудит смены пароля", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать смену пароля сотрудника", err)
+	}
+	return nil
 }
 
 // CreateSession persists only token digests; raw tokens must never be stored.
@@ -103,7 +180,7 @@ func (r *StaffAuthRepository) GetActiveSessionByTokenHash(
 			AND a.email IS NOT NULL
 			AND length(btrim(a.email)) > 0
 		RETURNING s.staff_id, a.display_name, a.email, s.csrf_token_hash, s.expires_at,
-			ARRAY(
+			a.must_change_password, ARRAY(
 				SELECT DISTINCT role.role_code
 				FROM staff_role_assignments assignment
 				JOIN staff_roles role ON role.id = assignment.role_id
@@ -117,6 +194,7 @@ func (r *StaffAuthRepository) GetActiveSessionByTokenHash(
 		&identity.Email,
 		&csrfHash,
 		&identity.ExpiresAt,
+		&identity.MustChangePassword,
 		&identity.Roles,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

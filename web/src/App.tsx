@@ -4,12 +4,15 @@ import {
   type Course, type Lesson, type StaffIdentity,
 } from './api'
 import DocxImportPage from './DocxImportPage'
+import StudentsPage from './StudentsPage'
+import StaffManagementPage from './StaffManagementPage'
+import PasswordChangePage from './PasswordChangePage'
 import './catalog.css'
 import './auth.css'
 
-type Page = 'overview' | 'courses' | 'lessons' | 'docx-import'
+type Page = 'overview' | 'courses' | 'lessons' | 'docx-import' | 'students' | 'staff'
 type AuthState = 'checking' | 'signed-out' | 'signed-in'
-type IconName = 'grid' | 'book' | 'layers' | 'file-up' | 'chevron' | 'menu' | 'x' | 'logout' | 'search' | 'refresh'
+type IconName = 'grid' | 'book' | 'layers' | 'file-up' | 'chevron' | 'menu' | 'x' | 'logout' | 'search' | 'refresh' | 'users' | 'staff'
 const iconPaths: Record<IconName, string> = {
   grid: 'M3 3h7v7H3z M14 3h7v4h-7z M14 10h7v11h-7z M3 13h7v8H3z',
   book: 'M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z M4 4.5v17 M8 6h8 M8 10h7',
@@ -19,15 +22,20 @@ const iconPaths: Record<IconName, string> = {
   x: 'M18 6 6 18 M6 6l12 12', logout: 'M10 17l5-5-5-5 M15 12H3 M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6',
   search: 'm20 20-4.5-4.5 M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0z',
   refresh: 'M20 7v5h-5 M4 17v-5h5 M5.6 9a7 7 0 0 1 12-2L20 12 M4 12l2.4 5a7 7 0 0 0 12-2',
+  users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  staff: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M4 21v-2a8 8 0 0 1 16 0v2 M19 8h3 M20.5 6.5v3',
 }
 const navigation: { id: Page; label: string; icon: IconName }[] = [
   { id: 'overview', label: 'Обзор', icon: 'grid' },
   { id: 'courses', label: 'Курсы', icon: 'book' },
   { id: 'lessons', label: 'Уроки', icon: 'layers' },
   { id: 'docx-import', label: 'Импорт DOCX', icon: 'file-up' },
+  { id: 'students', label: 'Ученики', icon: 'users' },
+  { id: 'staff', label: 'Сотрудники', icon: 'staff' },
 ]
 const pageTitles: Record<Page, string> = {
   overview: 'Обзор', courses: 'Курсы', lessons: 'Уроки', 'docx-import': 'Импорт DOCX',
+  students: 'Ученики', staff: 'Сотрудники',
 }
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -111,7 +119,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (authState !== 'signed-in' || !staff) return
+    if (authState !== 'signed-in' || !staff || staff.must_change_password) return
     const controller = new AbortController()
     setCoursesState('loading')
     setCoursesError('')
@@ -211,6 +219,14 @@ function App() {
   if (authState === 'checking') {
     return <main className="auth-shell"><div className="auth-loading" role="status">Проверяем сессию…</div></main>
   }
+  if (authState === 'signed-in' && staff?.must_change_password) {
+    return <PasswordChangePage staff={staff} onComplete={() => {
+      setStaff(null)
+      setPassword('')
+      setAuthError('Пароль изменён. Войдите с новым паролем.')
+      setAuthState('signed-out')
+    }} />
+  }
   if (authState === 'signed-out' || !staff) {
     return <LoginPage error={authError} email={email} password={password} busy={loginBusy}
       onEmailChange={setEmail} onPasswordChange={setPassword} onSubmit={handleLogin} />
@@ -221,7 +237,7 @@ function App() {
     <aside className={'sidebar' + (sidebarOpen ? ' sidebar--open' : '')}>
       <div className="brand"><div className="brand-mark" aria-hidden="true"><span /><span /><span /></div><div className="brand-copy"><strong>Слово</strong><span>ОБУЧАЮЩАЯ ПЛАТФОРМА</span></div><button className="icon-button sidebar-close" aria-label="Закрыть меню" onClick={() => setSidebarOpen(false)}><Icon name="x" /></button></div>
       <div className="workspace-switcher"><div className="workspace-avatar">С</div><div className="workspace-copy"><span>Рабочее пространство</span><strong>Библейская платформа</strong></div><span className="workspace-chevron"><Icon name="chevron" size={15} /></span></div>
-      <nav className="primary-nav" aria-label="Основная навигация"><p className="nav-caption">МЕНЮ</p>{navigation.map((item) => <button key={item.id} className={'nav-item' + (activePage === item.id ? ' nav-item--active' : '')} aria-current={activePage === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
+      <nav className="primary-nav" aria-label="Основная навигация"><p className="nav-caption">МЕНЮ</p>{navigation.filter((item) => item.id !== 'staff' || staff.roles.includes('administrator')).map((item) => <button key={item.id} className={'nav-item' + (activePage === item.id ? ' nav-item--active' : '')} aria-current={activePage === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
       <div className="sidebar-spacer" />
       <div className="help-card"><strong>Работа с уроками</strong><p>Создайте черновой курс и импортируйте вопросы из DOCX.</p><button onClick={() => navigate('docx-import')}>Импортировать DOCX <Icon name="chevron" size={14} /></button></div>
       <div className="sidebar-user"><div className="avatar avatar--dark">{(staff.display_name || staff.email).trim().slice(0, 1).toLocaleUpperCase('ru-RU')}</div><div className="sidebar-user-copy"><strong>{staff.display_name || staff.email}</strong><span>{staff.email}</span></div></div>
@@ -261,6 +277,8 @@ function App() {
         {activePage === 'lessons' && <section className="section-page"><div className="welcome-row"><div><p className="eyebrow">УЧЕБНЫЕ МАТЕРИАЛЫ</p><h1>Уроки</h1><p className="page-subtitle">Опубликованные уроки выбранного курса.</p></div><span className="soft-pill">{lessonsState === 'loaded' ? lessons.length : '—'} уроков</span></div><div className="panel table-panel"><div className="panel-heading"><div><h2>Библиотека уроков</h2><p>Выберите опубликованный курс из базы данных.</p></div><label className="course-select-label"><span>Курс</span><select value={selectedCourseID ?? ''} onChange={(event) => setSelectedCourseID(event.target.value ? Number(event.target.value) : null)} disabled={publishedCourses.length === 0}><option value="">Выберите курс</option>{publishedCourses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select></label></div>{publishedCourses.length === 0 && coursesState === 'loaded' && <p className="catalog-message">Пока нет опубликованных курсов. Черновые уроки можно импортировать в разделе «Импорт DOCX».</p>}{lessonsState === 'loading' && <p className="catalog-message" role="status">Загружаем уроки…</p>}{lessonsState === 'error' && <div className="catalog-error" role="alert"><span>{lessonsError}</span><button className="secondary-button" onClick={() => setCoursesRevision((revision) => revision + 1)}>Обновить данные</button></div>}{lessonsState === 'loaded' && selectedCourseID !== null && <div className="lesson-list">{filteredLessons.map((lesson) => <div className="lesson-row" key={lesson.id}><div className="lesson-icon"><Icon name="book" /></div><div className="lesson-copy"><strong>{lesson.title}</strong><span>{lesson.description || 'Опубликованный урок'}</span></div><span className="lesson-duration"><Icon name="layers" size={14} />{lesson.question_count} вопр.</span><span className="status-pill"><i />Опубликован</span></div>)}{filteredLessons.length === 0 && <p className="catalog-message">{searchTerm.trim() ? 'По запросу ничего не найдено.' : 'В выбранном курсе пока нет опубликованных уроков.'}</p>}</div>}</div></section>}
 
         {activePage === 'docx-import' && <DocxImportPage staff={staff} onSessionExpired={onSessionExpired} />}
+        {activePage === 'students' && <StudentsPage staff={staff} onSessionExpired={onSessionExpired} />}
+        {activePage === 'staff' && staff.roles.includes('administrator') && <StaffManagementPage staff={staff} onSessionExpired={onSessionExpired} />}
 
         <footer className="page-footer"><span>© 2026 Слово · Обучающая платформа</span><span>Вход выполнен: {staff.email}</span></footer>
       </div>

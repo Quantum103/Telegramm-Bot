@@ -94,10 +94,10 @@ func EnsureInitialAdministrator(ctx context.Context, pool *pgxpool.Pool, email, 
 
 	var staffID int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO staff_accounts (display_name, email, password_hash, account_status)
-		VALUES ($1, $2, $3, 'active')
+		INSERT INTO staff_accounts (display_name, email, password_hash, account_status, must_change_password)
+		VALUES ($1, $2, $3, 'active', $4)
 		RETURNING id
-	`, adminDisplayName, email, passwordHash).Scan(&staffID); err != nil {
+	`, adminDisplayName, email, passwordHash, generatedPassword != "").Scan(&staffID); err != nil {
 		return Result{}, fmt.Errorf("create initial administrator account for %q: %w", email, err)
 	}
 

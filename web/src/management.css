@@ -1,0 +1,18 @@
+.management-create-panel { margin-top: 18px; }
+.management-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: end; padding: 18px 20px 22px; }
+.management-form .docx-field { margin: 0; }
+.management-form .primary-button { min-height: 40px; justify-content: center; }
+.management-staff-list { margin-top: 18px; }
+.management-password { display: grid; gap: 13px; margin: 16px 0; padding: 20px; }
+.management-password h2 { margin: 0 0 6px; color: #405047; font-size: 15px; }
+.management-password p { margin: 0; color: #849188; font-size: 12px; line-height: 1.7; }
+.management-password code { display: block; overflow-wrap: anywhere; padding: 13px; border: 1px solid #e6ede9; border-radius: 8px; background: #f7faf8; color: #304738; font-size: 13px; user-select: all; }
+.management-person { display: grid; gap: 4px; min-width: 120px; }
+.management-person strong { color: #405047; font-size: 12px; }
+.management-person span { color: #91a097; font-size: 10px; overflow-wrap: anywhere; }
+.management-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.management-actions select { max-width: 220px; min-width: 150px; padding: 8px 9px; border: 1px solid #e6ede9; border-radius: 8px; background: #fff; color: #405047; font: inherit; font-size: 10px; }
+.management-actions .secondary-button, .management-actions .text-button { margin: 0; }
+.management-notice { padding: 12px 14px; border: 1px solid #dcebe0; border-radius: 8px; background: #f7fbf8; color: #3f7654; font-size: 12px; line-height: 1.6; }
+@media (max-width: 1000px) { .management-form { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 620px) { .management-form { grid-template-columns: 1fr; padding: 16px; } .management-actions { align-items: stretch; flex-direction: column; } .management-actions select { max-width: 100%; width: 100%; } }
