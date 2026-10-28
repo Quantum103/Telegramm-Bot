@@ -99,7 +99,13 @@ func run(logger *slog.Logger) error {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(pool, logger, catalogService, service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)), authoringService, loginLimiter, true),
+		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(
+			pool, logger, catalogService,
+			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
+			authoringService,
+			service.NewStaffManagementService(repository.NewStaffManagementRepository(pool)),
+			loginLimiter, true,
+		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,

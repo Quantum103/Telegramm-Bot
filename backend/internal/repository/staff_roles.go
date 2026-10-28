@@ -58,6 +58,9 @@ func (r *CatalogRepository) AssignStaffRole(ctx context.Context, actorStaffID, t
 	if _, err := tx.Exec(ctx, "INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details) VALUES ($1, 'staff.role.assign', 'staff_account', $2, jsonb_build_object('role_code', $3::text))", actorStaffID, targetStaffID, roleCode); err != nil {
 		return mapDatabaseError("записать аудит назначения роли сотруднику", err)
 	}
+	if _, err := tx.Exec(ctx, "UPDATE staff_sessions SET revoked_at = now() WHERE staff_id = $1 AND revoked_at IS NULL", targetStaffID); err != nil {
+		return mapDatabaseError("отозвать сессии после изменения роли сотрудника", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать назначение роли сотруднику", err)
 	}
@@ -129,6 +132,9 @@ func (r *CatalogRepository) RevokeStaffRole(ctx context.Context, actorStaffID, t
 	}
 	if _, err := tx.Exec(ctx, "INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details) VALUES ($1, 'staff.role.revoke', 'staff_account', $2, jsonb_build_object('role_code', $3::text))", actorStaffID, targetStaffID, roleCode); err != nil {
 		return mapDatabaseError("записать аудит отзыва роли сотрудника", err)
+	}
+	if _, err := tx.Exec(ctx, "UPDATE staff_sessions SET revoked_at = now() WHERE staff_id = $1 AND revoked_at IS NULL", targetStaffID); err != nil {
+		return mapDatabaseError("отозвать сессии после отзыва роли сотрудника", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать отзыв роли сотрудника", err)

@@ -167,9 +167,11 @@ type staffUpdatedQuestionResponse struct {
 }
 
 type staffIdentityResponse struct {
-	ID          int64  `json:"id"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
+	ID                 int64    `json:"id"`
+	DisplayName        string   `json:"display_name"`
+	Email              string   `json:"email"`
+	Roles              []string `json:"roles"`
+	MustChangePassword bool     `json:"must_change_password"`
 }
 
 type staffLoginResponse struct {
@@ -193,6 +195,7 @@ type handlers struct {
 	catalog      CatalogAPI
 	staffAuth    StaffAuthAPI
 	authoring    StaffAuthoringAPI
+	management   StaffManagementAPI
 	cookieSecure bool
 	loginLimiter StaffLoginRateLimiter
 }
@@ -222,6 +225,15 @@ func NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(database databasePinger,
 }
 
 func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
+	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, nil, cookieSecure, limiter)
+}
+
+// NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter configures the production staff API.
+func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
+	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, management, cookieSecure, limiter)
+}
+
+func newHandlerWithManagement(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -230,7 +242,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, authoring: authoring, cookieSecure: cookieSecure, loginLimiter: limiter,
+		staffAuth: staffAuth, authoring: authoring, management: management, cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -245,6 +257,7 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	if h.staffAuth != nil {
 		mux.HandleFunc("POST /api/v1/staff/auth/login", h.staffLogin)
 		mux.Handle("GET /api/v1/staff/auth/me", h.staffSessionMiddleware(http.HandlerFunc(h.staffMe)))
+		mux.Handle("POST /api/v1/staff/auth/password", h.staffSessionMiddleware(http.HandlerFunc(h.staffChangePassword)))
 		mux.HandleFunc("POST /api/v1/staff/auth/logout", h.staffLogout)
 		// All future staff data routes must be registered on this subrouter.
 		// The whole namespace is protected, so route handlers cannot accidentally bypass auth/CSRF.
@@ -265,6 +278,15 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/questions", h.staffCreateQuestion)
 			staffAdminMux.HandleFunc("PUT /api/v1/staff/admin/lesson-versions/{versionID}/questions/{questionID}", h.staffUpdateQuestion)
 			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/lesson-versions/{versionID}/publish", h.staffPublishLessonVersion)
+		}
+		if h.management != nil {
+			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/staff", h.staffListAccounts)
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/staff", h.staffCreateAccount)
+			staffAdminMux.HandleFunc("PATCH /api/v1/staff/admin/staff/{staffID}/status", h.staffSetAccountStatus)
+			staffAdminMux.HandleFunc("POST /api/v1/staff/admin/staff/{staffID}/reset-password", h.staffResetPassword)
+			staffAdminMux.HandleFunc("GET /api/v1/staff/admin/students", h.staffListStudents)
+			staffAdminMux.HandleFunc("PUT /api/v1/staff/admin/students/{studentID}/curator", h.staffAssignStudentCurator)
+			staffAdminMux.HandleFunc("DELETE /api/v1/staff/admin/students/{studentID}/curator", h.staffEndStudentCuratorAssignment)
 		}
 		mux.Handle("/api/v1/staff/admin/", h.staffAdminMiddleware(staffAdminMux))
 	}
@@ -362,6 +384,7 @@ func (h handlers) staffLogin(w http.ResponseWriter, r *http.Request) {
 	setStaffAuthCookies(w, result.SessionToken, result.CSRFToken, result.ExpiresAt, h.cookieSecure)
 	writeJSON(w, http.StatusOK, staffLoginResponse{Staff: staffIdentityResponse{
 		ID: result.StaffID, DisplayName: result.DisplayName, Email: result.Email,
+		Roles: result.Roles, MustChangePassword: result.MustChangePassword,
 	}})
 }
 
@@ -928,6 +951,12 @@ func (h handlers) staffSessionMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
+		if identity.MustChangePassword &&
+			r.URL.Path != "/api/v1/staff/auth/me" &&
+			r.URL.Path != "/api/v1/staff/auth/password" {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "password_change_required"})
+			return
+		}
 		ctx := context.WithValue(r.Context(), staffSessionContextKey{}, identity)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -940,7 +969,10 @@ func (h handlers) staffMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, staffMeResponse{
-		Staff:     staffIdentityResponse{ID: identity.StaffID, DisplayName: identity.DisplayName, Email: identity.Email},
+		Staff: staffIdentityResponse{
+			ID: identity.StaffID, DisplayName: identity.DisplayName, Email: identity.Email,
+			Roles: identity.Roles, MustChangePassword: identity.MustChangePassword,
+		},
 		ExpiresAt: identity.ExpiresAt,
 	})
 }

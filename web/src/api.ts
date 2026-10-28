@@ -25,6 +25,39 @@ export type StaffIdentity = {
   id: number
   display_name: string
   email: string
+  roles: string[]
+  must_change_password: boolean
+}
+
+export type StaffAccount = {
+  id: number
+  display_name: string
+  email: string
+  account_status: string
+  roles: string[]
+  must_change_password: boolean
+  created_at: string
+}
+
+export type CreatedStaffAccount = {
+  account: StaffAccount
+  temporary_password: string
+}
+
+export type AdminStudent = {
+  id: number
+  telegram_id: number
+  display_name: string
+  telegram_username?: string
+  preferred_name?: string
+  account_status: string
+  registered_at: string
+  last_active_at?: string
+  curator_staff_id?: number
+  curator_display_name?: string
+  total_enrollments: number
+  completed_enrollments: number
+  last_learning_activity_at?: string
 }
 
 export type StaffSession = {
@@ -68,6 +101,8 @@ type LessonsResponse = { lessons: Lesson[] }
 type StaffLoginResponse = { staff: StaffIdentity }
 type StaffCoursesResponse = { courses: Course[] }
 type StaffLessonsResponse = { lessons: StaffLesson[] }
+type StaffAccountsResponse = { accounts: StaffAccount[] }
+type AdminStudentsResponse = { students: AdminStudent[] }
 type APIErrorBody = { error?: string; detail?: string }
 
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -102,6 +137,10 @@ function errorMessage(status: number, body: APIErrorBody): string {
     rate_limited: 'Слишком много попыток входа. Повторите попытку позже.',
     unauthorized: 'Сессия завершена. Войдите в систему ещё раз.',
     insufficient_permissions: 'Для этого действия нужна роль администратора.',
+    password_change_required: 'Перед продолжением установите собственный пароль.',
+    self_status_change_forbidden: 'Нельзя отключить собственную учётную запись.',
+    conflict: 'Операция конфликтует с текущими данными. Обновите страницу и повторите попытку.',
+    invalid_current_password: 'Текущий пароль указан неверно.',
     csrf_token_invalid: 'Проверка безопасности не прошла. Перезагрузите страницу и войдите снова.',
     origin_not_allowed: 'Запрос отклонён проверкой источника. Перезагрузите страницу и повторите попытку.',
     invalid_request: 'Проверьте введённые данные.',
@@ -268,4 +307,97 @@ export async function importDOCXToDraft(courseID: number, file: File): Promise<I
     cache: 'no-store', credentials: 'same-origin', body: form,
   })
   return readJSONResponse<ImportedDraftLesson>(response)
+}
+
+export async function changeStaffPassword(currentPassword: string, newPassword: string): Promise<void> {
+  const response = await fetch('/api/v1/staff/auth/password', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  })
+  if (response.status === 204) return
+  const body: unknown = await response.json().catch(() => null)
+  throw new Error(errorMessage(response.status, asAPIErrorBody(body)))
+}
+
+export async function listStaffAccounts(signal?: AbortSignal): Promise<StaffAccount[]> {
+  const response = await fetch('/api/v1/staff/admin/staff', {
+    method: 'GET', headers: { Accept: 'application/json' },
+    cache: 'no-store', credentials: 'same-origin', signal,
+  })
+  const body = await readJSONResponse<StaffAccountsResponse>(response)
+  if (!body || !Array.isArray(body.accounts)) throw new Error('Сервер вернул некорректный список сотрудников.')
+  return body.accounts
+}
+
+export async function createStaffAccount(displayName: string, email: string, roleCode: 'administrator' | 'curator'): Promise<CreatedStaffAccount> {
+  const response = await fetch('/api/v1/staff/admin/staff', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ display_name: displayName.trim(), email: email.trim(), role_code: roleCode }),
+  })
+  const body = await readJSONResponse<CreatedStaffAccount>(response)
+  if (!body?.account || typeof body.temporary_password !== 'string' || body.temporary_password.length < 32) {
+    throw new Error('Сервер вернул некорректный результат создания сотрудника.')
+  }
+  return body
+}
+
+export async function listAdminStudents(signal?: AbortSignal): Promise<AdminStudent[]> {
+  const response = await fetch('/api/v1/staff/admin/students', {
+    method: 'GET', headers: { Accept: 'application/json' },
+    cache: 'no-store', credentials: 'same-origin', signal,
+  })
+  const body = await readJSONResponse<AdminStudentsResponse>(response)
+  if (!body || !Array.isArray(body.students)) throw new Error('Сервер вернул некорректный список учеников.')
+  return body.students
+}
+
+export async function assignStudentCurator(studentID: number, curatorStaffID: number): Promise<void> {
+  if (!Number.isSafeInteger(studentID) || studentID <= 0 || !Number.isSafeInteger(curatorStaffID) || curatorStaffID <= 0) {
+    throw new Error('Некорректный идентификатор ученика или куратора.')
+  }
+  const response = await fetch(`/api/v1/staff/admin/students/${studentID}/curator`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ curator_staff_id: curatorStaffID }),
+  })
+  await readJSONResponse<unknown>(response)
+}
+
+export async function endStudentCuratorAssignment(studentID: number): Promise<void> {
+  if (!Number.isSafeInteger(studentID) || studentID <= 0) throw new Error('Некорректный идентификатор ученика.')
+  const response = await fetch(`/api/v1/staff/admin/students/${studentID}/curator`, {
+    method: 'DELETE', headers: { Accept: 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+  })
+  await readJSONResponse<unknown>(response)
+}
+
+export async function setStaffAccountStatus(staffID: number, status: 'active' | 'inactive'): Promise<void> {
+  if (!Number.isSafeInteger(staffID) || staffID <= 0) throw new Error('Некорректный идентификатор сотрудника.')
+  const response = await fetch(`/api/v1/staff/admin/staff/${staffID}/status`, {
+    method: 'PATCH',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ account_status: status }),
+  })
+  await readJSONResponse<unknown>(response)
+}
+
+export async function resetStaffPassword(staffID: number): Promise<string> {
+  if (!Number.isSafeInteger(staffID) || staffID <= 0) throw new Error('Некорректный идентификатор сотрудника.')
+  const response = await fetch(`/api/v1/staff/admin/staff/${staffID}/reset-password`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: '{}',
+  })
+  const body = await readJSONResponse<{ temporary_password: string }>(response)
+  if (typeof body?.temporary_password !== 'string' || body.temporary_password.length < 32) {
+    throw new Error('Сервер вернул некорректный временный пароль.')
+  }
+  return body.temporary_password
 }

@@ -7,8 +7,10 @@ type StaffCredentials struct {
 	ID            int64
 	DisplayName   string
 	Email         string
-	PasswordHash  string
-	AccountStatus string
+	PasswordHash       string
+	AccountStatus      string
+	MustChangePassword bool
+	Roles              []string
 }
 
 // StaffSession contains token digests intended for persistent storage.
@@ -25,7 +27,8 @@ type StaffSessionIdentity struct {
 	StaffID       int64
 	DisplayName   string
 	Email         string
-	Roles         []string
-	CSRFTokenHash [32]byte
-	ExpiresAt     time.Time
+	Roles              []string
+	CSRFTokenHash      [32]byte
+	ExpiresAt          time.Time
+	MustChangePassword bool
 }

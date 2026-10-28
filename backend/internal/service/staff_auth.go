@@ -28,8 +28,10 @@ type StaffAuthStore interface {
 type StaffLoginResult struct {
 	StaffID      int64
 	DisplayName  string
-	Email        string
-	SessionToken string
+	Email              string
+	Roles              []string
+	MustChangePassword bool
+	SessionToken       string
 	CSRFToken    string
 	ExpiresAt    time.Time
 }
@@ -88,8 +90,9 @@ func (s *StaffAuthService) Login(ctx context.Context, email, password string) (S
 
 	return StaffLoginResult{
 		StaffID: credentials.ID, DisplayName: credentials.DisplayName,
-		Email: credentials.Email, SessionToken: sessionToken,
-		CSRFToken: csrfToken, ExpiresAt: expiresAt,
+		Email: credentials.Email, Roles: append([]string(nil), credentials.Roles...),
+		MustChangePassword: credentials.MustChangePassword,
+		SessionToken: sessionToken, CSRFToken: csrfToken, ExpiresAt: expiresAt,
 	}, nil
 }
 
@@ -100,6 +103,42 @@ func (s *StaffAuthService) Logout(ctx context.Context, sessionToken string) erro
 		return nil
 	}
 	return s.store.RevokeSessionByTokenHash(ctx, auth.HashToken(sessionToken))
+}
+
+type staffPasswordStore interface {
+	GetCredentialsByID(context.Context, int64) (domain.StaffCredentials, error)
+	UpdatePasswordAndRevokeSessions(context.Context, int64, string) error
+}
+
+// ChangePassword verifies the current password and atomically invalidates all existing sessions.
+func (s *StaffAuthService) ChangePassword(ctx context.Context, staffID int64, currentPassword, newPassword string) error {
+	if staffID <= 0 || currentPassword == "" || len(currentPassword) > 1024 ||
+		len(newPassword) < 12 || len(newPassword) > 1024 || currentPassword == newPassword {
+		return domain.ErrInvalidInput
+	}
+	store, ok := s.store.(staffPasswordStore)
+	if !ok {
+		return domain.ErrInvalidState
+	}
+	credentials, err := store.GetCredentialsByID(ctx, staffID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return ErrInvalidStaffSession
+		}
+		return err
+	}
+	if credentials.AccountStatus != "active" || credentials.PasswordHash == "" {
+		return ErrInvalidStaffSession
+	}
+	valid, err := auth.VerifyPassword(currentPassword, credentials.PasswordHash)
+	if err != nil || !valid {
+		return ErrInvalidStaffCredentials
+	}
+	passwordHash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		return domain.ErrInvalidInput
+	}
+	return store.UpdatePasswordAndRevokeSessions(ctx, staffID, passwordHash)
 }
 
 // AuthenticateSession validates the opaque session token against the server-side
