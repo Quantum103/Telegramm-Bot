@@ -2,7 +2,6 @@ package telegrambot
 
 import (
 	"fmt"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,7 +9,7 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
-// Bible.by uses the traditional 66-book order for its Synodal chapter URLs.
+// Full chapter files use the traditional order of the 66 books of the Bible.
 var bibleBookIDs = map[string]int{
 	"бытие": 1, "быт": 1, "genesis": 1, "gen": 1,
 	"исход": 2, "исх": 2, "exodus": 2, "ex": 2,
@@ -104,16 +103,6 @@ type bibleChapterTarget struct {
 	chapter    int
 	ranges     []bibleVerseRange
 	references []string
-}
-
-// normalizeWebAppBaseURL rejects non-HTTPS URLs: Telegram Mini Apps must be hosted over HTTPS.
-func normalizeWebAppBaseURL(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return ""
-	}
-	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "?")
 }
 
 func supportedBibleTranslation(passage domain.BiblePassage) bool {
@@ -213,48 +202,4 @@ func formatBibleVerseRanges(ranges []bibleVerseRange) string {
 		}
 	}
 	return strings.Join(parts, ",")
-}
-
-func chapterMiniAppURL(baseURL, question string, target bibleChapterTarget) string {
-	base := normalizeWebAppBaseURL(baseURL)
-	if base == "" {
-		return ""
-	}
-	parsed, err := url.Parse(base)
-	if err != nil {
-		return ""
-	}
-	query := parsed.Query()
-	query.Set("view", "chapter")
-	query.Set("book_id", strconv.Itoa(target.bookID))
-	query.Set("book", target.bookName)
-	query.Set("chapter", strconv.Itoa(target.chapter))
-	query.Set("translation", "synodal")
-	query.Set("highlight", formatBibleVerseRanges(target.ranges))
-	query.Set("reference", strings.Join(target.references, "; "))
-	if value := strings.TrimSpace(question); value != "" {
-		query.Set("question", truncate(value, 700))
-	}
-	parsed.RawQuery = query.Encode()
-	return parsed.String()
-}
-
-// chapterWebAppButtons opens the project's own reader inside Telegram, never a third-party Bible site.
-func chapterWebAppButtons(baseURL, question string, passages []domain.BiblePassage) []InlineKeyboardButton {
-	targets := bibleChapterTargets(passages)
-	buttons := make([]InlineKeyboardButton, 0, len(targets))
-	for _, target := range targets {
-		chapterURL := chapterMiniAppURL(baseURL, question, target)
-		if chapterURL == "" {
-			continue
-		}
-		label := "📖 Прочитать всю главу"
-		if len(targets) > 1 {
-			label = fmt.Sprintf("📖 %s %d", target.bookName, target.chapter)
-		}
-		buttons = append(buttons, InlineKeyboardButton{
-			Text: label, WebApp: &WebAppInfo{URL: chapterURL},
-		})
-	}
-	return buttons
 }

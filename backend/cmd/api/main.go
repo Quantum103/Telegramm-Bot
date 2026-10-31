@@ -132,9 +132,13 @@ func run(logger *slog.Logger) error {
 		logger.Info("Telegram-бот отключён: переменная TELEGRAM_BOT_TOKEN не задана")
 	} else {
 		botDone = make(chan struct{})
-		bot := telegrambot.NewBotWithWebAppURL(
+		chapterPublisher := telegrambot.NewTelegraphPublisher(os.Getenv("TELEGRAPH_ACCESS_TOKEN"))
+		if chapterPublisher == nil {
+			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
+		}
+		bot := telegrambot.NewBotWithChapterPublisher(
 			telegrambot.NewHTTPClient(cfg.TelegramBotToken), studentService, catalogService, learningService,
-			logger, os.Getenv("TELEGRAM_WEB_APP_URL"),
+			logger, chapterPublisher,
 		)
 		go func() {
 			defer close(botDone)

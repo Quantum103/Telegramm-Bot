@@ -42,14 +42,10 @@ type Message struct {
 	Text      string `json:"text"`
 }
 
-type WebAppInfo struct {
-	URL string `json:"url"`
-}
-
 type InlineKeyboardButton struct {
-	Text         string      `json:"text"`
-	CallbackData string      `json:"callback_data,omitempty"`
-	WebApp       *WebAppInfo `json:"web_app,omitempty"`
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
 }
 
 type InlineKeyboardMarkup struct {
@@ -272,8 +268,8 @@ type Bot struct {
 	students  StudentRegistrar
 	catalog   CourseCatalog
 	learning  LearningNavigator
-	logger    *slog.Logger
-	webAppURL string
+	logger           *slog.Logger
+	chapterPublisher ChapterPagePublisher
 
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
@@ -284,17 +280,17 @@ type Bot struct {
 }
 
 func NewBot(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger) *Bot {
-	return NewBotWithWebAppURL(api, students, catalog, learning, logger, "")
+	return NewBotWithChapterPublisher(api, students, catalog, learning, logger, nil)
 }
 
-// NewBotWithWebAppURL enables the chapter reader inside Telegram when a public HTTPS Mini App URL is configured.
-func NewBotWithWebAppURL(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, webAppURL string) *Bot {
+// NewBotWithChapterPublisher enables full-chapter links when a Telegraph publisher is configured.
+func NewBotWithChapterPublisher(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
-		webAppURL:    normalizeWebAppBaseURL(webAppURL),
+		chapterPublisher: publisher,
 		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}

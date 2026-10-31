@@ -202,12 +202,12 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	}
 
 	var rows [][]InlineKeyboardButton
-	chapterButtons := chapterWebAppButtons(b.webAppURL, question.Prompt, question.BiblePassages)
+	chapterButtons, chapterNotice := b.chapterTelegraphButtons(ctx, question.BiblePassages)
 	for _, chapterButton := range chapterButtons {
 		rows = append(rows, []InlineKeyboardButton{chapterButton})
 	}
-	if len(question.BiblePassages) > 0 && b.webAppURL == "" {
-		message.text("\n\n⚙️ Просмотр полной главы внутри Telegram появится после настройки Mini App (HTTPS-адрес проекта).")
+	if chapterNotice != "" {
+		message.text("\n\n" + chapterNotice)
 	}
 
 	key := answerStateKey{studentID: studentID, enrollmentID: progress.Enrollment.ID, questionID: question.ID}

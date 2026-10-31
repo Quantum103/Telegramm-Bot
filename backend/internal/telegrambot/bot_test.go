@@ -428,6 +428,17 @@ func newTestBot(api *fakeAPI, students *fakeStudents, catalog *fakeCatalog, lear
 	return NewBot(api, students, catalog, learning, logger)
 }
 
+type fakeChapterPublisher struct {
+	url        string
+	err        error
+	references []ChapterReference
+}
+
+func (f *fakeChapterPublisher) PublishChapter(_ context.Context, reference ChapterReference) (string, error) {
+	f.references = append(f.references, reference)
+	return f.url, f.err
+}
+
 func testUser() User {
 	return User{ID: 987654, FirstName: "Анна", LastName: "Иванова", Username: "anna"}
 }
@@ -560,7 +571,7 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	}
 }
 
-func TestOpeningLessonRendersFormattedPassageAndMiniAppChapterButton(t *testing.T) {
+func TestOpeningLessonRendersFormattedPassageAndTelegraphChapterButton(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
@@ -573,7 +584,8 @@ func TestOpeningLessonRendersFormattedPassageAndMiniAppChapterButton(t *testing.
 	}}
 	catalog.details[100] = detail
 
-	bot := NewBotWithWebAppURL(api, students, catalog, learning, nil, "https://reader.example/miniapp")
+	publisher := &fakeChapterPublisher{url: "https://telegra.ph/Matfeya-4-01-01"}
+	bot := NewBotWithChapterPublisher(api, students, catalog, learning, nil, publisher)
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
@@ -608,18 +620,21 @@ func TestOpeningLessonRendersFormattedPassageAndMiniAppChapterButton(t *testing.
 			}
 		}
 	}
-	if chapterButton == nil || chapterButton.WebApp == nil {
-		t.Fatalf("chapter reader should be opened by an inline Web App button: %+v", last.markup)
+	if chapterButton == nil || chapterButton.URL == "" {
+		t.Fatalf("chapter reader should be opened by a regular URL button: %+v", last.markup)
 	}
 	if chapterButton.CallbackData != "" {
-		t.Fatalf("Mini App button must not contain callback_data: %+v", chapterButton)
+		t.Fatalf("Telegraph URL button must not contain callback_data: %+v", chapterButton)
 	}
-	parsed, err := url.Parse(chapterButton.WebApp.URL)
+	parsed, err := url.Parse(chapterButton.URL)
 	if err != nil {
-		t.Fatalf("parse Mini App URL: %v", err)
+		t.Fatalf("parse Telegraph URL: %v", err)
 	}
-	if parsed.Scheme != "https" || parsed.Host != "reader.example" || parsed.Query().Get("highlight") != "4-7" {
-		t.Fatalf("unexpected chapter Mini App URL: %s", chapterButton.WebApp.URL)
+	if parsed.Scheme != "https" || parsed.Host != "telegra.ph" {
+		t.Fatalf("unexpected Telegraph URL: %s", chapterButton.URL)
+	}
+	if len(publisher.references) != 1 || publisher.references[0].BookID != 40 || publisher.references[0].Chapter != 4 {
+		t.Fatalf("published chapter references = %+v, want Matthew 4", publisher.references)
 	}
 }
 
