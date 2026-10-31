@@ -542,7 +542,7 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "Евангелие от Марка") || !strings.Contains(last.text, "Вопрос 1 из 2") ||
+	if !strings.Contains(last.text, "Евангелие от Марка") || !strings.Contains(last.text, "ВОПРОС 1 / 2") ||
 		!strings.Contains(last.text, "Кто написал Евангелие от Марка?") {
 		t.Fatalf("question screen was not rendered correctly: %q", last.text)
 	}
@@ -635,7 +635,7 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "Вопрос 2 из 2") || !strings.Contains(last.text, "Как начинается повествование?") {
+	if !strings.Contains(last.text, "ВОПРОС 2 / 2") || !strings.Contains(last.text, "Как начинается повествование?") {
 		t.Fatalf("next question not shown: %q", last.text)
 	}
 	if hasButtonPrefix(last.markup, "nav:next:") {
@@ -647,7 +647,7 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("nav:prev:701:1002:10", user, messageID))
 	last = lastEdit(t, api)
-	if !strings.Contains(last.text, "Вопрос 1 из 2") {
+	if !strings.Contains(last.text, "ВОПРОС 1 / 2") {
 		t.Fatalf("previous question not shown: %q", last.text)
 	}
 	if len(api.messages) != 1 {
@@ -757,7 +757,7 @@ func TestStaleNavigationDoesNotSkipQuestion(t *testing.T) {
 
 	// Повторно доставленная старая кнопка не должна переводить ученика с вопроса 2 на другой вопрос.
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
-	if !strings.Contains(lastEdit(t, api).text, "Вопрос 2 из 2") {
+	if !strings.Contains(lastEdit(t, api).text, "ВОПРОС 2 / 2") {
 		t.Fatalf("stale callback changed the saved position: %q", lastEdit(t, api).text)
 	}
 }
@@ -781,7 +781,7 @@ func TestProgressPositionRestoredAfterNewBotInstance(t *testing.T) {
 	restartedBot.handleCallback(context.Background(), testCallback("lesson:10:100", user, newMessageID))
 
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "Вопрос 2 из 2") {
+	if !strings.Contains(last.text, "ВОПРОС 2 / 2") {
 		t.Fatalf("saved question position was not restored: %q", last.text)
 	}
 }
