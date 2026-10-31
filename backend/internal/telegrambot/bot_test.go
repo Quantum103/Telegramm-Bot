@@ -927,7 +927,7 @@ func TestHTTPClientUsesHTMLParseModeAndDisablesLinkPreviews(t *testing.T) {
 	var linkPreviewsDisabled []bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
-			ParseMode         string `json:"parse_mode"`
+			ParseMode          string `json:"parse_mode"`
 			LinkPreviewOptions struct {
 				IsDisabled bool `json:"is_disabled"`
 			} `json:"link_preview_options"`
