@@ -922,16 +922,21 @@ func TestRunStopsOnPollingConflict(t *testing.T) {
 	}
 }
 
-func TestHTTPClientUsesHTMLParseModeForRichMessages(t *testing.T) {
+func TestHTTPClientUsesHTMLParseModeAndDisablesLinkPreviews(t *testing.T) {
 	var parseModes []string
+	var linkPreviewsDisabled []bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
-			ParseMode string `json:"parse_mode"`
+			ParseMode         string `json:"parse_mode"`
+			LinkPreviewOptions struct {
+				IsDisabled bool `json:"is_disabled"`
+			} `json:"link_preview_options"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Errorf("decode Telegram request: %v", err)
 		}
 		parseModes = append(parseModes, payload.ParseMode)
+		linkPreviewsDisabled = append(linkPreviewsDisabled, payload.LinkPreviewOptions.IsDisabled)
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/bottoken/sendMessage" {
 			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":42}}`))
@@ -950,6 +955,9 @@ func TestHTTPClientUsesHTMLParseModeForRichMessages(t *testing.T) {
 	}
 	if len(parseModes) != 2 || parseModes[0] != "HTML" || parseModes[1] != "HTML" {
 		t.Fatalf("parse modes = %#v, want HTML for send and edit", parseModes)
+	}
+	if len(linkPreviewsDisabled) != 2 || !linkPreviewsDisabled[0] || !linkPreviewsDisabled[1] {
+		t.Fatalf("link previews disabled = %#v, want true for both send and edit", linkPreviewsDisabled)
 	}
 }
 
