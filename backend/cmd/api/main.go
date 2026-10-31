@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bootstrapadmin"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/config"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/database"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/httpserver"
@@ -132,7 +133,18 @@ func run(logger *slog.Logger) error {
 		logger.Info("Telegram-бот отключён: переменная TELEGRAM_BOT_TOKEN не задана")
 	} else {
 		botDone = make(chan struct{})
-		chapterPublisher := telegrambot.NewTelegraphPublisher(os.Getenv("TELEGRAPH_ACCESS_TOKEN"))
+		bibleChapterRepository := repository.NewBibleChapterRepository(pool)
+		bibleChapterService := service.NewBibleChapterService(
+			bibleChapterRepository,
+			bibletext.NewMidvashClient(nil),
+			bibletext.NewGetBibleClient(nil),
+			logger,
+		)
+		chapterPublisher := telegrambot.NewTelegraphPublisherWithDependencies(
+			os.Getenv("TELEGRAPH_ACCESS_TOKEN"),
+			bibleChapterService,
+			bibleChapterRepository,
+		)
 		if chapterPublisher == nil {
 			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
 		}
