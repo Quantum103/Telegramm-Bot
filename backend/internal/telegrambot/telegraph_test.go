@@ -358,7 +358,7 @@ func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *test
 		if err := json.Unmarshal([]byte(r.Form.Get("content")), &nodes); err != nil {
 			t.Errorf("unmarshal Telegraph content: %v", err)
 		}
-		if len(nodes) != 2 || nodes[0].Children[0] != "1. Первый стих." {
+		if len(nodes) != 2 || nodes[0].Children[0] != "1. Тогда Иисус возведен был Духом в пустыню." {
 			t.Errorf("Telegraph content should contain only plain verse text, got %+v", nodes)
 		}
 		w.Header().Set("Content-Type", "application/json")
