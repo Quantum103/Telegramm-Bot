@@ -16,13 +16,13 @@ import (
 )
 
 type mockBibleChapterStore struct {
-	mu          sync.Mutex
-	record      *domain.BibleChapter
-	getErr      error
-	saveErr     error
-	getCalls    int
-	saveCalls   int
-	getCalled   chan struct{}
+	mu        sync.Mutex
+	record    *domain.BibleChapter
+	getErr    error
+	saveErr   error
+	getCalls  int
+	saveCalls int
+	getCalled chan struct{}
 }
 
 func (store *mockBibleChapterStore) GetChapter(
