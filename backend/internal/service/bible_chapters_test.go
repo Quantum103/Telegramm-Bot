@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -394,7 +394,6 @@ func TestBibleChapterServiceRejectsInvalidReference(t *testing.T) {
 	}
 }
 
-
 func TestBibleChapterServiceFallsBackAfterMidvashReturnsMalformedJSON(t *testing.T) {
 	var midvashCatalogCalls, midvashChapterCalls, getBibleCalls int
 
@@ -411,7 +410,7 @@ func TestBibleChapterServiceFallsBackAfterMidvashReturnsMalformedJSON(t *testing
 					slug, englishName, russianName = "matthew", "Matthew", "Матфей"
 				}
 				books = append(books, map[string]any{
-					"id": id,
+					"id":   id,
 					"slug": map[string]string{"en": slug},
 					"name": map[string]string{"en": englishName, "ru": russianName},
 				})
