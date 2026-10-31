@@ -148,8 +148,25 @@ func (c *HTTPClient) SendMessage(ctx context.Context, chatID int64, text string)
 	}, nil)
 }
 
+// htmlTelegramAPI is implemented by clients that can render formatted Telegram messages.
+type htmlTelegramAPI interface {
+	SendHTMLMessageWithKeyboard(context.Context, int64, string, *InlineKeyboardMarkup) (int64, error)
+	EditHTMLMessageText(context.Context, int64, int64, string, *InlineKeyboardMarkup) error
+}
+
 func (c *HTTPClient) SendMessageWithKeyboard(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup) (int64, error) {
+	return c.sendMessageWithKeyboard(ctx, chatID, text, replyMarkup, "")
+}
+
+func (c *HTTPClient) SendHTMLMessageWithKeyboard(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup) (int64, error) {
+	return c.sendMessageWithKeyboard(ctx, chatID, text, replyMarkup, "HTML")
+}
+
+func (c *HTTPClient) sendMessageWithKeyboard(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup, parseMode string) (int64, error) {
 	payload := map[string]any{"chat_id": chatID, "text": text}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
+	}
 	if replyMarkup != nil {
 		payload["reply_markup"] = replyMarkup
 	}
@@ -163,7 +180,18 @@ func (c *HTTPClient) SendMessageWithKeyboard(ctx context.Context, chatID int64, 
 }
 
 func (c *HTTPClient) EditMessageText(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup) error {
+	return c.editMessageText(ctx, chatID, messageID, text, replyMarkup, "")
+}
+
+func (c *HTTPClient) EditHTMLMessageText(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup) error {
+	return c.editMessageText(ctx, chatID, messageID, text, replyMarkup, "HTML")
+}
+
+func (c *HTTPClient) editMessageText(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup, parseMode string) error {
 	payload := map[string]any{"chat_id": chatID, "message_id": messageID, "text": text}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
+	}
 	if replyMarkup != nil {
 		payload["reply_markup"] = replyMarkup
 	}

@@ -2,6 +2,7 @@ package telegrambot
 
 import (
 	"context"
+	"html"
 	"errors"
 	"fmt"
 	"strconv"
@@ -183,8 +184,36 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	if total <= 0 {
 		total = number
 	}
-	text := fmt.Sprintf("📖 %s\nВопрос %d из %d\n\n%s",
-		truncate(lessonTitle, 180), number, total, question.Prompt)
+
+	message := newTelegramHTMLBuilder(3800)
+	message.text(fmt.Sprintf("📖 %s\nВопрос %d из %d\n\n", truncate(lessonTitle, 180), number, total))
+	message.raw("<b>")
+	message.text("Вопрос: " + question.Prompt)
+	message.raw("</b>")
+
+	// Повторяющиеся ссылки на одну главу показываем один раз.
+	seenChapterURLs := make(map[string]struct{})
+	for _, passage := range question.BiblePassages {
+		message.text("\n\nОткуда взято: " + biblePassageReference(passage))
+		if passage.PassageText != nil && strings.TrimSpace(*passage.PassageText) != "" {
+			message.text("\nБиблейский текст:\n")
+			message.raw("<pre>")
+			message.text(truncate(*passage.PassageText, 1400))
+			message.raw("</pre>")
+		}
+		if chapterURL := bibleChapterURL(passage); chapterURL != "" {
+			if _, exists := seenChapterURLs[chapterURL]; !exists {
+				seenChapterURLs[chapterURL] = struct{}{}
+				message.text("\n")
+				message.raw(`<a href="` + html.EscapeString(chapterURL) + `"><u>`)
+				message.text("Прочитать всю главу")
+				message.raw("</u></a>")
+			}
+		}
+		if message.truncated {
+			break
+		}
+	}
 
 	var rows [][]InlineKeyboardButton
 	key := answerStateKey{studentID: studentID, enrollmentID: progress.Enrollment.ID, questionID: question.ID}
@@ -195,19 +224,19 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	switch question.AnswerType {
 	case "text":
 		if hasSaved {
-			text += "\n\nВаш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650)
-			text += "\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ."
+			message.text("\n\nВаш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650))
+			message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ.")
 		} else {
-			text += "\n\nОтправьте ответ следующим сообщением."
+			message.text("\n\nОтправьте ответ следующим сообщением.")
 		}
 	case "single_choice", "multiple_choice":
 		if showOptions {
 			if len(question.Options) == 0 {
-				text += "\n\nДля этого вопроса пока нет доступных вариантов ответа."
+				message.text("\n\nДля этого вопроса пока нет доступных вариантов ответа.")
 			} else if question.AnswerType == "single_choice" {
-				text += "\n\nВыберите один вариант ответа:"
+				message.text("\n\nВыберите один вариант ответа:")
 			} else {
-				text += "\n\nОтметьте подходящие варианты и нажмите «Подтвердить выбор»:"
+				message.text("\n\nОтметьте подходящие варианты и нажмите «Подтвердить выбор»:")
 			}
 			selected := b.multiDraftSelection(key)
 			if question.AnswerType == "single_choice" && hasSaved {
@@ -234,14 +263,18 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 				rows = append(rows, []InlineKeyboardButton{button("Подтвердить выбор", fmt.Sprintf("s:%d:%d", progress.Enrollment.ID, question.ID))})
 			}
 		} else if hasSaved {
-			text += "\n\nСохранённый выбор: " + truncate(optionSummary(question.Options, state.SavedAnswer.SelectedOptionIDs), 650)
-			text += "\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена."
+			message.text("\n\nСохранённый выбор: " + truncate(optionSummary(question.Options, state.SavedAnswer.SelectedOptionIDs), 650))
+			message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена.")
 			rows = append(rows, []InlineKeyboardButton{button("Изменить ответ", fmt.Sprintf("e:%d:%d", progress.Enrollment.ID, question.ID))})
 		}
 	default:
-		text += "\n\nЭтот тип вопроса пока не поддерживается ботом."
+		message.text("\n\nЭтот тип вопроса пока не поддерживается ботом.")
 	}
 
+	if message.truncated {
+		message.raw("\n\n")
+		message.text("Сообщение сокращено из-за ограничения Telegram.")
+	}
 	if progress.PreviousQuestionID != nil {
 		rows = append(rows, []InlineKeyboardButton{button("← Назад", navigationCallback("prev", progress.Enrollment.ID, question.ID, courseID))})
 	}
@@ -258,9 +291,8 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	} else {
 		rows = append(rows, []InlineKeyboardButton{button("К курсам", "courses")})
 	}
-	b.render(ctx, chatID, messageID, truncate(text, 3900), markup(rows))
+	b.renderHTML(ctx, chatID, messageID, message.String(), markup(rows))
 }
-
 func optionSummary(options []domain.QuestionOption, selectedIDs []int64) string {
 	selected := make(map[int64]struct{}, len(selectedIDs))
 	for _, id := range selectedIDs {
@@ -408,6 +440,39 @@ func (b *Bot) render(ctx context.Context, chatID, messageID int64, text string, 
 		sentID, sendErr := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
 		if sendErr != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить новое основное сообщение Telegram", "chat_id", chatID, "error", sendErr)
+		} else if sendErr == nil {
+			b.rememberMainMessage(chatID, sentID)
+		}
+	}
+}
+
+// renderHTML keeps formatting confined to question screens. Other bot messages remain plain text.
+func (b *Bot) renderHTML(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup) {
+	api, ok := b.api.(htmlTelegramAPI)
+	if !ok {
+		b.logger.Error("Telegram API client does not support HTML messages", "chat_id", chatID)
+		return
+	}
+	if messageID <= 0 {
+		sentID, err := api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		if err != nil && ctx.Err() == nil {
+			b.logger.Warn("не удалось отправить HTML-экран Telegram", "chat_id", chatID, "error", err)
+		} else if err == nil {
+			b.rememberMainMessage(chatID, sentID)
+		}
+		return
+	}
+	if err := api.EditHTMLMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil {
+		b.rememberMainMessage(chatID, messageID)
+		return
+	} else if isMessageNotModified(err) {
+		b.rememberMainMessage(chatID, messageID)
+		return
+	} else if ctx.Err() == nil {
+		b.logger.Warn("не удалось изменить HTML-сообщение Telegram; создаём новое", "chat_id", chatID, "message_id", messageID, "error", err)
+		sentID, sendErr := api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		if sendErr != nil && ctx.Err() == nil {
+			b.logger.Warn("не удалось отправить новое HTML-сообщение Telegram", "chat_id", chatID, "error", sendErr)
 		} else if sendErr == nil {
 			b.rememberMainMessage(chatID, sentID)
 		}

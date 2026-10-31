@@ -22,6 +22,7 @@ type sentMessage struct {
 	messageID int64
 	text      string
 	markup    *InlineKeyboardMarkup
+	parseMode string
 }
 
 type editedMessage struct {
@@ -29,6 +30,7 @@ type editedMessage struct {
 	messageID int64
 	text      string
 	markup    *InlineKeyboardMarkup
+	parseMode string
 }
 
 type fakeAPI struct {
@@ -80,7 +82,15 @@ func (f *fakeAPI) SendMessage(_ context.Context, chatID int64, text string) erro
 	return err
 }
 
-func (f *fakeAPI) SendMessageWithKeyboard(_ context.Context, chatID int64, text string, markup *InlineKeyboardMarkup) (int64, error) {
+func (f *fakeAPI) SendMessageWithKeyboard(ctx context.Context, chatID int64, text string, markup *InlineKeyboardMarkup) (int64, error) {
+	return f.sendMessageWithKeyboard(chatID, text, markup, "")
+}
+
+func (f *fakeAPI) SendHTMLMessageWithKeyboard(ctx context.Context, chatID int64, text string, markup *InlineKeyboardMarkup) (int64, error) {
+	return f.sendMessageWithKeyboard(chatID, text, markup, "HTML")
+}
+
+func (f *fakeAPI) sendMessageWithKeyboard(chatID int64, text string, markup *InlineKeyboardMarkup, parseMode string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sendErr != nil {
@@ -91,17 +101,25 @@ func (f *fakeAPI) SendMessageWithKeyboard(_ context.Context, chatID int64, text 
 		f.nextMessageID = 100
 	}
 	messageID := f.nextMessageID
-	f.messages = append(f.messages, sentMessage{chatID: chatID, messageID: messageID, text: text, markup: markup})
+	f.messages = append(f.messages, sentMessage{chatID: chatID, messageID: messageID, text: text, markup: markup, parseMode: parseMode})
 	return messageID, nil
 }
 
-func (f *fakeAPI) EditMessageText(_ context.Context, chatID, messageID int64, text string, markup *InlineKeyboardMarkup) error {
+func (f *fakeAPI) EditMessageText(ctx context.Context, chatID, messageID int64, text string, markup *InlineKeyboardMarkup) error {
+	return f.editMessageText(chatID, messageID, text, markup, "")
+}
+
+func (f *fakeAPI) EditHTMLMessageText(ctx context.Context, chatID, messageID int64, text string, markup *InlineKeyboardMarkup) error {
+	return f.editMessageText(chatID, messageID, text, markup, "HTML")
+}
+
+func (f *fakeAPI) editMessageText(chatID, messageID int64, text string, markup *InlineKeyboardMarkup, parseMode string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.editErr != nil {
 		return f.editErr
 	}
-	f.edits = append(f.edits, editedMessage{chatID: chatID, messageID: messageID, text: text, markup: markup})
+	f.edits = append(f.edits, editedMessage{chatID: chatID, messageID: messageID, text: text, markup: markup, parseMode: parseMode})
 	return nil
 }
 
@@ -541,6 +559,48 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	}
 }
 
+func TestOpeningLessonRendersFormattedBiblePassageAndChapterLink(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+
+	passageText := "Он же сказал ему в ответ: написано: не хлебом одним будет жить человек."
+	detail := catalog.details[100]
+	detail.Questions[0].Prompt = "Почему Иисус ответил словами Писания <и не иначе>?"
+	detail.Questions[0].BiblePassages = []domain.BiblePassage{{
+		BookName: "Матфея", Chapter: 4, StartVerse: 4, EndVerse: 7, PassageText: &passageText,
+	}}
+	catalog.details[100] = detail
+
+	bot := newTestBot(api, students, catalog, learning)
+	user := testUser()
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
+
+	last := lastEdit(t, api)
+	for _, expected := range []string{
+		"<b>Вопрос: Почему Иисус ответил словами Писания &lt;и не иначе&gt;?</b>",
+		"Откуда взято: Матфея 4:4-7",
+		"Библейский текст:",
+		"<pre>Он же сказал ему в ответ: написано: не хлебом одним будет жить человек.</pre>",
+		`<a href="https://bible.by/syn/40/4/"><u>Прочитать всю главу</u></a>`,
+	} {
+		if !strings.Contains(last.text, expected) {
+			t.Fatalf("formatted question is missing %q: %s", expected, last.text)
+		}
+	}
+	if strings.Contains(last.text, "<и не иначе>") {
+		t.Fatal("question text was not escaped for Telegram HTML")
+	}
+	if last.parseMode != "HTML" {
+		t.Fatalf("question screen parse mode = %q, want HTML", last.parseMode)
+	}
+	if hasButton(last.markup, "Прочитать всю главу") {
+		t.Fatal("chapter link should be part of the message text, not a separate keyboard button")
+	}
+}
+
 func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
@@ -836,6 +896,37 @@ func TestRunStopsOnPollingConflict(t *testing.T) {
 	err := bot.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "409") {
 		t.Fatalf("Run error = %v, want a fatal 409 polling-conflict error", err)
+	}
+}
+
+func TestHTTPClientUsesHTMLParseModeForRichMessages(t *testing.T) {
+	var parseModes []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			ParseMode string `json:"parse_mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode Telegram request: %v", err)
+		}
+		parseModes = append(parseModes, payload.ParseMode)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/bottoken/sendMessage" {
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":42}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer server.Close()
+
+	client := newHTTPClient("token", server.URL, server.Client())
+	if _, err := client.SendHTMLMessageWithKeyboard(context.Background(), 10, "<b>Вопрос</b>", nil); err != nil {
+		t.Fatalf("SendHTMLMessageWithKeyboard: %v", err)
+	}
+	if err := client.EditHTMLMessageText(context.Background(), 10, 42, "<u>Ссылка</u>", nil); err != nil {
+		t.Fatalf("EditHTMLMessageText: %v", err)
+	}
+	if len(parseModes) != 2 || parseModes[0] != "HTML" || parseModes[1] != "HTML" {
+		t.Fatalf("parse modes = %#v, want HTML for send and edit", parseModes)
 	}
 }
 
