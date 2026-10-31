@@ -167,6 +167,9 @@ func (c *HTTPClient) sendMessageWithKeyboard(ctx context.Context, chatID int64, 
 	payload := map[string]any{"chat_id": chatID, "text": text}
 	if parseMode != "" {
 		payload["parse_mode"] = parseMode
+		if parseMode == "HTML" {
+			payload["link_preview_options"] = map[string]bool{"is_disabled": true}
+		}
 	}
 	if replyMarkup != nil {
 		payload["reply_markup"] = replyMarkup
@@ -192,6 +195,9 @@ func (c *HTTPClient) editMessageText(ctx context.Context, chatID, messageID int6
 	payload := map[string]any{"chat_id": chatID, "message_id": messageID, "text": text}
 	if parseMode != "" {
 		payload["parse_mode"] = parseMode
+		if parseMode == "HTML" {
+			payload["link_preview_options"] = map[string]bool{"is_disabled": true}
+		}
 	}
 	if replyMarkup != nil {
 		payload["reply_markup"] = replyMarkup
