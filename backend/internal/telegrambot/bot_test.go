@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -559,12 +560,12 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	}
 }
 
-func TestOpeningLessonRendersFormattedBiblePassageAndChapterLink(t *testing.T) {
+func TestOpeningLessonRendersFormattedPassageAndMiniAppChapterButton(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
 
-	passageText := "Он же сказал ему в ответ: написано: не хлебом одним будет жить человек."
+	passageText := "Он же сказал ему в ответ: написано: не хлебом одним будет жить человек <и словом>."
 	detail := catalog.details[100]
 	detail.Questions[0].Prompt = "Почему Иисус ответил словами Писания <и не иначе>?"
 	detail.Questions[0].BiblePassages = []domain.BiblePassage{{
@@ -572,7 +573,7 @@ func TestOpeningLessonRendersFormattedBiblePassageAndChapterLink(t *testing.T) {
 	}}
 	catalog.details[100] = detail
 
-	bot := newTestBot(api, students, catalog, learning)
+	bot := NewBotWithWebAppURL(api, students, catalog, learning, nil, "https://reader.example/miniapp")
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
@@ -580,24 +581,45 @@ func TestOpeningLessonRendersFormattedBiblePassageAndChapterLink(t *testing.T) {
 
 	last := lastEdit(t, api)
 	for _, expected := range []string{
-		"<b>Вопрос: Почему Иисус ответил словами Писания &lt;и не иначе&gt;?</b>",
+		"<b>ВОПРОС</b>",
+		"<blockquote>Почему Иисус ответил словами Писания &lt;и не иначе&gt;?</blockquote>",
 		"Откуда взято: Матфея 4:4-7",
 		"Библейский текст:",
-		"<pre>Он же сказал ему в ответ: написано: не хлебом одним будет жить человек.</pre>",
-		`<a href="https://bible.by/syn/40/4/"><u>Прочитать всю главу</u></a>`,
+		"<blockquote>Он же сказал ему в ответ: написано: не хлебом одним будет жить человек &lt;и словом&gt;.</blockquote>",
 	} {
 		if !strings.Contains(last.text, expected) {
 			t.Fatalf("formatted question is missing %q: %s", expected, last.text)
 		}
 	}
-	if strings.Contains(last.text, "<и не иначе>") {
-		t.Fatal("question text was not escaped for Telegram HTML")
+	if strings.Contains(last.text, "bible.by") || strings.Contains(last.text, "<и не иначе>") {
+		t.Fatal("question message must not contain an external Bible site URL or unescaped HTML")
 	}
 	if last.parseMode != "HTML" {
 		t.Fatalf("question screen parse mode = %q, want HTML", last.parseMode)
 	}
-	if hasButton(last.markup, "Прочитать всю главу") {
-		t.Fatal("chapter link should be part of the message text, not a separate keyboard button")
+
+	var chapterButton *InlineKeyboardButton
+	for rowIndex := range last.markup.InlineKeyboard {
+		for buttonIndex := range last.markup.InlineKeyboard[rowIndex] {
+			candidate := &last.markup.InlineKeyboard[rowIndex][buttonIndex]
+			if strings.Contains(candidate.Text, "Прочитать") {
+				chapterButton = candidate
+				break
+			}
+		}
+	}
+	if chapterButton == nil || chapterButton.WebApp == nil {
+		t.Fatalf("chapter reader should be opened by an inline Web App button: %+v", last.markup)
+	}
+	if chapterButton.CallbackData != "" {
+		t.Fatalf("Mini App button must not contain callback_data: %+v", chapterButton)
+	}
+	parsed, err := url.Parse(chapterButton.WebApp.URL)
+	if err != nil {
+		t.Fatalf("parse Mini App URL: %v", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "reader.example" || parsed.Query().Get("highlight") != "4-7" {
+		t.Fatalf("unexpected chapter Mini App URL: %s", chapterButton.WebApp.URL)
 	}
 }
 

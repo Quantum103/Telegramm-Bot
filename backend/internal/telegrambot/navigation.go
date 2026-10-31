@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -186,36 +185,31 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	}
 
 	message := newTelegramHTMLBuilder(3800)
-	message.text(fmt.Sprintf("📖 %s\nВопрос %d из %d\n\n", truncate(lessonTitle, 180), number, total))
-	message.raw("<b>")
-	message.text("Вопрос: " + question.Prompt)
-	message.raw("</b>")
+	message.text(fmt.Sprintf("📚 %s\n🟣 ВОПРОС %d / %d\n\n", truncate(lessonTitle, 180), number, total))
+	message.raw("<b>ВОПРОС</b>\n")
+	message.raw("<blockquote>")
+	message.text(question.Prompt)
+	message.raw("</blockquote>")
 
-	// Повторяющиеся ссылки на одну главу показываем один раз.
-	seenChapterURLs := make(map[string]struct{})
 	for _, passage := range question.BiblePassages {
-		message.text("\n\nОткуда взято: " + biblePassageReference(passage))
+		message.text("\n\n📍 Откуда взято: " + biblePassageReference(passage))
 		if passage.PassageText != nil && strings.TrimSpace(*passage.PassageText) != "" {
-			message.text("\nБиблейский текст:\n")
-			message.raw("<pre>")
+			message.text("\n\n📜 Библейский текст:\n")
+			message.raw("<blockquote>")
 			message.text(truncate(*passage.PassageText, 1400))
-			message.raw("</pre>")
-		}
-		if chapterURL := bibleChapterURL(passage); chapterURL != "" {
-			if _, exists := seenChapterURLs[chapterURL]; !exists {
-				seenChapterURLs[chapterURL] = struct{}{}
-				message.text("\n")
-				message.raw(`<a href="` + html.EscapeString(chapterURL) + `"><u>`)
-				message.text("Прочитать всю главу")
-				message.raw("</u></a>")
-			}
-		}
-		if message.truncated {
-			break
+			message.raw("</blockquote>")
 		}
 	}
 
 	var rows [][]InlineKeyboardButton
+	chapterButtons := chapterWebAppButtons(b.webAppURL, question.Prompt, question.BiblePassages)
+	for _, chapterButton := range chapterButtons {
+		rows = append(rows, []InlineKeyboardButton{chapterButton})
+	}
+	if len(question.BiblePassages) > 0 && b.webAppURL == "" {
+		message.text("\n\n⚙️ Просмотр полной главы внутри Telegram появится после настройки Mini App (HTTPS-адрес проекта).")
+	}
+
 	key := answerStateKey{studentID: studentID, enrollmentID: progress.Enrollment.ID, questionID: question.ID}
 	hasSaved := state.SavedAnswer != nil
 	isChoice := question.AnswerType == "single_choice" || question.AnswerType == "multiple_choice"
@@ -224,10 +218,10 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	switch question.AnswerType {
 	case "text":
 		if hasSaved {
-			message.text("\n\nВаш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650))
+			message.text("\n\n💬 Ваш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650))
 			message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ.")
 		} else {
-			message.text("\n\nОтправьте ответ следующим сообщением.")
+			message.text("\n\n✍️ Отправьте ответ следующим сообщением.")
 		}
 	case "single_choice", "multiple_choice":
 		if showOptions {

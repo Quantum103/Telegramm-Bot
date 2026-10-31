@@ -42,9 +42,14 @@ type Message struct {
 	Text      string `json:"text"`
 }
 
+type WebAppInfo struct {
+	URL string `json:"url"`
+}
+
 type InlineKeyboardButton struct {
-	Text         string `json:"text"`
-	CallbackData string `json:"callback_data"`
+	Text         string      `json:"text"`
+	CallbackData string      `json:"callback_data,omitempty"`
+	WebApp       *WebAppInfo `json:"web_app,omitempty"`
 }
 
 type InlineKeyboardMarkup struct {
@@ -263,11 +268,12 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 }
 
 type Bot struct {
-	api      TelegramAPI
-	students StudentRegistrar
-	catalog  CourseCatalog
-	learning LearningNavigator
-	logger   *slog.Logger
+	api       TelegramAPI
+	students  StudentRegistrar
+	catalog   CourseCatalog
+	learning  LearningNavigator
+	logger    *slog.Logger
+	webAppURL string
 
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
@@ -278,11 +284,17 @@ type Bot struct {
 }
 
 func NewBot(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger) *Bot {
+	return NewBotWithWebAppURL(api, students, catalog, learning, logger, "")
+}
+
+// NewBotWithWebAppURL enables the chapter reader inside Telegram when a public HTTPS Mini App URL is configured.
+func NewBotWithWebAppURL(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, webAppURL string) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
+		webAppURL: normalizeWebAppBaseURL(webAppURL),
 		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
