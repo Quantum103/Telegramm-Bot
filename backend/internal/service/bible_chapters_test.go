@@ -121,7 +121,12 @@ func testChapterResult(provider string) bibletext.SourceChapter {
 			},
 		},
 		Provider: provider,
-		Version:  "Synodal Translation (1876)",
+		Version: func() string {
+			if provider == "midvash" {
+				return "synodal"
+			}
+			return "Synodal Translation (1876)"
+		}(),
 	}
 }
 
@@ -236,6 +241,27 @@ func TestBibleChapterServiceRejectsAnotherTranslation(t *testing.T) {
 	_, _, saveCalls := store.snapshot()
 	if saveCalls != 0 {
 		t.Fatalf("данные другого перевода были сохранены: %d", saveCalls)
+	}
+}
+
+func TestBibleChapterServiceRejectsUnexpectedSourceVersion(t *testing.T) {
+	store := &mockBibleChapterStore{}
+	result := testChapterResult("midvash")
+	result.Version = "kjv"
+	primary := &mockBibleChapterSource{result: result}
+	secondary := &mockBibleChapterSource{err: errors.New("GetBible недоступен")}
+	service := newTestBibleChapterService(store, primary, secondary)
+	service.embeddedLoader = func(int, int, string) (bibletext.Chapter, error) {
+		return bibletext.Chapter{}, bibletext.ErrChapterNotFound
+	}
+
+	_, err := service.GetChapter(context.Background(), 40, 4)
+	if !errors.Is(err, ErrBibleChapterUnavailable) {
+		t.Fatalf("ожидалась ошибка для неподходящей версии источника, получено: %v", err)
+	}
+	_, _, saveCalls := store.snapshot()
+	if saveCalls != 0 {
+		t.Fatalf("глава с неподходящей версией была сохранена: %d", saveCalls)
 	}
 }
 

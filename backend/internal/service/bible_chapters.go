@@ -239,8 +239,17 @@ func validateFetchedChapter(result bibletext.SourceChapter, expectedProvider str
 	if result.Provider != expectedProvider {
 		return fmt.Errorf("источник вернул некорректную метку провайдера")
 	}
-	if strings.TrimSpace(result.Version) == "" {
-		return fmt.Errorf("источник не указал версию перевода")
+	expectedVersion := ""
+	switch expectedProvider {
+	case "midvash":
+		expectedVersion = "synodal"
+	case "getbible":
+		expectedVersion = "Synodal Translation (1876)"
+	default:
+		return fmt.Errorf("неподдерживаемый источник Библии")
+	}
+	if result.Version != expectedVersion {
+		return fmt.Errorf("источник вернул версию %q вместо ожидаемой %q", result.Version, expectedVersion)
 	}
 	return validateChapter(result.Chapter, key)
 }
