@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	midvashBaseURL = "https://api.midvash.com"
+	midvashBaseURL  = "https://api.midvash.com"
 	midvashBooksURL = "/v1/books"
 )
 
