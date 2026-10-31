@@ -420,7 +420,6 @@ func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
 	}
 }
 
-
 func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -430,7 +429,7 @@ func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing
 		translationCode = "synodal"
 		bookID          = 40
 		chapterNumber   = 998
-		pageURL          = "https://telegra.ph/Matfeya-Integration-Test-01-01"
+		pageURL         = "https://telegra.ph/Matfeya-Integration-Test-01-01"
 	)
 	contentSHA256 := fmt.Sprintf("%064x", 987654321)
 
@@ -510,5 +509,4 @@ func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing
 		t.Fatalf("количество вызовов createPage = %d, want 1", got)
 	}
 }
-
 
