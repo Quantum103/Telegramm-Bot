@@ -3,6 +3,7 @@ package telegrambot
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 const (
@@ -34,13 +36,28 @@ type ChapterPagePublisher interface {
 	PublishChapter(context.Context, ChapterReference) (string, error)
 }
 
-type TelegraphPublisher struct {
-	accessToken string
-	apiURL      string
-	httpClient  *http.Client
+type BibleChapterReader interface {
+	GetChapter(context.Context, int, int) (bibletext.Chapter, error)
+}
 
-	mu    sync.Mutex
-	cache map[string]string
+type TelegraphChapterLinkStore interface {
+	GetOrCreateTelegraphLink(
+		context.Context,
+		string,
+		int,
+		int,
+		string,
+		func(context.Context) (string, error),
+	) (domain.TelegraphChapterLink, error)
+}
+
+type TelegraphPublisher struct {
+	accessToken  string
+	apiURL       string
+	httpClient   *http.Client
+	chapters     BibleChapterReader
+	linkStore    TelegraphChapterLinkStore
+	mu           sync.Mutex
 }
 
 type telegraphNode struct {
@@ -48,7 +65,17 @@ type telegraphNode struct {
 	Children []any  `json:"children,omitempty"`
 }
 
+// NewTelegraphPublisher сохраняет совместимость со старым способом создания публикатора.
 func NewTelegraphPublisher(accessToken string) *TelegraphPublisher {
+	return NewTelegraphPublisherWithDependencies(accessToken, nil, nil)
+}
+
+// NewTelegraphPublisherWithDependencies подключает источник глав и PostgreSQL-кэш Telegraph.
+func NewTelegraphPublisherWithDependencies(
+	accessToken string,
+	chapters BibleChapterReader,
+	linkStore TelegraphChapterLinkStore,
+) *TelegraphPublisher {
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {
 		return nil
@@ -57,7 +84,8 @@ func NewTelegraphPublisher(accessToken string) *TelegraphPublisher {
 		accessToken: accessToken,
 		apiURL:      telegraphAPIBaseURL,
 		httpClient:  &http.Client{Timeout: 20 * time.Second},
-		cache:       make(map[string]string),
+		chapters:    chapters,
+		linkStore:   linkStore,
 	}
 }
 
@@ -65,12 +93,25 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	if p == nil || p.accessToken == "" {
 		return "", errors.New("TELEGRAPH_ACCESS_TOKEN не настроен")
 	}
+	if p.chapters == nil || p.linkStore == nil {
+		return "", errors.New("сервис глав Библии или PostgreSQL-кэш Telegraph не настроен")
+	}
+	if reference.BookID < 1 || reference.BookID > 66 || reference.Chapter < 1 {
+		return "", bibletext.ErrInvalidChapter
+	}
 
-	chapter, err := bibletext.Load(reference.BookID, reference.Chapter, reference.Translation)
+	translation := strings.ToLower(strings.TrimSpace(reference.Translation))
+	switch translation {
+	case "", "syn", "synodal", "синодальный", "синодальный перевод":
+	default:
+		return "", fmt.Errorf("%w: поддерживается только Синодальный перевод", bibletext.ErrInvalidChapter)
+	}
+
+	chapter, err := p.chapters.GetChapter(ctx, reference.BookID, reference.Chapter)
 	if err != nil {
 		return "", err
 	}
-	if chapter.Chapter != reference.Chapter || bibleBookIDs[normalizeBibleBookName(chapter.Book)] != reference.BookID {
+	if chapter.Chapter != reference.Chapter || strings.TrimSpace(chapter.Book) == "" {
 		return "", fmt.Errorf("%w: книга или номер главы не совпадает со ссылкой вопроса", bibletext.ErrInvalidChapter)
 	}
 
@@ -80,25 +121,37 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	}
 	chapterBytes, err := json.Marshal(chapter)
 	if err != nil {
-		return "", fmt.Errorf("подготовить главу для кэширования: %w", err)
+		return "", fmt.Errorf("подготовить главу для вычисления SHA256: %w", err)
 	}
 	digest := sha256.Sum256(chapterBytes)
-	cacheKey := fmt.Sprintf("%d:%d:%x", reference.BookID, reference.Chapter, digest)
+	contentSHA256 := hex.EncodeToString(digest[:])
 
-	// Hold the lock while creating a page so concurrent requests do not publish duplicates.
+	// Репозиторий повторно проверяет ссылку под транзакционной advisory-блокировкой.
+	// Это защищает от дублей и при нескольких одновременно работающих backend.
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if pageURL, ok := p.cache[cacheKey]; ok {
-		return pageURL, nil
-	}
 
 	title := fmt.Sprintf("%s — глава %d", chapter.Book, chapter.Chapter)
-	pageURL, err := p.createPage(ctx, title, content)
+	link, err := p.linkStore.GetOrCreateTelegraphLink(
+		ctx,
+		"synodal",
+		reference.BookID,
+		reference.Chapter,
+		contentSHA256,
+		func(createCtx context.Context) (string, error) {
+			return p.createPage(createCtx, title, content)
+		},
+	)
 	if err != nil {
-		return "", err
+		if errors.Is(err, domain.ErrNotFound) {
+			return "", fmt.Errorf("%w: глава ещё не сохранена в PostgreSQL", service.ErrBibleChapterUnavailable)
+		}
+		return "", fmt.Errorf("получить или создать ссылку Telegraph: %w", err)
 	}
-	p.cache[cacheKey] = pageURL
-	return pageURL, nil
+	if !isTelegraphPageURL(link.PageURL) {
+		return "", errors.New("PostgreSQL содержит некорректную ссылку на статью Telegraph")
+	}
+	return link.PageURL, nil
 }
 
 func buildTelegraphChapterContent(chapter bibletext.Chapter) ([]telegraphNode, error) {
@@ -206,7 +259,7 @@ func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.Bib
 	}
 
 	buttons := make([]InlineKeyboardButton, 0, len(targets))
-	missingChapter := false
+	unavailableChapter := false
 	publishFailed := false
 	for _, target := range targets {
 		reference := ChapterReference{
@@ -215,8 +268,8 @@ func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.Bib
 		}
 		pageURL, err := b.chapterPublisher.PublishChapter(ctx, reference)
 		if err != nil {
-			if errors.Is(err, bibletext.ErrChapterNotFound) {
-				missingChapter = true
+			if errors.Is(err, bibletext.ErrChapterNotFound) || errors.Is(err, service.ErrBibleChapterUnavailable) {
+				unavailableChapter = true
 			} else {
 				publishFailed = true
 				b.logger.Warn("не удалось создать статью полной главы в Telegraph",
@@ -239,8 +292,8 @@ func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.Bib
 	}
 
 	notice := ""
-	if missingChapter {
-		notice = "Полный текст одной или нескольких глав ещё не добавлен в файлы проекта."
+	if unavailableChapter {
+		notice = "Полная глава временно недоступна. Попробуйте снова позже."
 	}
 	if publishFailed {
 		if notice != "" {
