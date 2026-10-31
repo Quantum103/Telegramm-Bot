@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
@@ -57,7 +56,6 @@ type TelegraphPublisher struct {
 	httpClient  *http.Client
 	chapters    BibleChapterReader
 	linkStore   TelegraphChapterLinkStore
-	mu          sync.Mutex
 }
 
 type telegraphNode struct {
@@ -119,18 +117,15 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	if err != nil {
 		return "", err
 	}
-	chapterBytes, err := json.Marshal(chapter)
+	encodedContent, err := json.Marshal(content)
 	if err != nil {
-		return "", fmt.Errorf("подготовить главу для вычисления SHA256: %w", err)
+		return "", fmt.Errorf("подготовить содержимое Telegraph для вычисления SHA256: %w", err)
 	}
-	digest := sha256.Sum256(chapterBytes)
+	digest := sha256.Sum256(encodedContent)
 	contentSHA256 := hex.EncodeToString(digest[:])
 
-	// Репозиторий повторно проверяет ссылку под транзакционной advisory-блокировкой.
-	// Это защищает от дублей и при нескольких одновременно работающих backend.
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	// Репозиторий проверяет ссылку под транзакционной advisory-блокировкой.
+	// Разные главы могут публиковаться параллельно, одинаковая версия главы — только один раз.
 	title := fmt.Sprintf("%s — глава %d", chapter.Book, chapter.Chapter)
 	link, err := p.linkStore.GetOrCreateTelegraphLink(
 		ctx,
