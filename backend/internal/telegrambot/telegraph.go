@@ -52,12 +52,12 @@ type TelegraphChapterLinkStore interface {
 }
 
 type TelegraphPublisher struct {
-	accessToken  string
-	apiURL       string
-	httpClient   *http.Client
-	chapters     BibleChapterReader
-	linkStore    TelegraphChapterLinkStore
-	mu           sync.Mutex
+	accessToken string
+	apiURL      string
+	httpClient  *http.Client
+	chapters    BibleChapterReader
+	linkStore   TelegraphChapterLinkStore
+	mu          sync.Mutex
 }
 
 type telegraphNode struct {
