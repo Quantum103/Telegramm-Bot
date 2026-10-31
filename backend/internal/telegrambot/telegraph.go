@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -150,19 +151,11 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 }
 
 func buildTelegraphChapterContent(chapter bibletext.Chapter) ([]telegraphNode, error) {
-	translation := strings.TrimSpace(chapter.Translation)
-	if translation == "" {
-		translation = "Синодальный перевод"
-	}
-	nodes := make([]telegraphNode, 0, len(chapter.Verses)+1)
-	nodes = append(nodes, telegraphNode{Tag: "p", Children: []any{translation}})
+	nodes := make([]telegraphNode, 0, len(chapter.Verses))
 	for _, verse := range chapter.Verses {
 		nodes = append(nodes, telegraphNode{
-			Tag: "p",
-			Children: []any{
-				telegraphNode{Tag: "strong", Children: []any{strconv.Itoa(verse.Number) + ". "}},
-				verse.Text,
-			},
+			Tag:      "p",
+			Children: []any{strconv.Itoa(verse.Number) + ". " + verse.Text},
 		})
 	}
 
@@ -240,7 +233,7 @@ func isTelegraphPageURL(raw string) bool {
 	return host == "telegra.ph" || host == "graph.org"
 }
 
-func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.BiblePassage) ([]InlineKeyboardButton, string) {
+func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.BiblePassage) ([]string, string) {
 	if len(passages) == 0 {
 		return nil, ""
 	}
@@ -253,7 +246,7 @@ func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.Bib
 		return nil, "Полная глава для указанного перевода пока не подключена."
 	}
 
-	buttons := make([]InlineKeyboardButton, 0, len(targets))
+	links := make([]string, 0, len(targets))
 	unavailableChapter := false
 	publishFailed := false
 	for _, target := range targets {
@@ -283,7 +276,11 @@ func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.Bib
 		if len(targets) > 1 {
 			label = fmt.Sprintf("📖 %s %d", target.bookName, target.chapter)
 		}
-		buttons = append(buttons, InlineKeyboardButton{Text: label, URL: pageURL})
+		links = append(links, fmt.Sprintf(
+			`<a href="%s"><u>%s</u></a>`,
+			html.EscapeString(pageURL),
+			html.EscapeString(label),
+		))
 	}
 
 	notice := ""
@@ -296,8 +293,8 @@ func (b *Bot) chapterTelegraphButtons(ctx context.Context, passages []domain.Bib
 		}
 		notice += "Не удалось создать статью Telegraph сейчас. Попробуйте открыть вопрос позже."
 	}
-	if len(buttons) == 0 && notice == "" {
+	if len(links) == 0 && notice == "" {
 		notice = "Не удалось подготовить ссылку на полную главу."
 	}
-	return buttons, notice
+	return links, notice
 }
