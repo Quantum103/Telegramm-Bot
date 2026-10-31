@@ -2,6 +2,7 @@ package telegrambot
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
