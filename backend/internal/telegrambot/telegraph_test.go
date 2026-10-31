@@ -37,18 +37,14 @@ func TestBuildTelegraphChapterContentFormatsEveryVerse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildTelegraphChapterContent() error = %v", err)
 	}
-	if len(nodes) != 3 {
-		t.Fatalf("node count = %d, want translation plus two verses", len(nodes))
+	if len(nodes) != 2 {
+		t.Fatalf("node count = %d, want one plain-text paragraph per verse", len(nodes))
 	}
-	if nodes[0].Tag != "p" || nodes[0].Children[0] != "Синодальный перевод" {
-		t.Fatalf("translation node = %+v", nodes[0])
+	if nodes[0].Tag != "p" || nodes[0].Children[0] != "1. Первый стих." {
+		t.Fatalf("first verse = %+v", nodes[0])
 	}
-	firstVerse, ok := nodes[1].Children[0].(telegraphNode)
-	if !ok || firstVerse.Tag != "strong" || firstVerse.Children[0] != "1. " {
-		t.Fatalf("first verse number = %#v", nodes[1].Children[0])
-	}
-	if nodes[1].Children[1] != "Первый стих." || nodes[2].Children[1] != "Второй стих." {
-		t.Fatalf("verse text was not preserved: %+v", nodes)
+	if nodes[1].Tag != "p" || nodes[1].Children[0] != "2. Второй стих." {
+		t.Fatalf("second verse = %+v", nodes[1])
 	}
 }
 
@@ -362,8 +358,8 @@ func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *test
 		if err := json.Unmarshal([]byte(r.Form.Get("content")), &nodes); err != nil {
 			t.Errorf("unmarshal Telegraph content: %v", err)
 		}
-		if len(nodes) != 3 {
-			t.Errorf("Telegraph content nodes = %d, want translation and two verses", len(nodes))
+		if len(nodes) != 2 || nodes[0].Children[0] != "1. Первый стих." {
+			t.Errorf("Telegraph content should contain only plain verse text, got %+v", nodes)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"result":{"url":"https://telegra.ph/Matfeya-4-01-01"}}`))
@@ -403,18 +399,15 @@ func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *test
 		}
 	}
 
-	var chapterButton *InlineKeyboardButton
-	for rowIndex := range last.markup.InlineKeyboard {
-		for buttonIndex := range last.markup.InlineKeyboard[rowIndex] {
-			candidate := &last.markup.InlineKeyboard[rowIndex][buttonIndex]
-			if candidate.Text == "📖 Прочитать всю главу" {
-				chapterButton = candidate
-				break
+	if !strings.Contains(last.text, `<a href="https://telegra.ph/Matfeya-4-01-01"><u>📖 Прочитать всю главу</u></a>`) {
+		t.Fatalf("question text is missing the underlined Telegraph link: %s", last.text)
+	}
+	for _, row := range last.markup.InlineKeyboard {
+		for _, item := range row {
+			if item.URL != "" {
+				t.Fatalf("chapter URL must be an inline text link, not a keyboard button: %+v", item)
 			}
 		}
-	}
-	if chapterButton == nil || chapterButton.URL != "https://telegra.ph/Matfeya-4-01-01" || chapterButton.CallbackData != "" {
-		t.Fatalf("expected a regular URL button to the Telegraph article, got %+v", chapterButton)
 	}
 	if reader.callCount() != 1 || pageCreations.Load() != 1 || store.linkCount() != 1 {
 		t.Fatalf("service calls=%d, pages=%d, saved links=%d; want 1 each",
