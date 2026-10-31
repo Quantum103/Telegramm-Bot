@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -309,5 +312,111 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 	if questions[0].Prompt != "Тестовый вопрос?" {
 		t.Fatalf("триггер не сохранил содержимое архивного вопроса: %q", questions[0].Prompt)
+	}
+}
+
+
+func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	const (
+		translationCode = "synodal"
+		bookID          = 1
+		chapterNumber   = 999
+		pageURL          = "https://telegra.ph/Integration-Test-01-01"
+	)
+	contentSHA256 := fmt.Sprintf("%064x", 123456789)
+
+	_, err := pool.Exec(ctx, `
+		DELETE FROM bible_chapters
+		WHERE translation_code = $1 AND book_id = $2 AND chapter_number = $3
+	`, translationCode, bookID, chapterNumber)
+	if err != nil {
+		t.Fatalf("очистить предыдущую тестовую главу: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM bible_chapters
+			WHERE translation_code = $1 AND book_id = $2 AND chapter_number = $3
+		`, translationCode, bookID, chapterNumber); err != nil {
+			t.Errorf("очистить тестовую главу и ссылку Telegraph: %v", err)
+		}
+	})
+
+	chapter := domain.BibleChapter{
+		TranslationCode: translationCode,
+		BookID:          bookID,
+		BookName:        "Бытие",
+		ChapterNumber:   chapterNumber,
+		Verses:          []domain.BibleVerse{{Number: 1, Text: "Тестовый стих."}},
+		SourceProvider:  "midvash",
+		SourceVersion:   "synodal",
+		ContentSHA256:   contentSHA256,
+		FetchedAt:       time.Now().UTC(),
+	}
+	chapterRepository := NewBibleChapterRepository(pool)
+	if err := chapterRepository.SaveChapter(ctx, chapter); err != nil {
+		t.Fatalf("сохранить тестовую главу: %v", err)
+	}
+
+	var createCalls atomic.Int32
+	const requestCount = 12
+	type publishResult struct {
+		link domain.TelegraphChapterLink
+		err  error
+	}
+	results := make(chan publishResult, requestCount)
+	var wait sync.WaitGroup
+
+	for index := 0; index < requestCount; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			link, err := NewBibleChapterRepository(pool).GetOrCreateTelegraphLink(
+				ctx,
+				translationCode,
+				bookID,
+				chapterNumber,
+				contentSHA256,
+				func(context.Context) (string, error) {
+					createCalls.Add(1)
+					time.Sleep(25 * time.Millisecond)
+					return pageURL, nil
+				},
+			)
+			results <- publishResult{link: link, err: err}
+		}()
+	}
+
+	wait.Wait()
+	close(results)
+	for result := range results {
+		if result.err != nil {
+			t.Errorf("GetOrCreateTelegraphLink(): %v", result.err)
+			continue
+		}
+		if result.link.PageURL != pageURL || result.link.ContentSHA256 != contentSHA256 {
+			t.Errorf("получена неверная ссылка Telegraph: %+v", result.link)
+		}
+	}
+	if got := createCalls.Load(); got != 1 {
+		t.Fatalf("Telegraph page creation callback calls = %d, want exactly 1", got)
+	}
+
+	var linkCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM bible_chapter_telegraph_links
+		WHERE translation_code = $1 AND book_id = $2
+		  AND chapter_number = $3 AND content_sha256 = $4
+	`, translationCode, bookID, chapterNumber, contentSHA256).Scan(&linkCount); err != nil {
+		t.Fatalf("проверить сохранённую ссылку Telegraph: %v", err)
+	}
+	if linkCount != 1 {
+		t.Fatalf("сохранено ссылок Telegraph = %d, want exactly 1", linkCount)
 	}
 }
