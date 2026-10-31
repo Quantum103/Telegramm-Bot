@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	sourceRequestTimeout = 8 * time.Second
+	sourceRequestTimeout  = 8 * time.Second
 	maxSourceResponseSize = 2 << 20
 )
 
