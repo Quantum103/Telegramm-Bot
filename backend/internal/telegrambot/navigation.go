@@ -2,9 +2,9 @@ package telegrambot
 
 import (
 	"context"
-	"html"
 	"errors"
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 	"unicode/utf8"
