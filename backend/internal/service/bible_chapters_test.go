@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"io"
 	"strings"
 	"sync"
@@ -388,5 +391,94 @@ func TestBibleChapterServiceRejectsInvalidReference(t *testing.T) {
 	_, err = service.GetChapter(context.Background(), 1, 0)
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("ожидалась ErrInvalidInput для номера главы 0, получено: %v", err)
+	}
+}
+
+
+func TestBibleChapterServiceFallsBackAfterMidvashReturnsMalformedJSON(t *testing.T) {
+	var midvashCatalogCalls, midvashChapterCalls, getBibleCalls int
+
+	midvashServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/books":
+			midvashCatalogCalls++
+			books := make([]map[string]any, 0, 66)
+			for id := 1; id <= 66; id++ {
+				slug := fmt.Sprintf("book-%d", id)
+				englishName := fmt.Sprintf("Book %d", id)
+				russianName := fmt.Sprintf("Книга %d", id)
+				if id == 40 {
+					slug, englishName, russianName = "matthew", "Matthew", "Матфей"
+				}
+				books = append(books, map[string]any{
+					"id": id,
+					"slug": map[string]string{"en": slug},
+					"name": map[string]string{"en": englishName, "ru": russianName},
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": books,
+				"meta": map[string]int{"total": 66},
+			})
+		case "/v1/synodal/matthew/4":
+			midvashChapterCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"data":`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer midvashServer.Close()
+
+	getBibleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		getBibleCalls++
+		if r.URL.Path != "/synodal/40/4.json" {
+			t.Errorf("GetBible path = %q, want /synodal/40/4.json", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"translation":  "Synodal Translation (1876)",
+			"abbreviation": "synodal",
+			"lang":         "ru",
+			"book_nr":      40,
+			"book_name":    "Матфей",
+			"chapter":      4,
+			"verses": []map[string]any{
+				{"chapter": 4, "verse": 1, "text": "Тогда Иисус возведен был Духом в пустыню."},
+				{"chapter": 4, "verse": 2, "text": "И, постившись сорок дней и сорок ночей, напоследок взалкал."},
+			},
+		})
+	}))
+	defer getBibleServer.Close()
+
+	store := &mockBibleChapterStore{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	chapterService := NewBibleChapterService(
+		store,
+		bibletext.NewMidvashClientWithBaseURL(midvashServer.URL, midvashServer.Client()),
+		bibletext.NewGetBibleClientWithBaseURL(getBibleServer.URL, getBibleServer.Client()),
+		logger,
+	)
+
+	chapter, err := chapterService.GetChapter(context.Background(), 40, 4)
+	if err != nil {
+		t.Fatalf("GetChapter() после повреждённого JSON основного API: %v", err)
+	}
+	if chapter.Book != "Матфей" || chapter.Chapter != 4 || len(chapter.Verses) != 2 {
+		t.Fatalf("резервный источник вернул некорректную главу: %+v", chapter)
+	}
+	if midvashCatalogCalls != 1 || midvashChapterCalls != 1 || getBibleCalls != 1 {
+		t.Fatalf("вызовы API: Midvash catalog=%d chapter=%d, GetBible=%d; ожидалось 1/1/1",
+			midvashCatalogCalls, midvashChapterCalls, getBibleCalls)
+	}
+
+	record, _, saveCalls := store.snapshot()
+	if saveCalls != 1 || record == nil {
+		t.Fatalf("глава должна быть сохранена ровно один раз после валидации fallback: record=%+v saves=%d",
+			record, saveCalls)
+	}
+	if record.SourceProvider != "getbible" || record.SourceVersion != "Synodal Translation (1876)" ||
+		record.Verses[0].Text != chapter.Verses[0].Text {
+		t.Fatalf("в PostgreSQL-модель попал некорректный результат: %+v", record)
 	}
 }
