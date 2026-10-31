@@ -294,7 +294,7 @@ func NewBotWithWebAppURL(api TelegramAPI, students StudentRegistrar, catalog Cou
 	}
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
-		webAppURL: normalizeWebAppBaseURL(webAppURL),
+		webAppURL:    normalizeWebAppBaseURL(webAppURL),
 		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
