@@ -110,7 +110,6 @@ func TestIsTelegraphPageURLRejectsNonTelegraphHosts(t *testing.T) {
 	}
 }
 
-
 type fakeBibleChapterReader struct {
 	mu      sync.Mutex
 	chapter bibletext.Chapter
