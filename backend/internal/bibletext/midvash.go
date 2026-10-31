@@ -33,11 +33,11 @@ type midvashBook struct {
 	ID    int `json:"id"`
 	Slugs struct {
 		English string `json:"en"`
-	} `json:"slugs"`
+	} `json:"slug"`
 	Names struct {
 		English string `json:"en"`
 		Russian string `json:"ru"`
-	} `json:"names"`
+	} `json:"name"`
 }
 
 type midvashChapterResponse struct {
