@@ -315,7 +315,6 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 }
 
-
 func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -325,7 +324,7 @@ func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
 		translationCode = "synodal"
 		bookID          = 1
 		chapterNumber   = 999
-		pageURL          = "https://telegra.ph/Integration-Test-01-01"
+		pageURL         = "https://telegra.ph/Integration-Test-01-01"
 	)
 	contentSHA256 := fmt.Sprintf("%064x", 123456789)
 
