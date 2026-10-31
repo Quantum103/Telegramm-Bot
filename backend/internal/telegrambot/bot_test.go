@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -571,7 +570,7 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	}
 }
 
-func TestOpeningLessonRendersFormattedPassageAndTelegraphChapterButton(t *testing.T) {
+func TestOpeningLessonRendersFormattedPassageAndInlineChapterLink(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
@@ -610,28 +609,15 @@ func TestOpeningLessonRendersFormattedPassageAndTelegraphChapterButton(t *testin
 		t.Fatalf("question screen parse mode = %q, want HTML", last.parseMode)
 	}
 
-	var chapterButton *InlineKeyboardButton
-	for rowIndex := range last.markup.InlineKeyboard {
-		for buttonIndex := range last.markup.InlineKeyboard[rowIndex] {
-			candidate := &last.markup.InlineKeyboard[rowIndex][buttonIndex]
-			if strings.Contains(candidate.Text, "Прочитать") {
-				chapterButton = candidate
-				break
+	if !strings.Contains(last.text, `<a href="https://telegra.ph/Matfeya-4-01-01"><u>📖 Прочитать всю главу</u></a>`) {
+		t.Fatalf("chapter reader should be an underlined inline link in the message: %s", last.text)
+	}
+	for _, row := range last.markup.InlineKeyboard {
+		for _, item := range row {
+			if item.URL != "" {
+				t.Fatalf("chapter URL must not be rendered as a keyboard button: %+v", item)
 			}
 		}
-	}
-	if chapterButton == nil || chapterButton.URL == "" {
-		t.Fatalf("chapter reader should be opened by a regular URL button: %+v", last.markup)
-	}
-	if chapterButton.CallbackData != "" {
-		t.Fatalf("Telegraph URL button must not contain callback_data: %+v", chapterButton)
-	}
-	parsed, err := url.Parse(chapterButton.URL)
-	if err != nil {
-		t.Fatalf("parse Telegraph URL: %v", err)
-	}
-	if parsed.Scheme != "https" || parsed.Host != "telegra.ph" {
-		t.Fatalf("unexpected Telegraph URL: %s", chapterButton.URL)
 	}
 	if len(publisher.references) != 1 || publisher.references[0].BookID != 40 || publisher.references[0].Chapter != 4 {
 		t.Fatalf("published chapter references = %+v, want Matthew 4", publisher.references)
