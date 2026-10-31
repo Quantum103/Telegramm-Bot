@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/bootstrapadmin"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/bootstrapadmin"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/config"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/database"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/httpserver"
