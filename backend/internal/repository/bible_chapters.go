@@ -23,11 +23,12 @@ type bibleChapterDB interface {
 }
 
 type BibleChapterRepository struct {
-	db bibleChapterDB
+	db   bibleChapterDB
+	pool *pgxpool.Pool
 }
 
 func NewBibleChapterRepository(pool *pgxpool.Pool) *BibleChapterRepository {
-	return &BibleChapterRepository{db: pool}
+	return &BibleChapterRepository{db: pool, pool: pool}
 }
 
 // GetChapter возвращает сохранённую главу по переводу, книге и номеру главы.
@@ -213,6 +214,85 @@ func (r *BibleChapterRepository) SaveTelegraphLink(
 		return fmt.Errorf("глава не найдена для сохранения ссылки Telegraph: %w", ErrNotFound)
 	}
 	return err
+}
+
+// GetOrCreateTelegraphLink возвращает сохранённую ссылку или создаёт и сохраняет её.
+// Транзакционная advisory-блокировка защищает публикацию от дублей между экземплярами backend.
+func (r *BibleChapterRepository) GetOrCreateTelegraphLink(
+	ctx context.Context,
+	translationCode string,
+	bookID, chapterNumber int,
+	contentSHA256 string,
+	createPage func(context.Context) (string, error),
+) (domain.TelegraphChapterLink, error) {
+	if r.pool == nil || createPage == nil {
+		return domain.TelegraphChapterLink{}, ErrInvalidInput
+	}
+	translationCode, contentSHA256, err := normalizeTelegraphLinkKey(
+		translationCode, bookID, chapterNumber, contentSHA256,
+	)
+	if err != nil {
+		return domain.TelegraphChapterLink{}, err
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.TelegraphChapterLink{}, mapDatabaseError("начать транзакцию публикации Telegraph", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	lockKey := fmt.Sprintf("%s:%d:%d:%s", translationCode, bookID, chapterNumber, contentSHA256)
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lockKey); err != nil {
+		return domain.TelegraphChapterLink{}, mapDatabaseError("заблокировать публикацию главы Telegraph", err)
+	}
+
+	lockedRepository := &BibleChapterRepository{db: tx}
+	existing, err := lockedRepository.GetTelegraphLink(
+		ctx, translationCode, bookID, chapterNumber, contentSHA256,
+	)
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.TelegraphChapterLink{}, mapDatabaseError("завершить чтение ссылки Telegraph", err)
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return domain.TelegraphChapterLink{}, err
+	}
+
+	var chapterExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bible_chapters
+			WHERE translation_code = $1 AND book_id = $2 AND chapter_number = $3
+		)
+	`, translationCode, bookID, chapterNumber).Scan(&chapterExists); err != nil {
+		return domain.TelegraphChapterLink{}, mapDatabaseError("проверить наличие главы перед публикацией", err)
+	}
+	if !chapterExists {
+		return domain.TelegraphChapterLink{}, ErrNotFound
+	}
+
+	pageURL, err := createPage(ctx)
+	if err != nil {
+		return domain.TelegraphChapterLink{}, err
+	}
+	link := domain.TelegraphChapterLink{
+		TranslationCode: translationCode,
+		BookID:          bookID,
+		ChapterNumber:   chapterNumber,
+		ContentSHA256:   contentSHA256,
+		PageURL:         pageURL,
+	}
+	if err := lockedRepository.SaveTelegraphLink(ctx, link); err != nil {
+		return domain.TelegraphChapterLink{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.TelegraphChapterLink{}, mapDatabaseError("сохранить ссылку Telegraph", err)
+	}
+	return link, nil
 }
 
 func scanBibleChapter(row pgx.Row) (domain.BibleChapter, error) {
