@@ -201,14 +201,16 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 		}
 	}
 
-	var rows [][]InlineKeyboardButton
-	chapterButtons, chapterNotice := b.chapterTelegraphButtons(ctx, question.BiblePassages)
-	for _, chapterButton := range chapterButtons {
-		rows = append(rows, []InlineKeyboardButton{chapterButton})
+	chapterLinks, chapterNotice := b.chapterTelegraphLinks(ctx, question.BiblePassages)
+	for _, chapterLink := range chapterLinks {
+		message.raw("\n\n")
+		message.raw(chapterLink)
 	}
 	if chapterNotice != "" {
 		message.text("\n\n" + chapterNotice)
 	}
+
+	var rows [][]InlineKeyboardButton
 
 	key := answerStateKey{studentID: studentID, enrollmentID: progress.Enrollment.ID, questionID: question.ID}
 	hasSaved := state.SavedAnswer != nil
