@@ -264,10 +264,10 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 }
 
 type Bot struct {
-	api       TelegramAPI
-	students  StudentRegistrar
-	catalog   CourseCatalog
-	learning  LearningNavigator
+	api              TelegramAPI
+	students         StudentRegistrar
+	catalog          CourseCatalog
+	learning         LearningNavigator
 	logger           *slog.Logger
 	chapterPublisher ChapterPagePublisher
 
@@ -291,7 +291,7 @@ func NewBotWithChapterPublisher(api TelegramAPI, students StudentRegistrar, cata
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
 		chapterPublisher: publisher,
-		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
+		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
 }
