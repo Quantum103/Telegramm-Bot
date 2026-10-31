@@ -509,4 +509,3 @@ func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing
 		t.Fatalf("количество вызовов createPage = %d, want 1", got)
 	}
 }
-
