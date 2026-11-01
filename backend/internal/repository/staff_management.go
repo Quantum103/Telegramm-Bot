@@ -429,29 +429,29 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("добавить нового куратора в диалоги", err)
 	}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO conversation_message_reads (message_id, participant_id, conversation_id)
-			SELECT message.id, participant.id, message.conversation_id
-			FROM conversations conversation
-			JOIN conversation_participants participant
-			  ON participant.conversation_id = conversation.id
-			 AND participant.staff_id = $2 AND participant.left_at IS NULL
-			JOIN conversation_messages message ON message.conversation_id = conversation.id
-			WHERE conversation.student_id = $1 AND conversation.status = 'active'
-			ON CONFLICT (message_id, participant_id) DO NOTHING
-		`, studentID, curatorStaffID); err != nil {
-			return mapDatabaseError("отметить прежнюю историю прочитанной для нового куратора", err)
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE conversation_participants participant
-			SET last_read_at = now()
-			FROM conversations conversation
-			WHERE conversation.id = participant.conversation_id
-			  AND conversation.student_id = $1 AND conversation.status = 'active'
-			  AND participant.staff_id = $2 AND participant.left_at IS NULL
-		`, studentID, curatorStaffID); err != nil {
-			return mapDatabaseError("обновить отметку прочтения нового куратора", err)
-		}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO conversation_message_reads (message_id, participant_id, conversation_id)
+		SELECT message.id, participant.id, message.conversation_id
+		FROM conversations conversation
+		JOIN conversation_participants participant
+		  ON participant.conversation_id = conversation.id
+		 AND participant.staff_id = $2 AND participant.left_at IS NULL
+		JOIN conversation_messages message ON message.conversation_id = conversation.id
+		WHERE conversation.student_id = $1 AND conversation.status = 'active'
+		ON CONFLICT (message_id, participant_id) DO NOTHING
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("отметить прежнюю историю прочитанной для нового куратора", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_participants participant
+		SET last_read_at = now()
+		FROM conversations conversation
+		WHERE conversation.id = participant.conversation_id
+		  AND conversation.student_id = $1 AND conversation.status = 'active'
+		  AND participant.staff_id = $2 AND participant.left_at IS NULL
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("обновить отметку прочтения нового куратора", err)
+	}
 	action := "student.curator.assign"
 	if previousCuratorID.Valid {
 		action = "student.curator.transfer"

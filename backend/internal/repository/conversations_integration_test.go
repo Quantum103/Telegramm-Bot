@@ -54,7 +54,7 @@ func createConversationFixture(t *testing.T, pool *pgxpool.Pool, withAssignment 
 	}
 	fixture := conversationFixture{
 		studentID: studentID, telegramID: telegramID,
-		adminID: createStaff("Тестовый администратор", "administrator", "conversation-admin"),
+		adminID:    createStaff("Тестовый администратор", "administrator", "conversation-admin"),
 		curator1ID: createStaff("Первый куратор", "curator", "conversation-curator-one"),
 		curator2ID: createStaff("Второй куратор", "curator", "conversation-curator-two"),
 	}
