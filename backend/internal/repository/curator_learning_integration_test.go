@@ -329,6 +329,7 @@ func TestConcurrentCuratorReviewIsAtomicAndIdempotent(t *testing.T) {
 	student := createCuratorTestStudent(t, ctx, pool, "curator-review-concurrent")
 	adminID := createStaffForCourseTest(t, ctx, pool, "administrator")
 	curatorID := createStaffForCourseTest(t, ctx, pool, "curator")
+	otherCuratorID := createStaffForCourseTest(t, ctx, pool, "curator")
 	courseID, lessonIDs, _ := createCourseForEnrollmentTest(
 		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Курс конкурентной проверки", 1,
 	)
@@ -343,10 +344,11 @@ func TestConcurrentCuratorReviewIsAtomicAndIdempotent(t *testing.T) {
 
 	const workers = 12
 	type result struct {
-		review domain.AnswerAttemptReview
-		err    error
+		staffID int64
+		review  domain.AnswerAttemptReview
+		err     error
 	}
-	results := make(chan result, workers)
+	results := make(chan result, workers+1)
 	var wait sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wait.Add(1)
@@ -356,17 +358,35 @@ func TestConcurrentCuratorReviewIsAtomicAndIdempotent(t *testing.T) {
 				CuratorStaffID: curatorID, AttemptID: lessonRun.answer.AttemptID,
 				Decision: "approved", Feedback: "Ответ принят.",
 			})
-			results <- result{review: review, err: reviewErr}
+			results <- result{staffID: curatorID, review: review, err: reviewErr}
 		}()
 	}
+	// Второй сотрудник пытается проверить ту же попытку одновременно, но
+	// не назначен учеником и не должен получить право на решение.
+	wait.Add(1)
+	go func() {
+		defer wait.Done()
+		review, reviewErr := NewCuratorLearningRepository(pool).ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+			CuratorStaffID: otherCuratorID, AttemptID: lessonRun.answer.AttemptID,
+			Decision: "approved", Feedback: "Проверка не назначенным куратором.",
+		})
+		results <- result{staffID: otherCuratorID, review: review, err: reviewErr}
+	}()
 	wait.Wait()
 	close(results)
 
-	var originalCount, replayCount int
+	var originalCount, replayCount, unauthorizedCount int
 	var reviewID int64
 	for item := range results {
+		if item.staffID == otherCuratorID {
+			if !errors.Is(item.err, ErrInvalidState) {
+				t.Fatalf("не назначенный куратор получил право параллельной проверки: %v", item.err)
+			}
+			unauthorizedCount++
+			continue
+		}
 		if item.err != nil {
-			t.Fatalf("конкурентная проверка завершилась ошибкой: %v", item.err)
+			t.Fatalf("конкурентная проверка назначенным куратором завершилась ошибкой: %v", item.err)
 		}
 		if item.review.ID == 0 {
 			t.Fatal("пустой ID решения куратора")
@@ -382,8 +402,9 @@ func TestConcurrentCuratorReviewIsAtomicAndIdempotent(t *testing.T) {
 			originalCount++
 		}
 	}
-	if originalCount != 1 || replayCount != workers-1 {
-		t.Fatalf("ожидалось одно решение и %d безопасных повторов, first=%d replay=%d", workers-1, originalCount, replayCount)
+	if originalCount != 1 || replayCount != workers-1 || unauthorizedCount != 1 {
+		t.Fatalf("ожидалось одно решение, %d безопасных повторов и отказ чужому сотруднику; first=%d replay=%d unauthorized=%d",
+			workers-1, originalCount, replayCount, unauthorizedCount)
 	}
 
 	var storedReviews int
