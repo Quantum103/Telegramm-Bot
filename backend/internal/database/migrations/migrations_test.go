@@ -70,5 +70,15 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				t.Errorf("%s не содержит обязательный элемент %q", filepath.Base(upPath), item)
 			}
 		}
+		if strings.HasPrefix(filepath.Base(upPath), "000012_") {
+			snapshotAt := strings.Index(string(content), "INSERT INTO course_enrollment_lessons")
+			linkAt := strings.Index(string(content), "UPDATE lesson_enrollments le")
+			triggerAt := strings.Index(string(content), "CREATE TRIGGER lesson_enrollments_course_consistency_trg")
+			if snapshotAt < 0 || linkAt < 0 || triggerAt < 0 ||
+				snapshotAt > linkAt || linkAt > triggerAt {
+				t.Errorf("%s должен сначала создать снимок курса, затем привязать старые уроки и только потом включить триггер целостности",
+					filepath.Base(upPath))
+			}
+		}
 	}
 }
