@@ -62,7 +62,6 @@ export default function StudentsPage({
   const [selectedStudentID, setSelectedStudentID] = useState<number | null>(null)
   const [courseAccess, setCourseAccess] = useState<CuratorCourseAccess | null>(null)
   const [courseLoading, setCourseLoading] = useState(false)
-  const [detailRevision, setDetailRevision] = useState(0)
   const [expandedLessonIDs, setExpandedLessonIDs] = useState<number[]>([])
   const [answersByLesson, setAnswersByLesson] = useState<Record<number, CuratorAnswer[]>>({})
   const [lessonDetailsByLesson, setLessonDetailsByLesson] = useState<Record<number, CourseLessonDetail>>({})
@@ -153,7 +152,7 @@ export default function StudentsPage({
       }
     })
     return () => controller.abort()
-  }, [selectedStudent?.id, selectedStudent?.active_course?.course_enrollment_id, detailRevision, onSessionExpired])
+  }, [selectedStudent?.id, selectedStudent?.active_course?.course_enrollment_id, onSessionExpired])
 
   async function loadLessonAnswers(lesson: CourseEnrollmentLesson, force = false) {
     if (!selectedStudent || !activeCourse) return
@@ -243,7 +242,7 @@ export default function StudentsPage({
       '',
       'Давайте обсудим это в чате.',
     ]
-    onOpenConversation(conversation.id, lines.join('\n'))
+    onOpenConversation(conversation.id, lines.join('\n').slice(0, 3800))
   }
 
   async function submitReview(
@@ -262,10 +261,18 @@ export default function StudentsPage({
     setNotice('')
     try {
       const result = await reviewCuratorAnswerAttempt(attemptID, decision, decision === 'approved' ? '' : feedback)
+      if (selectedStudent && activeCourse) {
+        const [updatedAnswers, updatedCourse] = await Promise.all([
+          listCuratorLessonAnswers(selectedStudent.id, activeCourse.course_enrollment_id, lesson.lesson_id),
+          listCuratorCourseLessons(selectedStudent.id, activeCourse.course_enrollment_id),
+        ])
+        setAnswersByLesson((current) => ({ ...current, [lesson.lesson_id]: updatedAnswers }))
+        setAnswersLoaded((current) => ({ ...current, [lesson.lesson_id]: true }))
+        setCourseAccess(updatedCourse)
+      }
       setNotice(result.replayed ? 'Решение уже было сохранено ранее.' : decision === 'approved'
         ? 'Ответ принят.' : 'Ответ отправлен ученику на исправление.')
       setRevision((value) => value + 1)
-      setDetailRevision((value) => value + 1)
       setRevisionQuestionID(null)
       setFeedbackDrafts((current) => ({ ...current, [answer.question_id]: '' }))
     } catch (reason: unknown) {
