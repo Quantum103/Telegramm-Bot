@@ -171,7 +171,7 @@ func (b *Bot) startCourseWithMode(
 		// persisted mode is authoritative and must not be overwritten.
 		if current, currentErr := nav.ActiveCourse(ctx, studentID); currentErr == nil &&
 			current.Enrollment.CourseID == courseID &&
-			(current.Enrollment.Status == "in_progress" || current.Enrollment.Status == "awaiting_curator") {
+			current.Enrollment.Status == "in_progress" {
 			run, err = current, nil
 		} else {
 			b.render(ctx, chatID, messageID,
