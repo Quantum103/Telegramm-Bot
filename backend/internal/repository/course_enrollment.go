@@ -137,9 +137,15 @@ func (r *CourseEnrollmentRepository) Start(
 		return domain.CourseEnrollmentProgress{}, domain.ErrLegacyProgress
 	}
 
-	var lessonCount int
+	var lessonCount, readyLessonCount int
 	if err := tx.QueryRow(ctx, `
-		SELECT count(lv.id)::INTEGER
+		SELECT count(cl.lesson_id)::INTEGER,
+		       count(lv.id) FILTER (
+		           WHERE lv.id IS NOT NULL
+		             AND EXISTS (
+		                 SELECT 1 FROM lesson_questions q WHERE q.lesson_version_id = lv.id
+		             )
+		       )::INTEGER
 		FROM courses c
 		LEFT JOIN course_lessons cl ON cl.course_id = c.id
 		LEFT JOIN LATERAL (
@@ -150,13 +156,13 @@ func (r *CourseEnrollmentRepository) Start(
 		) lv ON TRUE
 		WHERE c.id = $1 AND c.status = 'published'
 		GROUP BY c.id
-	`, courseID).Scan(&lessonCount); err != nil {
+	`, courseID).Scan(&lessonCount, &readyLessonCount); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.CourseEnrollmentProgress{}, ErrNotFound
 		}
 		return domain.CourseEnrollmentProgress{}, mapDatabaseError("проверить опубликованный курс", err)
 	}
-	if lessonCount == 0 {
+	if lessonCount == 0 || readyLessonCount != lessonCount {
 		return domain.CourseEnrollmentProgress{}, ErrInvalidState
 	}
 
@@ -267,7 +273,7 @@ func (r *CourseEnrollmentRepository) getProgress(
 		 AND le.lesson_version_id = cel.lesson_version_id
 		WHERE ce.student_id = $1
 		  AND ($2::bigint = 0 OR ce.id = $2)
-		  AND ($2::bigint <> 0 OR ce.status IN ('in_progress', 'awaiting_curator'))
+		  AND ($2::bigint <> 0 OR ce.status IN ('in_progress', 'awaiting_curator', 'paused'))
 		GROUP BY ce.id, c.title
 		ORDER BY ce.updated_at DESC, ce.id DESC
 		LIMIT 1
