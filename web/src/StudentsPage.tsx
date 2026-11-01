@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   assignStudentCurator, endStudentCuratorAssignment, getCourseLessonDetail,
-  listAdminStudents, listCuratorCourseLessons, listCuratorLessonAnswers, listStaffAccounts,
-  listStaffConversations, reviewCuratorAnswerAttempt,
+  listAdminStudents, listCuratorCourseLessons, listCuratorLessonAnswers, listCuratorReviewQueue,
+  listStaffAccounts, listStaffConversations, reviewCuratorAnswerAttempt,
   type AdminStudent, type AnswerAttempt, type CourseEnrollmentLesson, type CourseLessonDetail,
-  type CuratorAnswer, type CuratorCourseAccess, type StaffAccount, type StaffConversationSummary,
+  type CuratorAnswer, type CuratorCourseAccess, type CuratorReviewQueueItem,
+  type StaffAccount, type StaffConversationSummary,
   type StaffIdentity,
 } from './api'
 import './management.css'
@@ -103,6 +104,15 @@ export default function StudentsPage({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [revision, setRevision] = useState(0)
+  const [reviewQueue, setReviewQueue] = useState<CuratorReviewQueueItem[]>([])
+  const [reviewQueueLoading, setReviewQueueLoading] = useState(isCurator)
+  const [reviewQueueError, setReviewQueueError] = useState('')
+  const [reviewQueueRevision, setReviewQueueRevision] = useState(0)
+  const [pendingLessonOpen, setPendingLessonOpen] = useState<{
+    studentID: number
+    courseEnrollmentID: number
+    lessonID: number
+  } | null>(null)
   const [selectedStudentID, setSelectedStudentID] = useState<number | null>(null)
   const [courseAccess, setCourseAccess] = useState<CuratorCourseAccess | null>(null)
   const [courseLoading, setCourseLoading] = useState(false)
@@ -155,7 +165,19 @@ export default function StudentsPage({
     () => students.find((student) => student.id === selectedStudentID) ?? null,
     [students, selectedStudentID],
   )
-  const activeCourse = selectedStudent?.active_course ?? null
+  const retainedCompletedCourse = selectedStudent && courseAccess?.enrollment.student_id === selectedStudent.id &&
+    courseAccess.enrollment.status === 'completed' ? courseAccess : null
+  const activeCourse = selectedStudent?.active_course ?? (retainedCompletedCourse ? {
+    course_enrollment_id: retainedCompletedCourse.enrollment.id,
+    course_id: retainedCompletedCourse.enrollment.course_id,
+    course_title: retainedCompletedCourse.enrollment.course_title,
+    mode: retainedCompletedCourse.enrollment.mode,
+    status: retainedCompletedCourse.enrollment.status,
+    total_lessons: retainedCompletedCourse.lessons.length,
+    completed_lessons: retainedCompletedCourse.lessons.filter((lesson) => lesson.status === 'completed').length,
+    pending_reviews: retainedCompletedCourse.lessons.reduce((total, lesson) => total + lesson.pending_reviews, 0),
+    needs_revision: retainedCompletedCourse.lessons.reduce((total, lesson) => total + lesson.needs_revision, 0),
+  } : null)
   const selectionRef = useRef({
     studentID: selectedStudentID,
     courseEnrollmentID: activeCourse?.course_enrollment_id ?? null,
@@ -178,8 +200,16 @@ export default function StudentsPage({
   }, [loading, selectedStudentID, students])
 
   useEffect(() => {
-    if (!selectedStudent || !selectedStudent.active_course) {
+    const hasRetainedCompletedRun = Boolean(
+      selectedStudent && courseAccess?.enrollment.student_id === selectedStudent.id &&
+      courseAccess.enrollment.status === 'completed',
+    )
+    if (!selectedStudent || (!selectedStudent.active_course && !hasRetainedCompletedRun)) {
       setCourseAccess(null)
+      setCourseLoading(false)
+      return
+    }
+    if (!selectedStudent.active_course && hasRetainedCompletedRun) {
       setCourseLoading(false)
       return
     }
@@ -217,7 +247,7 @@ export default function StudentsPage({
     const courseEnrollmentID = activeCourse.course_enrollment_id
     const selectionVersion = selectionRef.current.version
     const requestKey = `${selectionVersion}:${lesson.lesson_id}`
-    if (!force && (answersLoaded[lesson.lesson_id] || answerLoadingRef.current.has(requestKey))) return
+    if (answerLoadingRef.current.has(requestKey) || (!force && answersLoaded[lesson.lesson_id])) return
     answerLoadingRef.current.add(requestKey)
     setAnswersLoading((current) => ({ ...current, [lesson.lesson_id]: true }))
     setAnswersErrors((current) => ({ ...current, [lesson.lesson_id]: '' }))
