@@ -57,3 +57,23 @@ type ReviewAnswerAttemptParams struct {
 	Decision       string
 	Feedback       string
 }
+
+type CuratorAnswer struct {
+	QuestionID        int64    `json:"question_id"`
+	QuestionNumber    int      `json:"question_number"`
+	Prompt            string   `json:"prompt"`
+	AnswerType        string   `json:"answer_type"`
+	AttemptID         *int64   `json:"attempt_id,omitempty"`
+	SubmittedAnswer   string   `json:"submitted_answer"`
+	SelectedOptionIDs []int64  `json:"selected_option_ids"`
+	ProcessingStatus  string   `json:"processing_status"`
+	ReviewDecision    *string  `json:"review_decision,omitempty"`
+	ReviewFeedback    *string  `json:"review_feedback,omitempty"`
+	ReviewedAt        *time.Time `json:"reviewed_at,omitempty"`
+	SubmittedAt       *time.Time `json:"submitted_at,omitempty"`
+}
+
+type CuratorCourseAccess struct {
+	Enrollment CourseEnrollment `json:"enrollment"`
+	Lessons    []CourseEnrollmentLesson `json:"lessons"`
+}
