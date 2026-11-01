@@ -285,6 +285,18 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("отправить ответ: %v", err)
 		}
+		curatorAnswers, err := curatorRepository.ListLessonAnswers(
+			ctx, secondCuratorID, student.ID, run.Enrollment.ID, lessonID,
+		)
+		if err != nil || len(curatorAnswers) != 1 || curatorAnswers[0].AttemptID == nil ||
+			*curatorAnswers[0].AttemptID != saved.AttemptID {
+			t.Fatalf("текущий куратор не получил ответ ученика: answers=%+v err=%v", curatorAnswers, err)
+		}
+		if _, err := curatorRepository.ListLessonAnswers(
+			ctx, firstCuratorID, student.ID, run.Enrollment.ID, lessonID,
+		); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("прежний куратор не должен видеть ответы после передачи: %v", err)
+		}
 
 		// Отправленный, но не проверенный ответ не разрешает завершить урок.
 		if _, err := enrollments.Complete(ctx, student.ID, enrollment.ID); !errors.Is(err, ErrInvalidState) {
