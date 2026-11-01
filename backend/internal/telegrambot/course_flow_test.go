@@ -303,6 +303,7 @@ func TestStartRestoresSavedCourseAndQuestionAfterBotRestart(t *testing.T) {
 	if !strings.Contains(home.text, "Ваш текущий курс: „Курс о Евангелиях“") ||
 		!strings.Contains(home.text, "Прогресс: 0 из 1 уроков завершено") ||
 		!strings.Contains(home.text, "Способ обучения: с ИИ") ||
+		strings.Contains(home.text, "Как вы хотите проходить этот курс?") ||
 		!hasButton(home.markup, "course:continue") {
 		t.Fatalf("restart did not restore the current course: %+v", home)
 	}
