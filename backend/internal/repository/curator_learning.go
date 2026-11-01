@@ -468,19 +468,6 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
-	var latestAttemptID int64
-	if err := tx.QueryRow(ctx, `
-		SELECT id FROM answer_attempts
-		WHERE enrollment_id = $1 AND question_id = $2
-		ORDER BY created_at DESC, id DESC
-		LIMIT 1
-	`, enrollmentID, questionID).Scan(&latestAttemptID); err != nil {
-		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить актуальность попытки", err)
-	}
-	if latestAttemptID != params.AttemptID {
-		return domain.AnswerAttemptReview{}, ErrInvalidState
-	}
-
 	// Повтор того же запроса возвращает уже сохранённое решение. Другое
 	// решение по одной попытке запрещено: исправленный ответ должен быть
 	// новой попыткой ученика, а не перезаписью истории.
@@ -508,6 +495,19 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить существующее решение куратора", existingErr)
 	}
 	if courseStatus != "in_progress" || enrollmentStatus != "in_progress" || processingStatus != "pending" {
+		return domain.AnswerAttemptReview{}, ErrInvalidState
+	}
+
+	var latestAttemptID int64
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM answer_attempts
+		WHERE enrollment_id = $1 AND question_id = $2
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, enrollmentID, questionID).Scan(&latestAttemptID); err != nil {
+		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить актуальность попытки", err)
+	}
+	if latestAttemptID != params.AttemptID {
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
