@@ -437,12 +437,11 @@ export default function StudentsPage({
     setAnswersErrors((current) => ({ ...current, [lesson.lesson_id]: '' }))
     setNotice('')
     try {
-      const result = await reviewCuratorAnswerAttempt(attemptID, decision, decision === 'approved' ? '' : feedback)
-      setNotice(result.replayed ? 'Решение уже было сохранено ранее.' : decision === 'approved'
-        ? 'Ответ принят.' : 'Ответ отправлен ученику на исправление.')
-      setRevision((value) => value + 1)
+      await reviewCuratorAnswerAttempt(attemptID, decision, decision === 'approved' ? '' : feedback)
+      setNotice(decision === 'approved' ? 'Ответ принят.' : 'Ответ отправлен ученику на исправление.')
       setRevisionQuestionID(null)
       setFeedbackDrafts((current) => ({ ...current, [answer.question_id]: '' }))
+      setReviewQueueRevision((value) => value + 1)
       if (selectedStudent && activeCourse) {
         try {
           const [updatedAnswers, updatedCourse] = await Promise.all([
@@ -452,12 +451,29 @@ export default function StudentsPage({
           setAnswersByLesson((current) => ({ ...current, [lesson.lesson_id]: updatedAnswers }))
           setAnswersLoaded((current) => ({ ...current, [lesson.lesson_id]: true }))
           setCourseAccess(updatedCourse)
+          const pendingReviews = updatedCourse.lessons.reduce((total, item) => total + item.pending_reviews, 0)
+          const needsRevision = updatedCourse.lessons.reduce((total, item) => total + item.needs_revision, 0)
+          const completedLessons = updatedCourse.lessons.filter((item) => item.status === 'completed').length
+          setStudents((current) => current.map((student) => student.id === selectedStudent.id
+            ? {
+              ...student,
+              active_course: {
+                ...(student.active_course ?? activeCourse),
+                status: updatedCourse.enrollment.status,
+                total_lessons: updatedCourse.lessons.length,
+                completed_lessons: completedLessons,
+                pending_reviews: pendingReviews,
+                needs_revision: needsRevision,
+              },
+            }
+            : student))
         } catch (refreshError: unknown) {
           setAnswersErrors((current) => ({
             ...current,
             [lesson.lesson_id]: 'Решение сохранено, но данные не обновились. Нажмите «Обновить» и откройте урок снова.',
           }))
           if (messageOf(refreshError, '').includes('Сессия завершена')) onSessionExpired()
+          setRevision((value) => value + 1)
         }
       }
     } catch (reason: unknown) {
