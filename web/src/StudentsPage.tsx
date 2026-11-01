@@ -381,7 +381,7 @@ export default function StudentsPage({
       {!loading && students.length === 0 && <p className="catalog-message">Учеников пока нет или вам ещё не назначили учеников.</p>}
       {!loading && students.length > 0 && <div className="table-scroll">
         <table className="students-table"><thead><tr>
-          <th>Ученик</th><th>Активный курс</th><th>Прогресс</th><th>Ожидают проверки</th><th>Требуют исправления</th><th>Последняя активность</th>
+          <th>Ученик</th><th>Активный курс</th><th>Прогресс</th><th>Ответов ожидают проверки</th><th>Уроков требуют исправления</th><th>Последняя активность</th>
           {isAdmin && <th>Куратор</th>}<th>Карточка</th>{isAdmin && <th>Управление</th>}
         </tr></thead><tbody>{sortedStudents.map((student) => {
           const course = student.active_course
@@ -430,8 +430,8 @@ export default function StudentsPage({
       </div>
       {activeCourse && <div className="student-course-summary">
         <div><span>Прогресс курса</span><strong>{activeCourse.completed_lessons} / {activeCourse.total_lessons} уроков</strong></div>
-        <div><span>Ожидают проверки</span><strong>{activeCourse.pending_reviews}</strong></div>
-        <div><span>Требуют исправления</span><strong>{activeCourse.needs_revision}</strong></div>
+        <div><span>Ответов ожидают проверки</span><strong>{activeCourse.pending_reviews}</strong></div>
+        <div><span>Уроков требуют исправления</span><strong>{activeCourse.needs_revision}</strong></div>
         <div><span>Последняя активность</span><strong>{dateText(selectedStudent.last_learning_activity_at || selectedStudent.last_active_at)}</strong></div>
       </div>}
       {courseLoading && <p className="catalog-message" role="status">Загружаем уроки курса…</p>}
