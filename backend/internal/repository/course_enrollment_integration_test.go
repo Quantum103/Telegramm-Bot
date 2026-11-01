@@ -574,3 +574,74 @@ func TestCourseEnrollmentSerializesDifferentConcurrentStarts(t *testing.T) {
 			activeCount, activeCourseID, activeEnrollmentID)
 	}
 }
+
+func TestSupersededLegacyCourseRunResumesWithoutLosingItsMode(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "superseded-legacy-course-test",
+	})
+	if err != nil {
+		t.Fatalf("создать ученика: %v", err)
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	courseID, lessonIDs, versionIDs := createCourseForEnrollmentTest(
+		t, ctx, pool, suffix+"-old", "Старый сохранённый курс", 1,
+	)
+	otherCourseID, _, _ := createCourseForEnrollmentTest(
+		t, ctx, pool, suffix+"-other", "Другой курс", 1,
+	)
+
+	var oldRunID, questionID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO course_enrollments (
+		    student_id, course_id, run_number, mode, status, started_at
+		)
+		VALUES ($1, $2, 1, 'ai', 'superseded', now())
+		RETURNING id
+	`, student.ID, courseID).Scan(&oldRunID); err != nil {
+		t.Fatalf("создать сохранённый старый запуск: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO course_enrollment_lessons (
+		    course_enrollment_id, lesson_id, lesson_version_id, position
+		)
+		VALUES ($1, $2, $3, 1)
+	`, oldRunID, lessonIDs[0], versionIDs[0]); err != nil {
+		t.Fatalf("сохранить обязательный урок старого запуска: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT id FROM lesson_questions WHERE lesson_version_id = $1
+	`, versionIDs[0]).Scan(&questionID); err != nil {
+		t.Fatalf("получить вопрос старого запуска: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO lesson_enrollments (
+		    student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
+		    current_question_id, status, started_at, last_activity_at
+		)
+		VALUES ($1, $2, $3, $4, 'ai', $5, 'in_progress', now(), now())
+	`, student.ID, lessonIDs[0], versionIDs[0], oldRunID, questionID); err != nil {
+		t.Fatalf("сохранить старое прохождение урока: %v", err)
+	}
+
+	resumed, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, courseID, "curator")
+	if err != nil {
+		t.Fatalf("возобновить старый запуск: %v", err)
+	}
+	if resumed.Enrollment.ID != oldRunID ||
+		resumed.Enrollment.Status != "in_progress" ||
+		resumed.Enrollment.Mode != "ai" ||
+		resumed.TotalLessons != 1 {
+		t.Fatalf("старый запуск/режим/состав курса не восстановлены: %+v", resumed)
+	}
+
+	blocked, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, otherCourseID, "ai")
+	if !errors.Is(err, domain.ErrActiveCourse) ||
+		blocked.Enrollment.ID != oldRunID ||
+		blocked.Enrollment.CourseID != courseID {
+		t.Fatalf("другой курс не должен вытеснять возобновлённый старый: progress=%+v err=%v", blocked, err)
+	}
+}
