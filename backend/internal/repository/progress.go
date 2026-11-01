@@ -22,6 +22,11 @@ func (r *EnrollmentRepository) GetCurrentForStudent(ctx context.Context, student
 		WHERE student_id = $1
 		  AND status = 'in_progress'
 		  AND current_question_id IS NOT NULL
+		  AND (course_enrollment_id IS NULL OR EXISTS (
+		      SELECT 1 FROM course_enrollments ce
+		      WHERE ce.id = lesson_enrollments.course_enrollment_id
+		        AND ce.status = 'in_progress'
+		  ))
 		ORDER BY last_activity_at DESC NULLS LAST, updated_at DESC, id DESC
 		LIMIT 1
 	`, studentID))
@@ -197,6 +202,21 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	}
 	if enrollment.Status == "cancelled" {
 		return Enrollment{}, ErrInvalidState
+	}
+	if enrollment.CourseEnrollmentID != nil {
+		var courseStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT status FROM course_enrollments
+			WHERE id = $1 AND student_id = $2 FOR UPDATE
+		`, *enrollment.CourseEnrollmentID, studentID).Scan(&courseStatus); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Enrollment{}, ErrNotFound
+			}
+			return Enrollment{}, mapDatabaseError("проверить состояние курса перед завершением урока", err)
+		}
+		if courseStatus != "in_progress" {
+			return Enrollment{}, ErrInvalidState
+		}
 	}
 	if enrollment.Status == "completed" {
 		if err := tx.Commit(ctx); err != nil {
