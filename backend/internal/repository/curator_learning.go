@@ -235,6 +235,9 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 	if err := rows.Err(); err != nil {
 		return nil, mapDatabaseError("обойти ответы ученика для куратора", err)
 	}
+	if len(answers) == 0 {
+		return nil, ErrNotFound
+	}
 	return answers, nil
 }
 
