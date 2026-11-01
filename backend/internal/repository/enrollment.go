@@ -34,39 +34,74 @@ func (r *EnrollmentRepository) Start(ctx context.Context, params StartEnrollment
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var published bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM lesson_versions
-			WHERE id = $1 AND lesson_id = $2 AND status = 'published'
-		)
-	`, params.LessonVersionID, params.LessonID).Scan(&published); err != nil {
-		return Enrollment{}, mapDatabaseError("проверить публикацию версии урока", err)
-	}
-	if !published {
-		return Enrollment{}, ErrNotFound
+	if params.CourseEnrollmentID > 0 {
+		var valid bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM course_enrollments ce
+				JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
+				WHERE ce.id = $1
+				  AND ce.student_id = $2
+				  AND ce.mode = $3
+				  AND ce.status = 'in_progress'
+				  AND cel.lesson_id = $4
+				  AND cel.lesson_version_id = $5
+			)
+		`, params.CourseEnrollmentID, params.StudentID, params.Mode, params.LessonID, params.LessonVersionID).Scan(&valid); err != nil {
+			return Enrollment{}, mapDatabaseError("проверить право начать урок в выбранном курсе", err)
+		}
+		if !valid {
+			return Enrollment{}, ErrInvalidState
+		}
+	} else {
+		var published bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM lesson_versions
+				WHERE id = $1 AND lesson_id = $2 AND status = 'published'
+			)
+		`, params.LessonVersionID, params.LessonID).Scan(&published); err != nil {
+			return Enrollment{}, mapDatabaseError("проверить публикацию версии урока", err)
+		}
+		if !published {
+			return Enrollment{}, ErrNotFound
+		}
 	}
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO lesson_enrollments (
-			student_id, lesson_id, lesson_version_id, mode,
+			student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
 			status, started_at, last_activity_at
 		)
-		VALUES ($1, $2, $3, $4, 'in_progress', now(), now())
-		ON CONFLICT (student_id, lesson_version_id, mode) DO NOTHING
-	`, params.StudentID, params.LessonID, params.LessonVersionID, params.Mode)
+		VALUES ($1, $2, $3, NULLIF($4, 0), $5, 'in_progress', now(), now())
+		ON CONFLICT DO NOTHING
+	`, params.StudentID, params.LessonID, params.LessonVersionID, params.CourseEnrollmentID, params.Mode)
 	if err != nil {
 		return Enrollment{}, mapDatabaseError("создать прохождение урока", err)
 	}
 
-	enrollment, err := scanEnrollment(tx.QueryRow(ctx, `
-		SELECT id, student_id, lesson_id, lesson_version_id, mode,
-		       current_question_id, status, started_at, completed_at,
-		       last_activity_at, created_at, updated_at
-		FROM lesson_enrollments
-		WHERE student_id = $1 AND lesson_version_id = $2 AND mode = $3
-		FOR UPDATE
-	`, params.StudentID, params.LessonVersionID, params.Mode))
+	var enrollment Enrollment
+	if params.CourseEnrollmentID > 0 {
+		enrollment, err = scanEnrollment(tx.QueryRow(ctx, `
+			SELECT id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
+			       current_question_id, status, started_at, completed_at,
+			       last_activity_at, created_at, updated_at
+			FROM lesson_enrollments
+			WHERE student_id = $1 AND course_enrollment_id = $2 AND lesson_version_id = $3
+			FOR UPDATE
+		`, params.StudentID, params.CourseEnrollmentID, params.LessonVersionID))
+	} else {
+		enrollment, err = scanEnrollment(tx.QueryRow(ctx, `
+			SELECT id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
+			       current_question_id, status, started_at, completed_at,
+			       last_activity_at, created_at, updated_at
+			FROM lesson_enrollments
+			WHERE student_id = $1 AND lesson_version_id = $2 AND mode = $3
+			  AND course_enrollment_id IS NULL
+			FOR UPDATE
+		`, params.StudentID, params.LessonVersionID, params.Mode))
+	}
 	if err != nil {
 		return Enrollment{}, mapDatabaseError("получить прохождение урока", err)
 	}
@@ -81,7 +116,7 @@ func (r *EnrollmentRepository) GetByStudentAndVersion(ctx context.Context, stude
 		return Enrollment{}, ErrInvalidInput
 	}
 	enrollment, err := scanEnrollment(r.pool.QueryRow(ctx, `
-		SELECT id, student_id, lesson_id, lesson_version_id, mode,
+		SELECT id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
 		       current_question_id, status, started_at, completed_at,
 		       last_activity_at, created_at, updated_at
 		FROM lesson_enrollments
@@ -98,17 +133,21 @@ func (r *EnrollmentRepository) GetByStudentAndVersion(ctx context.Context, stude
 
 func scanEnrollment(row pgx.Row) (Enrollment, error) {
 	var enrollment Enrollment
-	var currentQuestionID pgtype.Int8
+	var courseEnrollmentID, currentQuestionID pgtype.Int8
 	var startedAt, completedAt, lastActivityAt pgtype.Timestamptz
 
 	err := row.Scan(
 		&enrollment.ID, &enrollment.StudentID, &enrollment.LessonID,
-		&enrollment.LessonVersionID, &enrollment.Mode, &currentQuestionID,
+		&enrollment.LessonVersionID, &courseEnrollmentID, &enrollment.Mode, &currentQuestionID,
 		&enrollment.Status, &startedAt, &completedAt, &lastActivityAt,
 		&enrollment.CreatedAt, &enrollment.UpdatedAt,
 	)
 	if err != nil {
 		return Enrollment{}, err
+	}
+	if courseEnrollmentID.Valid {
+		value := courseEnrollmentID.Int64
+		enrollment.CourseEnrollmentID = &value
 	}
 	if currentQuestionID.Valid {
 		value := currentQuestionID.Int64
