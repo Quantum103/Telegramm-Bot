@@ -75,6 +75,42 @@ WITH unique_lesson_course AS (
     GROUP BY lesson_id
     HAVING count(*) = 1
 ),
+-- A learner is backfilled only when every unfinished legacy row has a provable
+-- course owner, the course's old rows use one mode, and no lesson has parallel
+-- unfinished versions. Ambiguous learners keep all legacy rows untouched.
+safe_legacy_students AS (
+    SELECT student.id AS student_id
+    FROM students student
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM lesson_enrollments le
+        WHERE le.student_id = student.id
+          AND le.status IN ('not_started', 'in_progress', 'paused')
+          AND (
+              SELECT count(*)
+              FROM course_lessons cl
+              WHERE cl.lesson_id = le.lesson_id
+          ) <> 1
+    )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM lesson_enrollments le
+        JOIN unique_lesson_course owner_course ON owner_course.lesson_id = le.lesson_id
+        WHERE le.student_id = student.id
+          AND le.status <> 'cancelled'
+        GROUP BY owner_course.course_id
+        HAVING count(DISTINCT le.mode) > 1
+    )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM lesson_enrollments le
+        JOIN unique_lesson_course owner_course ON owner_course.lesson_id = le.lesson_id
+        WHERE le.student_id = student.id
+          AND le.status IN ('not_started', 'in_progress', 'paused')
+        GROUP BY owner_course.course_id, le.lesson_id, le.mode
+        HAVING count(*) > 1
+    )
+),
 legacy_groups AS (
     SELECT
         le.student_id,
@@ -101,6 +137,7 @@ legacy_groups AS (
         max(le.completed_at) AS completed_at
     FROM lesson_enrollments le
     JOIN unique_lesson_course ON unique_lesson_course.lesson_id = le.lesson_id
+    JOIN safe_legacy_students ON safe_legacy_students.student_id = le.student_id
     WHERE le.status <> 'cancelled'
     GROUP BY le.student_id, unique_lesson_course.course_id, le.mode
 ),
