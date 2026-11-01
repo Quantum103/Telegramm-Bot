@@ -376,10 +376,10 @@ func TestLegacyLessonProgressRemainsAccessibleAndBlocksUnsafeCourseGuess(t *test
 
 	// This models a lesson enrollment created by the pre-course-enrollment API.
 	legacy, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
-		StudentID: student.ID,
-		LessonID: lessonIDs[0],
+		StudentID:       student.ID,
+		LessonID:        lessonIDs[0],
 		LessonVersionID: versionIDs[0],
-		Mode: "ai",
+		Mode:            "ai",
 	})
 	if err != nil {
 		t.Fatalf("создать старое прохождение урока: %v", err)
@@ -389,10 +389,10 @@ func TestLegacyLessonProgressRemainsAccessibleAndBlocksUnsafeCourseGuess(t *test
 		t.Fatalf("получить вопрос старого урока: %v", err)
 	}
 	if _, err := NewAnswerRepository(pool).Submit(ctx, AnswerSubmission{
-		StudentID: student.ID,
+		StudentID:    student.ID,
 		EnrollmentID: legacy.ID,
-		QuestionID: questionID,
-		AnswerText: "Сохранённый ответ старого ученика",
+		QuestionID:   questionID,
+		AnswerText:   "Сохранённый ответ старого ученика",
 	}); err != nil {
 		t.Fatalf("сохранить старый ответ: %v", err)
 	}
