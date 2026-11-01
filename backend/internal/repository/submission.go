@@ -39,18 +39,26 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 
 	var lessonVersionID int64
 	var enrollmentStatus string
+	var courseEnrollmentID pgtype.Int8
+	var courseStatus pgtype.Text
 	if err := tx.QueryRow(ctx, `
-		SELECT lesson_version_id, status
-		FROM lesson_enrollments
-		WHERE id = $1 AND student_id = $2
-		FOR UPDATE
-	`, params.EnrollmentID, params.StudentID).Scan(&lessonVersionID, &enrollmentStatus); err != nil {
+		SELECT le.lesson_version_id, le.status, le.course_enrollment_id, ce.status
+		FROM lesson_enrollments le
+		LEFT JOIN course_enrollments ce ON ce.id = le.course_enrollment_id
+		WHERE le.id = $1 AND le.student_id = $2
+		FOR UPDATE OF le
+	`, params.EnrollmentID, params.StudentID).Scan(
+		&lessonVersionID, &enrollmentStatus, &courseEnrollmentID, &courseStatus,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SavedAnswer{}, ErrNotFound
 		}
 		return SavedAnswer{}, mapDatabaseError("проверить прохождение ученика", err)
 	}
 	if enrollmentStatus == "cancelled" {
+		return SavedAnswer{}, ErrInvalidState
+	}
+	if courseEnrollmentID.Valid && (!courseStatus.Valid || courseStatus.String != "in_progress") {
 		return SavedAnswer{}, ErrInvalidState
 	}
 
