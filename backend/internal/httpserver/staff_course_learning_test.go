@@ -13,19 +13,19 @@ import (
 )
 
 type fakeCuratorLearningAPI struct {
-	access        domain.CuratorCourseAccess
-	answers       []domain.CuratorAnswer
-	review         domain.AnswerAttemptReview
+	access          domain.CuratorCourseAccess
+	answers         []domain.CuratorAnswer
+	review          domain.AnswerAttemptReview
 	listCourseCalls int
 	listAnswerCalls int
-	reviewCalls    int
-	lastStaffID    int64
-	lastStudentID  int64
-	lastRunID      int64
-	lastLessonID   int64
-	lastAttemptID  int64
-	lastDecision   string
-	lastFeedback   string
+	reviewCalls     int
+	lastStaffID     int64
+	lastStudentID   int64
+	lastRunID       int64
+	lastLessonID    int64
+	lastAttemptID   int64
+	lastDecision    string
+	lastFeedback    string
 }
 
 func (f *fakeCuratorLearningAPI) ListCourseLessons(_ context.Context, staffID, studentID, runID int64) (domain.CuratorCourseAccess, error) {
@@ -57,7 +57,7 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	learning := &fakeCuratorLearningAPI{
 		access: domain.CuratorCourseAccess{
 			Enrollment: domain.CourseEnrollment{ID: 77, StudentID: 88, Mode: "curator"},
-			Lessons: []domain.CourseEnrollmentLesson{{LessonID: 99, Status: "in_progress"}},
+			Lessons:    []domain.CourseEnrollmentLesson{{LessonID: 99, Status: "in_progress"}},
 		},
 		answers: []domain.CuratorAnswer{{QuestionID: 100, ReviewStatus: "pending_review"}},
 		review: domain.AnswerAttemptReview{
