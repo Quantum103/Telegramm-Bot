@@ -196,9 +196,10 @@ type handlers struct {
 	staffAuth     StaffAuthAPI
 	authoring     StaffAuthoringAPI
 	management    StaffManagementAPI
-	conversations ConversationAPI
-	staffTelegram StaffTelegramAPI
-	cookieSecure  bool
+	conversations  ConversationAPI
+	staffTelegram  StaffTelegramAPI
+	courseLearning CuratorLearningAPI
+	cookieSecure   bool
 	loginLimiter  StaffLoginRateLimiter
 }
 
@@ -240,6 +241,27 @@ func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversat
 	return newHandlerWithManagementAndConversationsAndTelegram(database, logger, catalog, staffAuth, authoring, management, conversations, staffTelegram, cookieSecure, limiter)
 }
 
+// NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearning
+// registers curator course review endpoints in the existing protected staff namespace.
+func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearning(
+	database databasePinger,
+	logger *slog.Logger,
+	catalog CatalogAPI,
+	staffAuth StaffAuthAPI,
+	authoring StaffAuthoringAPI,
+	management StaffManagementAPI,
+	conversations ConversationAPI,
+	staffTelegram StaffTelegramAPI,
+	courseLearning CuratorLearningAPI,
+	limiter StaffLoginRateLimiter,
+	cookieSecure bool,
+) http.Handler {
+	return newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(
+		database, logger, catalog, staffAuth, authoring, management,
+		conversations, staffTelegram, courseLearning, cookieSecure, limiter,
+	)
+}
+
 // NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter configures the production staff API.
 func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
 	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, management, cookieSecure, limiter)
@@ -254,6 +276,13 @@ func newHandlerWithManagementAndConversations(database databasePinger, logger *s
 }
 
 func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, staffTelegram StaffTelegramAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
+	return newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(
+		database, logger, catalog, staffAuth, authoring, management,
+		conversations, staffTelegram, nil, cookieSecure, limiter,
+	)
+}
+
+func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, staffTelegram StaffTelegramAPI, courseLearning CuratorLearningAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -262,7 +291,9 @@ func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger
 	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, authoring: authoring, management: management, conversations: conversations, staffTelegram: staffTelegram, cookieSecure: cookieSecure, loginLimiter: limiter,
+		staffAuth: staffAuth, authoring: authoring, management: management,
+		conversations: conversations, staffTelegram: staffTelegram, courseLearning: courseLearning,
+		cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -320,6 +351,13 @@ func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger
 			protectedConversations := h.staffCuratorMiddleware(staffConversationMux)
 			mux.Handle("/api/v1/staff/conversations", protectedConversations)
 			mux.Handle("/api/v1/staff/conversations/", protectedConversations)
+		}
+		if h.courseLearning != nil {
+			staffCourseLearningMux := http.NewServeMux()
+			staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/students/{studentID}/courses/{courseEnrollmentID}/lessons", h.staffCuratorCourseLessons)
+			staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/students/{studentID}/courses/{courseEnrollmentID}/lessons/{lessonID}/answers", h.staffCuratorLessonAnswers)
+			staffCourseLearningMux.HandleFunc("POST /api/v1/staff/course-learning/attempts/{attemptID}/review", h.staffCuratorReviewAttempt)
+			mux.Handle("/api/v1/staff/course-learning/", h.staffCuratorMiddleware(staffCourseLearningMux))
 		}
 		if h.staffTelegram != nil {
 			staffTelegramMux := http.NewServeMux()
@@ -1283,6 +1321,12 @@ func (h handlers) writeAPIError(w http.ResponseWriter, err error, operation stri
 		writeJSON(w, http.StatusNotFound, apiErrorResponse{Error: "not_found"})
 	case errors.Is(err, domain.ErrConflict):
 		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "conflict"})
+	case errors.Is(err, domain.ErrActiveCourse):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "active_course_exists"})
+	case errors.Is(err, domain.ErrNoCurator):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "curator_not_assigned"})
+	case errors.Is(err, domain.ErrLegacyProgress):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "legacy_progress_requires_review"})
 	case errors.Is(err, domain.ErrInvalidState):
 		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "invalid_state"})
 	default:
