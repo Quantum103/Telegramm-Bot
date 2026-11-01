@@ -122,6 +122,48 @@ func (r *CourseEnrollmentRepository) Start(
 		return domain.CourseEnrollmentProgress{}, pausedErr
 	}
 
+	// Legacy runs superseded during migration retain their answer history. Once
+	// the student's current run is complete, selecting that old course resumes
+	// its original run and saved mode instead of creating an empty duplicate.
+	superseded, supersededErr := scanCourseEnrollment(tx.QueryRow(ctx, courseEnrollmentSelect+`
+		WHERE ce.student_id = $1
+		  AND ce.course_id = $2
+		  AND ce.status = 'superseded'
+		ORDER BY ce.run_number DESC, ce.id DESC
+		LIMIT 1
+		FOR UPDATE OF ce
+	`, studentID, courseID))
+	if supersededErr == nil {
+		curatorID := int64(0)
+		if superseded.Mode == "curator" {
+			curatorID, err = currentActiveCuratorTx(ctx, tx, studentID)
+			if err != nil {
+				return domain.CourseEnrollmentProgress{}, err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE course_enrollments
+			SET status = 'in_progress',
+			    curator_staff_id = NULLIF($2, 0),
+			    started_at = COALESCE(started_at, now()),
+			    updated_at = now()
+			WHERE id = $1
+		`, superseded.ID, curatorID); err != nil {
+			return domain.CourseEnrollmentProgress{}, mapDatabaseError("возобновить сохранённый старый запуск курса", err)
+		}
+		progress, progressErr := r.getProgress(ctx, tx, studentID, superseded.ID)
+		if progressErr != nil {
+			return domain.CourseEnrollmentProgress{}, progressErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.CourseEnrollmentProgress{}, mapDatabaseError("зафиксировать возобновление старого курса", err)
+		}
+		return progress, nil
+	}
+	if !errors.Is(supersededErr, pgx.ErrNoRows) && !errors.Is(supersededErr, ErrNotFound) {
+		return domain.CourseEnrollmentProgress{}, supersededErr
+	}
+
 	var hasUnmappedLegacy bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
