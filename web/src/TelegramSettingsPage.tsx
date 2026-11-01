@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
-  createStaffTelegramLinkToken, getStaffTelegramBindingStatus, listCuratorTelegramNotifications,
-  type CuratorNotification, type StaffIdentity, type StaffTelegramBindingStatus, type StaffTelegramLinkToken,
+  createStaffTelegramLinkToken, getStaffTelegramBindingStatus, getStaffNotificationPreferences,
+  listCuratorTelegramNotifications, updateStaffNotificationPreferences,
+  type CuratorNotification, type StaffIdentity, type StaffNotificationPreferences,
+  type StaffTelegramBindingStatus, type StaffTelegramLinkToken,
 } from './api'
 import './communications.css'
 
@@ -13,6 +15,7 @@ const deliveryState: Record<string, string> = {
   retry: 'Повторная попытка запланирована',
   sent: 'Отправлено',
   failed: 'Не отправлено',
+  cancelled: 'Отменено',
 }
 
 const deliveryError: Record<string, string> = {
@@ -24,6 +27,10 @@ const deliveryError: Record<string, string> = {
   telegram_rate_limited: 'Telegram временно ограничил частоту отправки. Система повторит попытку.',
   telegram_server_error: 'Временная ошибка Telegram. Система повторит попытку.',
   delivery_outcome_unknown: 'Исход сетевой отправки неизвестен. Система повторит попытку; возможен дубль.',
+  admin_telegram_not_linked: 'Telegram ещё не привязан к активному администратору.',
+  curator_authorization_check_failed: 'Не удалось проверить актуальное назначение; будет повторная попытка.',
+  admin_authorization_check_failed: 'Не удалось проверить активного администратора; будет повторная попытка.',
+  invalid_notification_timezone: 'В настройках указан некорректный часовой пояс.',
 }
 
 export default function TelegramSettingsPage({ staff, onSessionExpired }: { staff: StaffIdentity; onSessionExpired: () => void }) {
@@ -31,6 +38,11 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
   const [items, setItems] = useState<CuratorNotification[]>([])
   const [token, setToken] = useState<StaffTelegramLinkToken | null>(null)
   const [confirmRebind, setConfirmRebind] = useState(false)
+  const [preferences, setPreferences] = useState<StaffNotificationPreferences>({
+    reminders_enabled: true, notifications_enabled: true, timezone: 'UTC',
+    quiet_hours_enabled: false, quiet_start: '22:00', quiet_end: '08:00',
+  })
+  const [savingPreferences, setSavingPreferences] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -43,10 +55,14 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
     void Promise.all([
       getStaffTelegramBindingStatus(controller.signal),
       listCuratorTelegramNotifications(controller.signal),
-    ]).then(([binding, notifications]) => {
+      staff.roles.includes('curator')
+        ? getStaffNotificationPreferences(controller.signal)
+        : Promise.resolve(null),
+    ]).then(([binding, notifications, prefs]) => {
       if (controller.signal.aborted) return
       setStatus(binding)
       setItems(notifications)
+      if (prefs) setPreferences(prefs)
       setLoading(false)
     }).catch((reason: unknown) => {
       if (controller.signal.aborted) return
@@ -57,6 +73,25 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
     })
     return () => controller.abort()
   }, [revision, onSessionExpired])
+
+
+  async function savePreferences(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSavingPreferences(true)
+    setError('')
+    setNotice('')
+    try {
+      await updateStaffNotificationPreferences(preferences)
+      setNotice('Настройки уведомлений сохранены.')
+      setRevision((value) => value + 1)
+    } catch (reason: unknown) {
+      const message = messageOf(reason, 'Не удалось сохранить настройки уведомлений.')
+      setError(message)
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    } finally {
+      setSavingPreferences(false)
+    }
+  }
 
   async function issueToken() {
     setBusy(true)
@@ -121,12 +156,52 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
       <code>/link {token.token}</code>
       <button className="secondary-button" type="button" onClick={() => void copyCommand()}>Скопировать команду</button>
     </section>}
+
+    {staff.roles.includes('curator') && <form className="panel notification-preferences-panel" onSubmit={(event) => void savePreferences(event)}>
+      <div><p className="eyebrow">ПЕРСОНАЛЬНЫЕ ПРАВИЛА</p><h2>Напоминания и тихие часы</h2>
+        <p className="page-subtitle">Параметры влияют только на уведомления, отправляемые этому куратору. Сообщения учеников сохраняются независимо от этих настроек.</p>
+      </div>
+      <label className="notification-setting-row">
+        <input type="checkbox" checked={preferences.reminders_enabled}
+          onChange={(event) => setPreferences((current) => ({ ...current, reminders_enabled: event.target.checked }))} />
+        <span><strong>Напоминания включены</strong><small>Первое через 4 часа, второе через 24 часа после последнего сообщения ученика.</small></span>
+      </label>
+      <label className="notification-setting-row">
+        <input type="checkbox" checked={preferences.notifications_enabled}
+          onChange={(event) => setPreferences((current) => ({ ...current, notifications_enabled: event.target.checked }))} />
+        <span><strong>Обычные Telegram-уведомления включены</strong><small>При отключении доставка откладывается, а задачи остаются в PostgreSQL.</small></span>
+      </label>
+      <label className="docx-field notification-timezone-field"><span>Часовой пояс (IANA)</span>
+        <input className="docx-input" value={preferences.timezone}
+          onChange={(event) => setPreferences((current) => ({ ...current, timezone: event.target.value }))}
+          placeholder="Europe/Amsterdam" maxLength={128} required />
+        <small>Примеры: Europe/Amsterdam, Europe/Moscow, Asia/Almaty.</small>
+      </label>
+      <label className="notification-setting-row">
+        <input type="checkbox" checked={preferences.quiet_hours_enabled}
+          onChange={(event) => setPreferences((current) => ({ ...current, quiet_hours_enabled: event.target.checked }))} />
+        <span><strong>Тихие часы включены</strong><small>Обычные уведомления и напоминания будут перенесены на окончание тихого периода.</small></span>
+      </label>
+      <div className="notification-time-grid">
+        <label className="docx-field"><span>Начало тихих часов</span>
+          <input className="docx-input" type="time" value={preferences.quiet_start}
+            onChange={(event) => setPreferences((current) => ({ ...current, quiet_start: event.target.value }))} />
+        </label>
+        <label className="docx-field"><span>Окончание тихих часов</span>
+          <input className="docx-input" type="time" value={preferences.quiet_end}
+            onChange={(event) => setPreferences((current) => ({ ...current, quiet_end: event.target.value }))} />
+        </label>
+      </div>
+      <p className="telegram-help-note">Тихие часы могут пересекать полночь. При включённых тихих часах одинаковое время начала и окончания не допускается.</p>
+      <button className="primary-button" type="submit" disabled={savingPreferences}>{savingPreferences ? 'Сохраняем…' : 'Сохранить настройки'}</button>
+    </form>}
     <section className="panel table-panel telegram-notifications-panel">
       <div className="panel-heading"><div><h2>Журнал уведомлений</h2><p>{loading ? 'Загружаем…' : items.length + ' последних задач'}</p></div></div>
       {loading && <p className="catalog-message">Загружаем историю отправки…</p>}
       {!loading && items.length === 0 && <p className="catalog-message">Пока нет уведомлений. Когда ученик напишет вам, запись появится здесь.</p>}
-      {!loading && items.length > 0 && <div className="table-scroll"><table><thead><tr><th>Ученик</th><th>Состояние</th><th>Попытки</th><th>Последняя ошибка</th><th>Создано</th><th /></tr></thead><tbody>
+      {!loading && items.length > 0 && <div className="table-scroll"><table><thead><tr><th>Ученик</th><th>Тип</th><th>Состояние</th><th>Попытки</th><th>Последняя ошибка</th><th>Создано</th><th /></tr></thead><tbody>
         {items.map((item) => <tr key={item.id}><td><strong>{item.student_display_name}</strong></td>
+          <td>{item.channel === 'admin_escalation' ? 'Эскалация' : item.channel === 'curator_transfer' ? 'Передача диалога' : item.channel === 'curator_reminder_4h' ? 'Напоминание 4 ч' : item.channel === 'curator_reminder_24h' ? 'Напоминание 24 ч' : 'Новое сообщение'}</td>
           <td><span className={'course-state course-state--' + (item.delivery_status === 'sent' ? 'published' : item.delivery_status === 'failed' ? 'archived' : 'draft')}>{deliveryState[item.delivery_status] || item.delivery_status}</span></td>
           <td>{item.attempt_count}</td>
           <td>{item.last_error_code ? (deliveryError[item.last_error_code] || item.last_error_code) : '—'}</td>

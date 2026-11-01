@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -25,12 +26,37 @@ type ConversationStore interface {
 	IsStudentChatMode(context.Context, int64) (bool, error)
 }
 
+type ResponseWaitPolicy struct {
+	FirstReminderAfter  time.Duration
+	SecondReminderAfter time.Duration
+	EscalationAfter     time.Duration
+}
+
+func DefaultResponseWaitPolicy() ResponseWaitPolicy {
+	return ResponseWaitPolicy{
+		FirstReminderAfter: 4 * time.Hour,
+		SecondReminderAfter: 24 * time.Hour,
+		EscalationAfter: 48 * time.Hour,
+	}
+}
+
 type ConversationService struct {
-	store ConversationStore
+	store  ConversationStore
+	policy ResponseWaitPolicy
 }
 
 func NewConversationService(store ConversationStore) *ConversationService {
-	return &ConversationService{store: store}
+	return NewConversationServiceWithPolicy(store, DefaultResponseWaitPolicy())
+}
+
+func NewConversationServiceWithPolicy(store ConversationStore, policy ResponseWaitPolicy) *ConversationService {
+	defaults := DefaultResponseWaitPolicy()
+	if policy.FirstReminderAfter <= 0 ||
+		policy.SecondReminderAfter <= policy.FirstReminderAfter ||
+		policy.EscalationAfter <= policy.SecondReminderAfter {
+		policy = defaults
+	}
+	return &ConversationService{store: store, policy: policy}
 }
 
 func (s *ConversationService) GetOrCreateForStudent(ctx context.Context, studentID int64) (domain.Conversation, error) {
@@ -68,6 +94,9 @@ func (s *ConversationService) CreateStudentMessage(ctx context.Context, params d
 		utf8.RuneCountInString(params.BodyText) > maxConversationMessageRunes {
 		return domain.ConversationMessage{}, domain.ErrInvalidInput
 	}
+	params.FirstReminderAfter = s.policy.FirstReminderAfter
+	params.SecondReminderAfter = s.policy.SecondReminderAfter
+	params.EscalationAfter = s.policy.EscalationAfter
 	return s.store.CreateStudentMessage(ctx, params)
 }
 

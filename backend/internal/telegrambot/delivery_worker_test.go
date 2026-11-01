@@ -20,6 +20,11 @@ type fakeConversationDeliveryQueue struct {
 	errorCode  string
 	retryDelay time.Duration
 	stale      bool
+	authorization domain.DeliveryAuthorization
+	authorizationSet bool
+	adminCurrent bool
+	deferredUntil time.Time
+	cancelled bool
 }
 
 func (f *fakeConversationDeliveryQueue) ClaimDueDelivery(context.Context, time.Duration) (domain.ConversationDelivery, error) {
@@ -37,8 +42,245 @@ func (f *fakeConversationDeliveryQueue) MarkDeliveryFailed(_ context.Context, _ 
 	f.failed, f.errorCode = true, code
 	return nil
 }
-func (f *fakeConversationDeliveryQueue) IsCurrentCuratorDelivery(context.Context, int64, int64, int64) (bool, error) {
-	return !f.stale, nil
+func (f *fakeConversationDeliveryQueue) CheckCuratorDelivery(context.Context, int64, int64, int64) (domain.DeliveryAuthorization, error) {
+	if f.authorizationSet { return f.authorization, nil }
+	return domain.DeliveryAuthorization{Current: !f.stale, NotificationsEnabled: true, RemindersEnabled: true}, nil
+}
+func (f *fakeConversationDeliveryQueue) IsCurrentAdminEscalation(context.Context, int64, int64, int64) (bool, error) {
+	return f.adminCurrent, nil
+}
+func (f *fakeConversationDeliveryQueue) DeferDelivery(_ context.Context, _ int64, next time.Time) error {
+	f.deferredUntil = next
+	return nil
+}
+func (f *fakeConversationDeliveryQueue) MarkDeliveryCancelled(context.Context, int64) error {
+	f.cancelled = true
+	return nil
+}
+
+
+func TestQuietHoursMoveDeliveryAcrossMidnight(t *testing.T) {
+	tests := []struct {
+		name string
+		now time.Time
+		timezone string
+		start string
+		end string
+		want time.Time
+	}{
+		{
+			name: "same day end in Amsterdam",
+			now: time.Date(2026, 11, 1, 1, 30, 0, 0, time.UTC),
+			timezone: "Europe/Amsterdam", start: "22:00", end: "08:00",
+			want: time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "after midnight quiet window crossing next day",
+			now: time.Date(2026, 11, 1, 23, 0, 0, 0, time.UTC),
+			timezone: "Europe/Amsterdam", start: "22:00", end: "06:30",
+			want: time.Date(2026, 11, 2, 5, 30, 0, 0, time.UTC),
+		},
+		{
+			name: "DST spring transition preserves local end",
+			now: time.Date(2026, 3, 29, 0, 30, 0, 0, time.UTC),
+			timezone: "Europe/Amsterdam", start: "22:00", end: "07:00",
+			want: time.Date(2026, 3, 29, 5, 0, 0, 0, time.UTC),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := nextAllowedNotificationTime(tt.now, tt.timezone, tt.start, tt.end)
+			if err != nil { t.Fatalf("nextAllowedNotificationTime: %v", err) }
+			if !got.Equal(tt.want) { t.Fatalf("next allowed = %s, want %s", got, tt.want) }
+		})
+	}
+}
+
+func TestQuietHoursDoNotDeferOutsideWindow(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	got, err := nextAllowedNotificationTime(now, "UTC", "22:00", "08:00")
+	if err != nil { t.Fatal(err) }
+	if !got.Equal(now) { t.Fatalf("outside quiet hours should not defer: got %s", got) }
+}
+
+func TestDeliveryWorkerDefersWhenNotificationsArePaused(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	queue := &fakeConversationDeliveryQueue{
+		authorization: domain.DeliveryAuthorization{Current: true, NotificationsEnabled: false, RemindersEnabled: true},
+		authorizationSet: true,
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":101}}`))
+	}))
+	defer server.Close()
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.now = func() time.Time { return now }
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 31, Channel: "curator_telegram", RecipientChatID: 1234, RecipientStaffID: 44,
+		ConversationID: 55, AttemptCount: 1, NotificationsEnabled: true,
+	})
+	if calls != 0 || !queue.deferredUntil.Equal(now.Add(15*time.Minute)) {
+		t.Fatalf("paused notification should be deferred: calls=%d until=%s", calls, queue.deferredUntil)
+	}
+}
+
+
+func TestDeliveryWorkerDefersImmediateNotificationDuringQuietHours(t *testing.T) {
+	now := time.Date(2026, 11, 1, 1, 30, 0, 0, time.UTC)
+	queue := &fakeConversationDeliveryQueue{authorization: domain.DeliveryAuthorization{
+		Current: true, NotificationsEnabled: true, RemindersEnabled: true,
+		QuietHoursEnabled: false, Timezone: "UTC",
+		QuietStart: "00:00", QuietEnd: "00:01",
+	}, authorizationSet: true}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":105}}`))
+	}))
+	defer server.Close()
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.now = func() time.Time { return now }
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 37, Channel: "curator_telegram", RecipientChatID: 123456, RecipientStaffID: 44,
+		ConversationID: 55, AttemptCount: 1, NotificationsEnabled: true,
+		QuietHoursEnabled: true, Timezone: "Europe/Amsterdam", QuietStart: "22:00", QuietEnd: "08:00",
+	})
+	want := time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)
+	if calls != 0 || !queue.deferredUntil.Equal(want) {
+		t.Fatalf("initial curator notification should defer until quiet hours end: calls=%d until=%s want=%s", calls, queue.deferredUntil, want)
+	}
+}
+
+func TestDeliveryWorkerDefersReminderUntilEndOfQuietHours(t *testing.T) {
+	now := time.Date(2026, 11, 1, 1, 30, 0, 0, time.UTC)
+	queue := &fakeConversationDeliveryQueue{authorization: domain.DeliveryAuthorization{
+		Current: true, NotificationsEnabled: true, RemindersEnabled: true,
+		QuietHoursEnabled: false, Timezone: "UTC",
+		QuietStart: "00:00", QuietEnd: "00:01",
+	}, authorizationSet: true}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":102}}`))
+	}))
+	defer server.Close()
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.now = func() time.Time { return now }
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 32, Channel: "curator_reminder_4h", RecipientChatID: 1234, RecipientStaffID: 44,
+		ConversationID: 55, AttemptCount: 1, ReminderEnabled: true, NotificationsEnabled: true,
+		QuietHoursEnabled: true, Timezone: "Europe/Amsterdam", QuietStart: "22:00", QuietEnd: "08:00",
+	})
+	want := time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)
+	if calls != 0 || !queue.deferredUntil.Equal(want) {
+		t.Fatalf("quiet-hours reminder should be deferred: calls=%d until=%s want=%s", calls, queue.deferredUntil, want)
+	}
+}
+
+func TestDeliveryWorkerSendsOneAdminEscalationWithRequiredDetails(t *testing.T) {
+	var got struct { ChatID int64 `json:"chat_id"`; Text string `json:"text"` }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil { t.Errorf("decode payload: %v", err) }
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":103}}`))
+	}))
+	defer server.Close()
+	queue := &fakeConversationDeliveryQueue{adminCurrent: true}
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.SetPanelURL("https://panel.example/")
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 33, MessageID: 77, Channel: "admin_escalation",
+		RecipientChatID: 555, RecipientStaffID: 88, ConversationID: 99,
+		StudentDisplayName: "Мария", CuratorDisplayName: "Иван",
+		WaitedFor: 48*time.Hour, LastCuratorStatus: "failed", AttemptCount: 1,
+	})
+	for _, value := range []string{"Диалог: №99", "Мария", "Иван", "48 ч", "failed"} {
+		if !strings.Contains(got.Text, value) { t.Errorf("escalation lacks %q: %s", value, got.Text) }
+	}
+	if got.ChatID != 555 || !queue.sent || queue.retry || queue.failed {
+		t.Fatalf("escalation not delivered once to selected admin: chat=%d queue=%+v", got.ChatID, queue)
+	}
+}
+
+
+
+func TestDeliveryWorkerNotifiesNewCuratorAboutTransferredWait(t *testing.T) {
+	var payload struct {
+		ChatID int64 `json:"chat_id"`
+		Text string `json:"text"`
+		ReplyMarkup struct {
+			InlineKeyboard [][]struct {
+				Text string `json:"text"`
+				URL string `json:"url"`
+			} `json:"inline_keyboard"`
+		} `json:"reply_markup"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil { t.Errorf("decode transfer notification: %v", err) }
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":104}}`))
+	}))
+	defer server.Close()
+	queue := &fakeConversationDeliveryQueue{}
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.SetPanelURL("https://panel.example/")
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 36, MessageID: 78, Channel: "curator_transfer",
+		RecipientChatID: 777, RecipientStaffID: 101, ConversationID: 102,
+		StudentDisplayName: "Анна", NotificationsEnabled: true, AttemptCount: 1,
+	})
+	if payload.ChatID != 777 || !strings.Contains(payload.Text, "Вам передан") ||
+		!strings.Contains(payload.Text, "Анна") {
+		t.Fatalf("новый куратор не получил понятное уведомление о передаче: %+v", payload)
+	}
+	if !queue.sent || queue.failed || queue.retry {
+		t.Fatalf("неверный статус доставки передачи: %+v", queue)
+	}
+	if len(payload.ReplyMarkup.InlineKeyboard) != 1 ||
+		payload.ReplyMarkup.InlineKeyboard[0][0].URL != "https://panel.example/?conversation_id=102&page=dialogs" {
+		t.Fatalf("уведомление о передаче должно вести к конкретному диалогу: %+v", payload.ReplyMarkup)
+	}
+}
+
+func TestDeliveryWorkerMarksTelegramUnavailableReminderAsFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":403,"description":"bot was blocked by the user"}`))
+	}))
+	defer server.Close()
+	queue := &fakeConversationDeliveryQueue{authorization: domain.DeliveryAuthorization{
+		Current: true, NotificationsEnabled: true, RemindersEnabled: true,
+	}, authorizationSet: true}
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 35, Channel: "curator_reminder_4h", RecipientChatID: 123456,
+		RecipientStaffID: 99, ReminderEnabled: true, NotificationsEnabled: true,
+		AttemptCount: 1,
+	})
+	if !queue.failed || queue.retry || queue.sent || queue.errorCode != "telegram_recipient_unavailable" {
+		t.Fatalf("недоступный Telegram для напоминания должен завершиться постоянной ошибкой: %+v", queue)
+	}
+}
+
+func TestDeliveryWorkerCancelsStaleReminderInsteadOfSending(t *testing.T) {
+	queue := &fakeConversationDeliveryQueue{stale: true}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+	}))
+	defer server.Close()
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 34, Channel: "curator_reminder_4h", RecipientChatID: 1234,
+		RecipientStaffID: 44, AttemptCount: 1,
+	})
+	if calls != 0 || !queue.cancelled { t.Fatalf("stale reminder should be cancelled, calls=%d queue=%+v", calls, queue) }
 }
 
 func TestDeliveryWorkerUsesTelegramAPIAndMarksSuccessfulDelivery(t *testing.T) {

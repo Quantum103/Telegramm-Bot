@@ -576,6 +576,268 @@ func TestStudentMessageBeforeCuratorAssignmentIsStoredAndDeliveredAfterAssignmen
 	}
 }
 
+
+func TestResponseWaitCreatesOneGenerationAndResetsOnNewStudentMessage(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	repo := NewConversationRepository(pool)
+
+	first, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 990001, BodyText: "Первый вопрос",
+		FirstReminderAfter: 2 * time.Hour, SecondReminderAfter: 3 * time.Hour, EscalationAfter: 4 * time.Hour,
+	})
+	if err != nil { t.Fatalf("создать первое сообщение: %v", err) }
+
+	var waitID int64
+	var generation int
+	var waitMessageID int64
+	var firstDelay, secondDelay, escalationDelay float64
+	if err := pool.QueryRow(ctx, `
+		SELECT id, generation, student_message_id,
+		       EXTRACT(EPOCH FROM first_reminder_at - opened_at),
+		       EXTRACT(EPOCH FROM second_reminder_at - opened_at),
+		       EXTRACT(EPOCH FROM escalation_at - opened_at)
+		FROM conversation_response_waits WHERE conversation_id = $1
+	`, first.ConversationID).Scan(&waitID, &generation, &waitMessageID, &firstDelay, &secondDelay, &escalationDelay); err != nil {
+		t.Fatalf("прочитать состояние ожидания: %v", err)
+	}
+	if generation != 1 || waitMessageID != first.ID ||
+		firstDelay != 7200 || secondDelay != 10800 || escalationDelay != 14400 {
+		t.Fatalf("неверные исходные сроки ожидания: generation=%d message=%d delays=%v/%v/%v",
+			generation, waitMessageID, firstDelay, secondDelay, escalationDelay)
+	}
+	var firstTasks int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM conversation_message_deliveries WHERE response_wait_id = $1 AND response_wait_generation = 1", waitID).Scan(&firstTasks); err != nil {
+		t.Fatalf("посчитать задачи первого поколения: %v", err)
+	}
+	if firstTasks != 3 { t.Fatalf("ожидались две напоминалки и одна эскалация, got %d", firstTasks) }
+
+	replay, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 990001, BodyText: "Первый вопрос",
+		FirstReminderAfter: time.Hour, SecondReminderAfter: 2 * time.Hour, EscalationAfter: 3 * time.Hour,
+	})
+	if err != nil || !replay.Replayed { t.Fatalf("повтор update должен быть идемпотентен: replay=%+v err=%v", replay, err) }
+	if err := pool.QueryRow(ctx, "SELECT generation FROM conversation_response_waits WHERE id = $1", waitID).Scan(&generation); err != nil || generation != 1 {
+		t.Fatalf("повтор не должен создавать новое поколение: generation=%d err=%v", generation, err)
+	}
+
+	second, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 990002, BodyText: "Уточнение к вопросу",
+		FirstReminderAfter: time.Hour, SecondReminderAfter: 2 * time.Hour, EscalationAfter: 3 * time.Hour,
+	})
+	if err != nil { t.Fatalf("создать новое сообщение ученика: %v", err) }
+	var currentGeneration int
+	var currentMessageID int64
+	if err := pool.QueryRow(ctx, "SELECT generation, student_message_id FROM conversation_response_waits WHERE id = $1", waitID).Scan(&currentGeneration, &currentMessageID); err != nil {
+		t.Fatalf("прочитать новое поколение: %v", err)
+	}
+	if currentGeneration != 2 || currentMessageID != second.ID { t.Fatalf("ожидание не было сброшено: generation=%d message=%d", currentGeneration, currentMessageID) }
+	var oldCancelled, newPending int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE response_wait_generation = 1 AND delivery_status = 'cancelled'),
+		       count(*) FILTER (WHERE response_wait_generation = 2 AND delivery_status = 'pending')
+		FROM conversation_message_deliveries WHERE response_wait_id = $1
+	`, waitID).Scan(&oldCancelled, &newPending); err != nil {
+		t.Fatalf("проверить поколения outbox: %v", err)
+	}
+	if oldCancelled != 3 || newPending != 3 {
+		t.Fatalf("старые задачи должны отмениться, новые создаться один раз: old=%d new=%d", oldCancelled, newPending)
+	}
+}
+
+func TestCuratorReplyClosesWaitAndCancelsPendingTasks(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	conversations := NewConversationRepository(pool)
+	message, err := conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 990003, BodyText: "Жду ответа",
+	})
+	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	if _, err := conversations.SendCuratorMessage(ctx, fixture.curator1ID, message.ConversationID, "Ответ куратора"); err != nil {
+		t.Fatalf("ответить от имени куратора: %v", err)
+	}
+	var respondedAt time.Time
+	var pendingTasks, cancelledTasks int
+	if err := pool.QueryRow(ctx, "SELECT responded_at FROM conversation_response_waits WHERE conversation_id = $1", message.ConversationID).Scan(&respondedAt); err != nil {
+		t.Fatalf("прочитать закрытие ожидания: %v", err)
+	}
+	if respondedAt.IsZero() { t.Fatal("ответ куратора должен закрыть ожидание") }
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE delivery_status IN ('pending', 'retry', 'processing')),
+		       count(*) FILTER (WHERE delivery_status = 'cancelled')
+		FROM conversation_message_deliveries
+		WHERE channel IN ('curator_reminder_4h', 'curator_reminder_24h', 'admin_escalation')
+		  AND response_wait_id = (SELECT id FROM conversation_response_waits WHERE conversation_id = $1)
+	`, message.ConversationID).Scan(&pendingTasks, &cancelledTasks); err != nil {
+		t.Fatalf("проверить отмену напоминаний: %v", err)
+	}
+	if pendingTasks != 0 || cancelledTasks != 3 {
+		t.Fatalf("после ответа задачи ожидания должны быть отменены: pending=%d cancelled=%d", pendingTasks, cancelledTasks)
+	}
+}
+
+func TestTransferMovesReminderTasksButKeepsSingleEscalation(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	adminTelegramID := fixture.telegramID + 80001
+	oldCuratorTelegramID := fixture.telegramID + 80002
+	newCuratorTelegramID := fixture.telegramID + 80003
+	for staffID, telegramID := range map[int64]int64{
+		fixture.adminID: adminTelegramID,
+		fixture.curator1ID: oldCuratorTelegramID,
+		fixture.curator2ID: newCuratorTelegramID,
+	} {
+		if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", staffID, telegramID); err != nil {
+			t.Fatalf("привязать Telegram сотрудника %d: %v", staffID, err)
+		}
+	}
+	conversations := NewConversationRepository(pool)
+	message, err := conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID, TelegramMessageID: 990004,
+		BodyText: "Ожидание до передачи",
+		FirstReminderAfter: time.Hour, SecondReminderAfter: 2*time.Hour, EscalationAfter: 3*time.Hour,
+	})
+	if err != nil { t.Fatalf("создать сообщение: %v", err) }
+
+	preferences := NewStaffTelegramRepository(pool)
+	prefs, err := preferences.GetNotificationPreferences(ctx, fixture.curator1ID)
+	if err != nil { t.Fatalf("прочитать настройки куратора: %v", err) }
+	prefs.RemindersEnabled = false
+	if err := preferences.UpdateNotificationPreferences(ctx, fixture.curator1ID, prefs); err != nil {
+		t.Fatalf("отключить напоминания старому куратору: %v", err)
+	}
+	var waitID int64
+	var generation int
+	if err := pool.QueryRow(ctx, "SELECT id, generation FROM conversation_response_waits WHERE conversation_id = $1", message.ConversationID).Scan(&waitID, &generation); err != nil {
+		t.Fatalf("прочитать ожидание: %v", err)
+	}
+	var escalationID int64
+	if err := pool.QueryRow(ctx, "SELECT id FROM conversation_message_deliveries WHERE response_wait_id = $1 AND channel = 'admin_escalation'", waitID).Scan(&escalationID); err != nil {
+		t.Fatalf("прочитать исходную эскалацию: %v", err)
+	}
+	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator2ID); err != nil {
+		t.Fatalf("передать ученика новому куратору: %v", err)
+	}
+	var newGeneration int
+	var newCuratorID int64
+	if err := pool.QueryRow(ctx, "SELECT generation, curator_staff_id FROM conversation_response_waits WHERE id = $1", waitID).Scan(&newGeneration, &newCuratorID); err != nil {
+		t.Fatalf("проверить переназначение ожидания: %v", err)
+	}
+	if newGeneration != generation || newCuratorID != fixture.curator2ID {
+		t.Fatalf("передача не должна создавать новое ожидание: generation=%d curator=%d", newGeneration, newCuratorID)
+	}
+	var reminderCount, reminderRecipient int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE recipient_staff_id = $2 AND delivery_status = 'pending')
+		FROM conversation_message_deliveries
+		WHERE response_wait_id = $1 AND channel IN ('curator_reminder_4h', 'curator_reminder_24h')
+	`, waitID, fixture.curator2ID).Scan(&reminderCount, &reminderRecipient); err != nil {
+		t.Fatalf("проверить перенос напоминаний: %v", err)
+	}
+	if reminderCount != 2 || reminderRecipient != 2 { t.Fatalf("задачи должны перейти новому куратору: count=%d recipient=%d", reminderCount, reminderRecipient) }
+	var newEscalationID int64
+	if err := pool.QueryRow(ctx, "SELECT id FROM conversation_message_deliveries WHERE response_wait_id = $1 AND channel = 'admin_escalation'", waitID).Scan(&newEscalationID); err != nil {
+		t.Fatalf("прочитать эскалацию после передачи: %v", err)
+	}
+	if newEscalationID != escalationID { t.Fatalf("передача не должна создавать вторую эскалацию: old=%d new=%d", escalationID, newEscalationID) }
+}
+
+func TestNotificationPreferencesDisableAndReenableReminders(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	conversations := NewConversationRepository(pool)
+	message, err := conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID, TelegramMessageID: 990005,
+		BodyText: "Проверка настроек", FirstReminderAfter: time.Hour,
+		SecondReminderAfter: 2*time.Hour, EscalationAfter: 3*time.Hour,
+	})
+	if err != nil { t.Fatalf("создать сообщение: %v", err) }
+	repo := NewStaffTelegramRepository(pool)
+	prefs, err := repo.GetNotificationPreferences(ctx, fixture.curator1ID)
+	if err != nil { t.Fatalf("получить настройки по умолчанию: %v", err) }
+	if !prefs.RemindersEnabled || !prefs.NotificationsEnabled || prefs.Timezone != "UTC" || prefs.QuietHoursEnabled {
+		t.Fatalf("неверные настройки по умолчанию: %+v", prefs)
+	}
+	prefs.RemindersEnabled = false
+	if err := repo.UpdateNotificationPreferences(ctx, fixture.curator1ID, prefs); err != nil { t.Fatalf("отключить напоминания: %v", err) }
+	var cancelled int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel IN ('curator_reminder_4h', 'curator_reminder_24h')
+		  AND delivery_status = 'cancelled'
+	`, message.ID).Scan(&cancelled); err != nil { t.Fatalf("проверить отключение напоминаний: %v", err) }
+	if cancelled != 2 { t.Fatalf("ожидались две отменённые задачи, got %d", cancelled) }
+	prefs.RemindersEnabled = true
+	if err := repo.UpdateNotificationPreferences(ctx, fixture.curator1ID, prefs); err != nil { t.Fatalf("включить напоминания: %v", err) }
+	// Simulate an ordinary notification that was deferred during a pause.
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries
+		SET next_attempt_at = now() + INTERVAL '15 minutes'
+		WHERE message_id = $1 AND channel = 'curator_telegram' AND delivery_status = 'pending'
+	`, message.ID); err != nil { t.Fatalf("подготовить отложенное обычное уведомление: %v", err) }
+	prefs.NotificationsEnabled = false
+	if err := repo.UpdateNotificationPreferences(ctx, fixture.curator1ID, prefs); err != nil { t.Fatalf("поставить уведомления на паузу: %v", err) }
+	prefs.NotificationsEnabled = true
+	if err := repo.UpdateNotificationPreferences(ctx, fixture.curator1ID, prefs); err != nil { t.Fatalf("снять паузу уведомлений: %v", err) }
+	var resumedDue bool
+	if err := pool.QueryRow(ctx, `
+		SELECT next_attempt_at <= now()
+		FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, message.ID).Scan(&resumedDue); err != nil { t.Fatalf("проверить возобновление обычного уведомления: %v", err) }
+	if !resumedDue { t.Fatal("после снятия паузы обычное уведомление должно быть разблокировано немедленно") }
+	var pending int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel IN ('curator_reminder_4h', 'curator_reminder_24h')
+		  AND delivery_status = 'pending'
+	`, message.ID).Scan(&pending); err != nil { t.Fatalf("проверить восстановление напоминаний: %v", err) }
+	if pending != 2 { t.Fatalf("после повторного включения ожидаются две задачи, got %d", pending) }
+}
+
+func TestResponseWaitOutboxSurvivesRepositoryRestart(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	message, err := NewConversationRepository(pool).CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID, TelegramMessageID: 990006,
+		BodyText: "Восстановление после перезапуска",
+		FirstReminderAfter: time.Hour, SecondReminderAfter: 2*time.Hour, EscalationAfter: 3*time.Hour,
+	})
+	if err != nil { t.Fatalf("создать сообщение: %v", err) }
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries
+		SET delivery_status = 'sent', sent_at = now()
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, message.ID); err != nil { t.Fatalf("закрыть немедленное уведомление: %v", err) }
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+88000); err != nil {
+		t.Fatalf("привязать Telegram куратора: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries SET next_attempt_at = '1970-01-01T00:00:00Z'::timestamptz
+		WHERE message_id = $1 AND channel = 'curator_reminder_4h'
+	`, message.ID); err != nil { t.Fatalf("сделать задачу ожидающей: %v", err) }
+	restarted := NewConversationDeliveryRepository(pool)
+	delivery, err := restarted.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil { t.Fatalf("новый repository должен восстановить задачу из PostgreSQL: %v", err) }
+	if delivery.Channel != "curator_reminder_4h" || delivery.ResponseWaitID <= 0 || delivery.ResponseWaitGeneration != 1 {
+		t.Fatalf("неверно восстановленная задача: %+v", delivery)
+	}
+}
+
 func TestStudentChatModePersistsInPostgres(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

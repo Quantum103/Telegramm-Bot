@@ -296,7 +296,8 @@ function App() {
       <div className="workspace-switcher"><div className="workspace-avatar">С</div><div className="workspace-copy"><span>Рабочее пространство</span><strong>Библейская платформа</strong></div><span className="workspace-chevron"><Icon name="chevron" size={15} /></span></div>
       <nav className="primary-nav" aria-label="Основная навигация"><p className="nav-caption">МЕНЮ</p>{navigation.filter((item) => {
             if (item.id === 'staff') return staff.roles.includes('administrator')
-            if (item.id === 'dialogs' || item.id === 'telegram') return staff.roles.includes('curator')
+            if (item.id === 'dialogs') return staff.roles.includes('curator')
+            if (item.id === 'telegram') return staff.roles.includes('curator') || staff.roles.includes('administrator')
             return true
           }).map((item) => <button key={item.id} className={'nav-item' + (activePage === item.id ? ' nav-item--active' : '')} aria-current={activePage === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
       <div className="sidebar-spacer" />
@@ -374,7 +375,7 @@ function App() {
         {activePage === 'docx-import' && <DocxImportPage staff={staff} onSessionExpired={onSessionExpired} />}
         {activePage === 'students' && <StudentsPage staff={staff} onSessionExpired={onSessionExpired} />}
         {activePage === 'dialogs' && staff.roles.includes('curator') && <ConversationsPage staff={staff} initialConversationID={initialConversationID} onSessionExpired={onSessionExpired} onSelectConversation={(id) => navigate('dialogs', id)} />}
-        {activePage === 'telegram' && staff.roles.includes('curator') && <TelegramSettingsPage staff={staff} onSessionExpired={onSessionExpired} />}
+        {activePage === 'telegram' && (staff.roles.includes('curator') || staff.roles.includes('administrator')) && <TelegramSettingsPage staff={staff} onSessionExpired={onSessionExpired} />}
         {activePage === 'staff' && staff.roles.includes('administrator') && <StaffManagementPage staff={staff} onSessionExpired={onSessionExpired} />}
 
         <footer className="page-footer"><span>© 2026 Слово · Обучающая платформа</span><span>Вход выполнен: {staff.email}</span></footer>

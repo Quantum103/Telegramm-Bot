@@ -437,12 +437,22 @@ export type CuratorNotification = {
   message_id: number
   conversation_id: number
   student_display_name: string
+  channel: string
   delivery_status: string
   attempt_count: number
   last_error_code?: string
   last_error_at?: string
   sent_at?: string
   created_at: string
+}
+
+export type StaffNotificationPreferences = {
+  reminders_enabled: boolean
+  notifications_enabled: boolean
+  timezone: string
+  quiet_hours_enabled: boolean
+  quiet_start: string
+  quiet_end: string
 }
 
 type StaffConversationsResponse = { conversations: StaffConversationSummary[] }
@@ -492,6 +502,20 @@ export async function createStaffTelegramLinkToken(): Promise<StaffTelegramLinkT
     cache: 'no-store', credentials: 'same-origin', body: '{}',
   })
   return readJSONResponse<StaffTelegramLinkToken>(response)
+}
+
+
+export async function getStaffNotificationPreferences(signal?: AbortSignal): Promise<StaffNotificationPreferences> {
+  return getJSON<StaffNotificationPreferences>('/api/v1/staff/telegram/preferences', signal)
+}
+
+export async function updateStaffNotificationPreferences(preferences: StaffNotificationPreferences): Promise<void> {
+  const response = await fetch('/api/v1/staff/telegram/preferences', {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: JSON.stringify(preferences),
+  })
+  await readJSONResponse<StaffNotificationPreferences>(response)
 }
 
 export async function listCuratorTelegramNotifications(signal?: AbortSignal): Promise<CuratorNotification[]> {

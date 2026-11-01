@@ -472,9 +472,53 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 		JOIN conversations conversation ON conversation.id = message.conversation_id
 		WHERE delivery.message_id = message.id AND conversation.student_id = $1
 		  AND conversation.status = 'active' AND delivery.channel = 'curator_telegram'
-		  AND delivery.delivery_status IN ('pending', 'retry', 'failed', 'processing')
+		  AND delivery.delivery_status IN ('pending', 'retry', 'failed', 'processing', 'cancelled')
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("перенаправить незавершённые уведомления новому куратору", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_response_waits wait
+		SET curator_staff_id = $2, updated_at = now()
+		FROM conversations conversation
+		WHERE conversation.id = wait.conversation_id
+		  AND conversation.student_id = $1 AND conversation.status = 'active'
+		  AND wait.responded_at IS NULL
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("обновить ответственного в состоянии ожидания ответа", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_message_deliveries delivery
+		SET delivery_status = 'pending', recipient_staff_id = $2,
+		    attempt_count = 0, next_attempt_at = GREATEST(delivery.next_attempt_at, now()),
+		    locked_at = NULL, last_error_code = NULL, last_error_at = NULL, updated_at = now()
+		FROM conversation_response_waits wait
+		JOIN conversations conversation ON conversation.id = wait.conversation_id
+		WHERE delivery.response_wait_id = wait.id
+		  AND delivery.response_wait_generation = wait.generation
+		  AND delivery.message_id = wait.student_message_id
+		  AND conversation.student_id = $1 AND conversation.status = 'active'
+		  AND wait.responded_at IS NULL
+		  AND delivery.channel IN ('curator_reminder_4h', 'curator_reminder_24h')
+		  AND delivery.delivery_status IN ('pending', 'retry', 'failed', 'processing', 'cancelled')
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("перенаправить напоминания новому куратору", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO conversation_message_deliveries
+			(message_id, channel, recipient_staff_id, delivery_status, next_attempt_at,
+			 response_wait_id, response_wait_generation)
+		SELECT wait.student_message_id, 'curator_transfer', $2, 'pending', now(),
+		       wait.id, wait.generation
+		FROM conversation_response_waits wait
+		JOIN conversations conversation ON conversation.id = wait.conversation_id
+		WHERE conversation.student_id = $1 AND conversation.status = 'active'
+		  AND conversation.assigned_curator_staff_id = $2
+		  AND wait.curator_staff_id = $2 AND wait.responded_at IS NULL
+		ON CONFLICT DO UPDATE SET recipient_staff_id = EXCLUDED.recipient_staff_id,
+			delivery_status = 'pending', attempt_count = 0, next_attempt_at = now(),
+			locked_at = NULL, last_error_code = NULL, last_error_at = NULL, updated_at = now()
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("создать уведомление о передаче диалога новому куратору", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать назначение куратора", err)
@@ -553,6 +597,31 @@ func (r *StaffManagementRepository) EndStudentCuratorAssignment(ctx context.Cont
 		        jsonb_build_object('previous_curator_staff_id', $3::bigint))
 	`, actorID, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("записать аудит завершения назначения куратора", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_response_waits wait
+		SET curator_staff_id = NULL, updated_at = now()
+		FROM conversations conversation
+		WHERE conversation.id = wait.conversation_id
+		  AND conversation.student_id = $1 AND wait.responded_at IS NULL
+	`, studentID); err != nil {
+		return mapDatabaseError("снять ответственного в состоянии ожидания ответа", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_message_deliveries delivery
+		SET delivery_status = 'pending', recipient_staff_id = NULL,
+		    attempt_count = 0, next_attempt_at = GREATEST(delivery.next_attempt_at, now()),
+		    locked_at = NULL, last_error_code = NULL, last_error_at = NULL, updated_at = now()
+		FROM conversation_response_waits wait
+		JOIN conversations conversation ON conversation.id = wait.conversation_id
+		WHERE delivery.response_wait_id = wait.id
+		  AND delivery.response_wait_generation = wait.generation
+		  AND delivery.message_id = wait.student_message_id
+		  AND conversation.student_id = $1 AND wait.responded_at IS NULL
+		  AND delivery.channel IN ('curator_reminder_4h', 'curator_reminder_24h')
+		  AND delivery.delivery_status IN ('pending', 'retry', 'failed', 'processing')
+	`, studentID); err != nil {
+		return mapDatabaseError("приостановить напоминания без назначенного куратора", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать завершение назначения куратора", err)

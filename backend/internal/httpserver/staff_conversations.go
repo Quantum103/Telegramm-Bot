@@ -39,6 +39,22 @@ type staffConversationReadResponse struct {
 	MarkedRead int64 `json:"marked_read"`
 }
 
+func (h handlers) staffNotificationMiddleware(next http.Handler) http.Handler {
+	roleChecked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity := staffIdentityFromRequest(r)
+		if identity.StaffID <= 0 {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+		if !staffHasRole(identity, "curator") && !staffHasRole(identity, "administrator") {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return h.staffSessionMiddleware(roleChecked)
+}
+
 func (h handlers) staffCuratorMiddleware(next http.Handler) http.Handler {
 	roleChecked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := staffIdentityFromRequest(r)

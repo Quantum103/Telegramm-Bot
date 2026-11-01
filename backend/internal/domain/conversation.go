@@ -40,7 +40,10 @@ type CreateStudentConversationMessageParams struct {
 	StudentID         int64
 	TelegramChatID    int64
 	TelegramMessageID int64
-	BodyText          string
+	BodyText              string
+	FirstReminderAfter    time.Duration
+	SecondReminderAfter   time.Duration
+	EscalationAfter       time.Duration
 }
 
 // ConversationDelivery — задание на доставку ответа куратора в Telegram.
@@ -55,4 +58,35 @@ type ConversationDelivery struct {
 	BodyText             string
 	AttemptCount         int
 	PreparationErrorCode string
+	CuratorDisplayName   string
+	WaitedFor            time.Duration
+	LastCuratorStatus    string
+	ReminderEnabled      bool
+	NotificationsEnabled bool
+	QuietHoursEnabled    bool
+	Timezone             string
+	QuietStart           string
+	QuietEnd             string
+	DeliveryKind         string
+	ResponseWaitID       int64
+	ResponseWaitGeneration int
+}
+
+type DeliveryAuthorization struct {
+	Current              bool
+	NotificationsEnabled bool
+	RemindersEnabled     bool
+	QuietHoursEnabled    bool
+	Timezone             string
+	QuietStart           string
+	QuietEnd             string
+}
+
+type StaffNotificationPreferences struct {
+	RemindersEnabled     bool   `json:"reminders_enabled"`
+	NotificationsEnabled bool   `json:"notifications_enabled"`
+	Timezone             string `json:"timezone"`
+	QuietHoursEnabled    bool   `json:"quiet_hours_enabled"`
+	QuietStart           string `json:"quiet_start"`
+	QuietEnd             string `json:"quiet_end"`
 }

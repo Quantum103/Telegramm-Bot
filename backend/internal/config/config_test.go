@@ -41,6 +41,12 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.TelegramBotToken != "" {
 		t.Errorf("TelegramBotToken = %q, want empty when not configured", cfg.TelegramBotToken)
 	}
+	if cfg.CuratorReminderFirstAfter != 4*time.Hour ||
+		cfg.CuratorReminderSecondAfter != 24*time.Hour ||
+		cfg.CuratorEscalationAfter != 48*time.Hour {
+		t.Errorf("unexpected curator response wait defaults: first=%s second=%s escalation=%s",
+			cfg.CuratorReminderFirstAfter, cfg.CuratorReminderSecondAfter, cfg.CuratorEscalationAfter)
+	}
 	if cfg.Redis.Addr != "localhost:6379" || cfg.Redis.Password != "test-redis-password" || cfg.Redis.DB != 0 || cfg.Redis.ConnectTimeout != 3*time.Second {
 		t.Errorf("unexpected Redis defaults: %+v", cfg.Redis)
 	}
@@ -89,6 +95,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "Redis address", key: "REDIS_ADDR", value: "not-an-address"},
 		{name: "Redis database", key: "REDIS_DB", value: "16"},
 		{name: "Redis timeout", key: "REDIS_CONNECT_TIMEOUT", value: "0s"},
+		{name: "first reminder must be positive", key: "CURATOR_REMINDER_FIRST_AFTER", value: "0s"},
+		{name: "second reminder must follow first", key: "CURATOR_REMINDER_SECOND_AFTER", value: "2h"},
+		{name: "escalation must follow second", key: "CURATOR_ESCALATION_AFTER", value: "24h"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,6 +105,12 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 			values[tt.key] = tt.value
 			if tt.key == "DATABASE_MIN_CONNS" {
 				values["DATABASE_MAX_CONNS"] = "10"
+			}
+			if tt.key == "CURATOR_REMINDER_SECOND_AFTER" {
+				values["CURATOR_REMINDER_FIRST_AFTER"] = "4h"
+			}
+			if tt.key == "CURATOR_ESCALATION_AFTER" {
+				values["CURATOR_REMINDER_SECOND_AFTER"] = "24h"
 			}
 			_, err := load(lookupFrom(values))
 			if err == nil {

@@ -97,6 +97,30 @@ func TestLinkedCuratorCanUseLinkCommandForConfirmedRebinding(t *testing.T) {
 	}
 }
 
+
+func TestLinkedAdministratorCanRunStartWithoutCuratorRole(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	staffTelegram := &fakeStaffTelegramAPIForBinding{account: domain.StaffTelegramAccount{
+		StaffID: 78, DisplayName: "Администратор", AccountStatus: "active", IsAdministrator: true,
+	}}
+	bot := NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		api, students, catalog, learning, nil, nil, nil, staffTelegram,
+	)
+	user := User{ID: 987655, Username: "administrator"}
+	update := Update{UpdateID: 2, Message: &Message{
+		MessageID: 6, From: &user, Chat: Chat{ID: user.ID, Type: "private"}, Text: "/start",
+	}}
+	if !bot.handleUpdate(context.Background(), update) { t.Fatal("администраторский /start не обработан") }
+	if staffTelegram.restoreCalls != 1 {
+		t.Fatalf("для администратора должен вызываться restore уведомлений, calls=%d", staffTelegram.restoreCalls)
+	}
+	if len(api.messages) == 0 || !strings.Contains(api.messages[len(api.messages)-1].text, "администратор") {
+		t.Fatalf("бот не распознал администратора: %+v", api.messages)
+	}
+}
+
 func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
@@ -134,8 +158,9 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 		saved.TelegramMessageID != 321 || saved.BodyText != "Нужна помощь с уроком." {
 		t.Fatalf("неверная идентичность или содержимое сообщения: %+v", saved)
 	}
-	if !strings.Contains(api.messages[len(api.messages)-1].text, "принято и сохранено") {
-		t.Fatalf("нет подтверждения сохранения: %q", api.messages[len(api.messages)-1].text)
+	if !strings.Contains(api.messages[len(api.messages)-1].text, "Сообщение сохранено") ||
+		!strings.Contains(api.messages[len(api.messages)-1].text, "когда сможет") {
+		t.Fatalf("бот должен подтвердить сохранение без обещания немедленного ответа: %q", api.messages[len(api.messages)-1].text)
 	}
 }
 

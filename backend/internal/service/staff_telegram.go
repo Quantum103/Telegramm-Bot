@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -20,6 +22,8 @@ type StaffTelegramStore interface {
 	FindByTelegramID(context.Context, int64) (domain.StaffTelegramAccount, error)
 	RestoreNotifications(context.Context, int64) error
 	ListNotifications(context.Context, int64, int) ([]domain.CuratorNotification, error)
+	GetNotificationPreferences(context.Context, int64) (domain.StaffNotificationPreferences, error)
+	UpdateNotificationPreferences(context.Context, int64, domain.StaffNotificationPreferences) error
 }
 
 type StaffTelegramService struct {
@@ -80,6 +84,24 @@ func (s *StaffTelegramService) RestoreNotifications(ctx context.Context, staffID
 		return domain.ErrInvalidInput
 	}
 	return s.store.RestoreNotifications(ctx, staffID)
+}
+
+
+func (s *StaffTelegramService) GetNotificationPreferences(ctx context.Context, staffID int64) (domain.StaffNotificationPreferences, error) {
+	if staffID <= 0 { return domain.StaffNotificationPreferences{}, domain.ErrInvalidInput }
+	return s.store.GetNotificationPreferences(ctx, staffID)
+}
+
+func (s *StaffTelegramService) UpdateNotificationPreferences(ctx context.Context, staffID int64, prefs domain.StaffNotificationPreferences) error {
+	if staffID <= 0 { return domain.ErrInvalidInput }
+	prefs.Timezone = strings.TrimSpace(prefs.Timezone)
+	if len(prefs.Timezone) == 0 || len(prefs.Timezone) > 128 { return domain.ErrInvalidInput }
+	if _, err := time.LoadLocation(prefs.Timezone); err != nil { return domain.ErrInvalidInput }
+	start, err := time.Parse("15:04", prefs.QuietStart)
+	if err != nil { return domain.ErrInvalidInput }
+	end, err := time.Parse("15:04", prefs.QuietEnd)
+	if err != nil || start.Equal(end) { return domain.ErrInvalidInput }
+	return s.store.UpdateNotificationPreferences(ctx, staffID, prefs)
 }
 
 func (s *StaffTelegramService) ListNotifications(ctx context.Context, staffID int64) ([]domain.CuratorNotification, error) {

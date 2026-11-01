@@ -17,6 +17,9 @@ type Config struct {
 	HTTPWriteTimeout      time.Duration
 	HTTPIdleTimeout       time.Duration
 	TelegramBotToken      string
+	CuratorReminderFirstAfter  time.Duration
+	CuratorReminderSecondAfter time.Duration
+	CuratorEscalationAfter    time.Duration
 	Database              DatabaseConfig
 	Redis                 RedisConfig
 }
@@ -69,6 +72,22 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	cfg.TelegramBotToken = strings.TrimSpace(stringValue(lookup, "TELEGRAM_BOT_TOKEN", ""))
+
+	if cfg.CuratorReminderFirstAfter, err = durationValue(lookup, "CURATOR_REMINDER_FIRST_AFTER", 4*time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.CuratorReminderSecondAfter, err = durationValue(lookup, "CURATOR_REMINDER_SECOND_AFTER", 24*time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.CuratorEscalationAfter, err = durationValue(lookup, "CURATOR_ESCALATION_AFTER", 48*time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.CuratorReminderSecondAfter <= cfg.CuratorReminderFirstAfter {
+		return Config{}, fmt.Errorf("CURATOR_REMINDER_SECOND_AFTER must be greater than CURATOR_REMINDER_FIRST_AFTER")
+	}
+	if cfg.CuratorEscalationAfter <= cfg.CuratorReminderSecondAfter {
+		return Config{}, fmt.Errorf("CURATOR_ESCALATION_AFTER must be greater than CURATOR_REMINDER_SECOND_AFTER")
+	}
 
 	cfg.Redis.Addr = strings.TrimSpace(stringValue(lookup, "REDIS_ADDR", "localhost:6379"))
 	host, redisPort, redisAddrErr := net.SplitHostPort(cfg.Redis.Addr)

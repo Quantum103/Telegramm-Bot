@@ -97,7 +97,14 @@ func run(logger *slog.Logger) error {
 		repository.NewEnrollmentRepository(pool),
 		repository.NewAnswerRepository(pool),
 	)
-	conversationService := service.NewConversationService(repository.NewConversationRepository(pool))
+	conversationService := service.NewConversationServiceWithPolicy(
+		repository.NewConversationRepository(pool),
+		service.ResponseWaitPolicy{
+			FirstReminderAfter: cfg.CuratorReminderFirstAfter,
+			SecondReminderAfter: cfg.CuratorReminderSecondAfter,
+			EscalationAfter: cfg.CuratorEscalationAfter,
+		},
+	)
 	staffTelegramService := service.NewStaffTelegramService(repository.NewStaffTelegramRepository(pool))
 
 	server := &http.Server{

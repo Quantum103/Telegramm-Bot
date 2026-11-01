@@ -507,8 +507,8 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 		b.send(ctx, message.Chat.ID, "Эта учётная запись сотрудника отключена. Уведомления не отправляются; обратитесь к администратору.")
 		return true, true
 	}
-	if !account.IsCurator {
-		b.send(ctx, message.Chat.ID, "У этой учётной записи больше нет активной роли куратора. Уведомления отключены; обратитесь к администратору.")
+	if !account.IsCurator && !account.IsAdministrator {
+		b.send(ctx, message.Chat.ID, "У этой учётной записи больше нет активной роли куратора или администратора. Уведомления отключены; обратитесь к администратору.")
 		return true, true
 	}
 	command := ""
@@ -633,7 +633,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	if saved.Replayed {
 		b.send(ctx, message.Chat.ID, "Это сообщение уже принято и сохранено. Куратор увидит его в диалоге.")
 	} else {
-		b.send(ctx, message.Chat.ID, "Сообщение принято и сохранено. Ваш назначенный куратор увидит его в диалоге.")
+		b.send(ctx, message.Chat.ID, "Сообщение сохранено и передано куратору. Он ответит, когда сможет.")
 	}
 	return true
 }

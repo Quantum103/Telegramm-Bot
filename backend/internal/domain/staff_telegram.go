@@ -6,7 +6,8 @@ type StaffTelegramAccount struct {
 	StaffID       int64
 	DisplayName   string
 	AccountStatus string
-	IsCurator     bool
+	IsCurator       bool
+	IsAdministrator bool
 }
 
 type StaffTelegramBindingStatus struct {
@@ -24,6 +25,7 @@ type CuratorNotification struct {
 	MessageID          int64      `json:"message_id"`
 	ConversationID     int64      `json:"conversation_id"`
 	StudentDisplayName string     `json:"student_display_name"`
+	Channel             string     `json:"channel"`
 	DeliveryStatus     string     `json:"delivery_status"`
 	AttemptCount       int        `json:"attempt_count"`
 	LastErrorCode      *string    `json:"last_error_code,omitempty"`

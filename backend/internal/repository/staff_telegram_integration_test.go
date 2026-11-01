@@ -51,3 +51,32 @@ func TestStaffTelegramBindingUsesSingleUseTokenAndDetectsInactiveAccount(t *test
 		t.Fatalf("отключённому сотруднику нельзя выдать код привязки: %v", err)
 	}
 }
+
+func TestAdministratorCanLinkTelegramForEscalations(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	repo := NewStaffTelegramRepository(pool)
+	telegramID := fixture.telegramID + 9100
+	tokenHash := sha256.Sum256([]byte("stage5-admin-single-use-token"))
+	if err := repo.IssueLinkToken(ctx, fixture.adminID, tokenHash, time.Now().Add(5*time.Minute)); err != nil {
+		t.Fatalf("администратору должен выдаваться код привязки Telegram: %v", err)
+	}
+	account, err := repo.BindTelegramAccount(ctx, telegramID, "admin_test", tokenHash)
+	if err != nil {
+		t.Fatalf("подтвердить Telegram-привязку администратора: %v", err)
+	}
+	if account.StaffID != fixture.adminID || !account.IsAdministrator || account.IsCurator {
+		t.Fatalf("Telegram должен привязаться к роли администратора: %+v", account)
+	}
+	found, err := repo.FindByTelegramID(ctx, telegramID)
+	if err != nil || found.StaffID != fixture.adminID || !found.IsAdministrator {
+		t.Fatalf("привязка администратора не находится по Telegram ID: %+v err=%v", found, err)
+	}
+	status, err := repo.GetBindingStatus(ctx, fixture.adminID)
+	if err != nil || !status.Linked {
+		t.Fatalf("статус Telegram администратора должен быть linked: %+v err=%v", status, err)
+	}
+}
+

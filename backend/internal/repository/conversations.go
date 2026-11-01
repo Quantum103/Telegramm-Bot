@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -223,12 +224,113 @@ func (r *ConversationRepository) CreateStudentMessage(ctx context.Context, param
 		`, message.ID, conversation.AssignedCuratorStaffID); err != nil {
 			return domain.ConversationMessage{}, mapDatabaseError("создать задачу уведомления куратора", err)
 		}
+		if err := scheduleResponseWaitTasksTx(
+			ctx, tx, conversation.ID, message.ID, conversation.AssignedCuratorStaffID,
+			params.FirstReminderAfter, params.SecondReminderAfter, params.EscalationAfter,
+		); err != nil {
+			return domain.ConversationMessage{}, err
+		}
 	}
 	message.ConversationID, message.SenderParticipantID = conversation.ID, studentParticipantID
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ConversationMessage{}, mapDatabaseError("зафиксировать сообщение ученика", err)
 	}
 	return message, nil
+}
+
+func scheduleResponseWaitTasksTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	conversationID, messageID, curatorStaffID int64,
+	firstReminderAfter, secondReminderAfter, escalationAfter time.Duration,
+) error {
+	if firstReminderAfter <= 0 ||
+		secondReminderAfter <= firstReminderAfter ||
+		escalationAfter <= secondReminderAfter {
+		firstReminderAfter = 4 * time.Hour
+		secondReminderAfter = 24 * time.Hour
+		escalationAfter = 48 * time.Hour
+	}
+
+	var waitID int64
+	var generation int
+	err := tx.QueryRow(ctx, `
+		INSERT INTO conversation_response_waits (
+			conversation_id, student_message_id, curator_staff_id, generation,
+			opened_at, first_reminder_at, second_reminder_at, escalation_at
+		)
+		VALUES (
+			$1, $2, NULLIF($3, 0), 1, now(),
+			now() + ($4::double precision * interval '1 second'),
+			now() + ($5::double precision * interval '1 second'),
+			now() + ($6::double precision * interval '1 second')
+		)
+		ON CONFLICT (conversation_id) DO UPDATE SET
+			student_message_id = EXCLUDED.student_message_id,
+			curator_staff_id = EXCLUDED.curator_staff_id,
+			generation = conversation_response_waits.generation + 1,
+			opened_at = EXCLUDED.opened_at,
+			first_reminder_at = EXCLUDED.first_reminder_at,
+			second_reminder_at = EXCLUDED.second_reminder_at,
+			escalation_at = EXCLUDED.escalation_at,
+			responded_at = NULL,
+			updated_at = now()
+		RETURNING id, generation
+	`, conversationID, messageID, curatorStaffID,
+		firstReminderAfter.Seconds(), secondReminderAfter.Seconds(), escalationAfter.Seconds(),
+	).Scan(&waitID, &generation)
+	if err != nil {
+		return mapDatabaseError("создать состояние ожидания ответа", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_message_deliveries
+		SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now()
+		WHERE response_wait_id = $1 AND response_wait_generation <> $2
+		  AND channel IN ('curator_transfer', 'curator_reminder_4h', 'curator_reminder_24h', 'admin_escalation')
+		  AND delivery_status IN ('pending', 'processing', 'retry', 'failed')
+		`, waitID, generation); err != nil {
+		return mapDatabaseError("отменить старое поколение напоминаний", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO conversation_message_deliveries
+			(message_id, channel, recipient_staff_id, delivery_status, next_attempt_at,
+			 response_wait_id, response_wait_generation)
+		SELECT wait.student_message_id, task.channel, wait.curator_staff_id, 'pending', task.due_at,
+		       wait.id, wait.generation
+		FROM conversation_response_waits wait
+		CROSS JOIN LATERAL (VALUES
+			('curator_reminder_4h'::text, wait.first_reminder_at),
+			('curator_reminder_24h'::text, wait.second_reminder_at)
+		) AS task(channel, due_at)
+		WHERE wait.id = $1 AND wait.generation = $2
+		ON CONFLICT DO NOTHING
+	`, waitID, generation); err != nil {
+		return mapDatabaseError("запланировать напоминания куратора", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO conversation_message_deliveries
+			(message_id, channel, recipient_staff_id, delivery_status, next_attempt_at,
+			 response_wait_id, response_wait_generation)
+		SELECT wait.student_message_id, 'admin_escalation', admin.staff_id, 'pending',
+		       wait.escalation_at, wait.id, wait.generation
+		FROM conversation_response_waits wait
+		LEFT JOIN LATERAL (
+			SELECT staff.id AS staff_id
+			FROM staff_accounts staff
+			JOIN staff_role_assignments assignment ON assignment.staff_id = staff.id AND assignment.revoked_at IS NULL
+			JOIN staff_roles role ON role.id = assignment.role_id AND role.role_code = 'administrator'
+			WHERE staff.account_status = 'active' AND staff.telegram_id IS NOT NULL
+			ORDER BY staff.created_at ASC, staff.id ASC
+			LIMIT 1
+		) admin ON TRUE
+		WHERE wait.id = $1 AND wait.generation = $2
+		ON CONFLICT DO NOTHING
+	`, waitID, generation); err != nil {
+		return mapDatabaseError("запланировать эскалацию администратора", err)
+	}
+	return nil
 }
 
 func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaffID int64) ([]domain.ConversationSummary, error) {
@@ -502,6 +604,24 @@ func (r *ConversationRepository) SendCuratorMessage(ctx context.Context, staffID
 	message.ConversationID, message.SenderParticipantID = conversationID, participantID
 	message.SenderType, message.MessageType, message.BodyText = "curator", "text", &body
 	message.DeliveryStatus = "pending"
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_response_waits
+		SET responded_at = now(), updated_at = now()
+		WHERE conversation_id = $1 AND responded_at IS NULL
+	`, conversationID); err != nil {
+		return domain.ConversationMessage{}, mapDatabaseError("закрыть ожидание ответа ученика", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_message_deliveries delivery
+		SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now()
+		FROM conversation_response_waits wait
+		WHERE wait.conversation_id = $1 AND delivery.response_wait_id = wait.id
+		  AND delivery.response_wait_generation = wait.generation
+		  AND delivery.channel IN ('curator_transfer', 'curator_reminder_4h', 'curator_reminder_24h', 'admin_escalation')
+		  AND delivery.delivery_status IN ('pending', 'processing', 'retry', 'failed')
+		`, conversationID); err != nil {
+		return domain.ConversationMessage{}, mapDatabaseError("отменить напоминания после ответа куратора", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ConversationMessage{}, mapDatabaseError("зафиксировать ответ куратора", err)
 	}

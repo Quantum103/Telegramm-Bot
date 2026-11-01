@@ -223,3 +223,53 @@
     justify-content: center;
   }
 }
+
+
+.notification-preferences-panel {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+.notification-preferences-panel h2 {
+  margin: 0;
+  color: #405047;
+  font-size: 15px;
+}
+.notification-preferences-panel .page-subtitle {
+  max-width: 760px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.notification-setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: #405047;
+  cursor: pointer;
+}
+.notification-setting-row input {
+  margin-top: 3px;
+  accent-color: #5b8067;
+}
+.notification-setting-row span {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.notification-setting-row small, .notification-timezone-field small {
+  color: #87948b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.notification-timezone-field {
+  max-width: 360px;
+}
+.notification-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  gap: 14px;
+}
+@media (max-width: 560px) {
+  .notification-time-grid { grid-template-columns: 1fr; }
+}
+

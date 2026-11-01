@@ -324,8 +324,10 @@ func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger
 			staffTelegramMux := http.NewServeMux()
 			staffTelegramMux.HandleFunc("GET /api/v1/staff/telegram/status", h.staffTelegramStatus)
 			staffTelegramMux.HandleFunc("GET /api/v1/staff/telegram/notifications", h.staffTelegramNotifications)
+			staffTelegramMux.HandleFunc("GET /api/v1/staff/telegram/preferences", h.staffTelegramPreferences)
+			staffTelegramMux.HandleFunc("PUT /api/v1/staff/telegram/preferences", h.staffTelegramPreferences)
 			staffTelegramMux.HandleFunc("POST /api/v1/staff/telegram/link-token", h.staffTelegramLinkToken)
-			mux.Handle("/api/v1/staff/telegram/", h.staffCuratorMiddleware(staffTelegramMux))
+			mux.Handle("/api/v1/staff/telegram/", h.staffNotificationMiddleware(staffTelegramMux))
 		}
 	}
 	return securityHeaders(mux)
