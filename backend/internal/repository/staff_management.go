@@ -189,7 +189,10 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		       COALESCE(progress.total_enrollments, 0)::INTEGER,
 		       COALESCE(progress.in_progress_enrollments, 0)::INTEGER,
 		       COALESCE(progress.completed_enrollments, 0)::INTEGER,
-		       progress.last_learning_activity_at
+		       progress.last_learning_activity_at,
+		       active_course.id, active_course.course_id, active_course.course_title,
+		       active_course.mode, active_course.status,
+		       active_course.total_lessons, active_course.completed_lessons
 		FROM students AS student
 		LEFT JOIN LATERAL (
 			SELECT assignment.curator_staff_id, curator.display_name AS curator_display_name
@@ -206,6 +209,23 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			       max(COALESCE(enrollment.last_activity_at, enrollment.updated_at)) AS last_learning_activity_at
 			FROM lesson_enrollments enrollment WHERE enrollment.student_id = student.id
 		) AS progress ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT ce.id, ce.course_id, course.title AS course_title, ce.mode, ce.status,
+			       count(cel.lesson_id)::INTEGER AS total_lessons,
+			       count(cel.lesson_id) FILTER (WHERE lesson.status = 'completed')::INTEGER AS completed_lessons
+			FROM course_enrollments ce
+			JOIN courses course ON course.id = ce.course_id
+			LEFT JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
+			LEFT JOIN lesson_enrollments lesson
+			  ON lesson.course_enrollment_id = ce.id
+			 AND lesson.lesson_id = cel.lesson_id
+			 AND lesson.lesson_version_id = cel.lesson_version_id
+			WHERE ce.student_id = student.id
+			  AND ce.status IN ('in_progress', 'awaiting_curator', 'paused')
+			GROUP BY ce.id, course.title
+			ORDER BY ce.updated_at DESC, ce.id DESC
+			LIMIT 1
+		) AS active_course ON TRUE
 		WHERE ($2::BOOLEAN = TRUE OR current_assignment.curator_staff_id = $1)
 		ORDER BY student.registered_at DESC, student.id DESC
 	`, actorID, isAdmin)
@@ -218,13 +238,18 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 	for rows.Next() {
 		var student domain.AdminStudent
 		var username, preferredName, curatorName pgtype.Text
+		var activeCourseTitle, activeCourseMode, activeCourseStatus pgtype.Text
 		var lastActiveAt, lastLearningAt pgtype.Timestamptz
-		var curatorID pgtype.Int8
+		var curatorID, activeCourseEnrollmentID, activeCourseID pgtype.Int8
+		var activeCourseTotalLessons, activeCourseCompletedLessons pgtype.Int4
 		if err := rows.Scan(
 			&student.ID, &student.TelegramID, &student.DisplayName, &username,
 			&preferredName, &student.AccountStatus, &student.RegisteredAt, &lastActiveAt,
 			&curatorID, &curatorName, &student.TotalEnrollments,
 			&student.InProgressEnrollments, &student.CompletedEnrollments, &lastLearningAt,
+			&activeCourseEnrollmentID, &activeCourseID, &activeCourseTitle,
+			&activeCourseMode, &activeCourseStatus,
+			&activeCourseTotalLessons, &activeCourseCompletedLessons,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать ученика с прогрессом", err)
 		}
@@ -251,6 +276,17 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		if lastLearningAt.Valid {
 			value := lastLearningAt.Time
 			student.LastLearningActivityAt = &value
+		}
+		if activeCourseEnrollmentID.Valid {
+			student.ActiveCourse = &domain.StudentActiveCourse{
+				CourseEnrollmentID: activeCourseEnrollmentID.Int64,
+				CourseID:           activeCourseID.Int64,
+				CourseTitle:        activeCourseTitle.String,
+				Mode:               activeCourseMode.String,
+				Status:             activeCourseStatus.String,
+				TotalLessons:       int(activeCourseTotalLessons.Int32),
+				CompletedLessons:   int(activeCourseCompletedLessons.Int32),
+			}
 		}
 		students = append(students, student)
 	}

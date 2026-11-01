@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -38,18 +39,49 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		       ce.completed_at, ce.created_at, ce.updated_at
 		FROM course_enrollments ce
 		JOIN courses c ON c.id = ce.course_id
-		JOIN student_curator_assignments assignment
-		  ON assignment.student_id = ce.student_id
-		 AND assignment.curator_staff_id = $1
-		 AND assignment.status = 'active'
-		JOIN staff_accounts staff ON staff.id = assignment.curator_staff_id
-		JOIN staff_role_assignments role_assignment
-		  ON role_assignment.staff_id = staff.id AND role_assignment.revoked_at IS NULL
-		JOIN staff_roles role ON role.id = role_assignment.role_id AND role.role_code = 'curator'
 		WHERE ce.id = $3 AND ce.student_id = $2
-		  AND ce.mode = 'curator'
-		  AND ce.curator_staff_id = $1
-		  AND staff.account_status = 'active'
+		  AND (
+		      ce.mode = 'curator'
+		      OR EXISTS (
+		          SELECT 1
+		          FROM staff_role_assignments admin_assignment
+		          JOIN staff_roles admin_role ON admin_role.id = admin_assignment.role_id
+		          WHERE admin_assignment.staff_id = $1
+		            AND admin_assignment.revoked_at IS NULL
+		            AND admin_role.role_code = 'administrator'
+		      )
+		  )
+		  AND EXISTS (
+		      SELECT 1
+		      FROM staff_accounts actor
+		      WHERE actor.id = $1 AND actor.account_status = 'active'
+		        AND (
+		            EXISTS (
+		                SELECT 1
+		                FROM staff_role_assignments admin_assignment
+		                JOIN staff_roles admin_role ON admin_role.id = admin_assignment.role_id
+		                WHERE admin_assignment.staff_id = actor.id
+		                  AND admin_assignment.revoked_at IS NULL
+		                  AND admin_role.role_code = 'administrator'
+		            )
+		            OR (
+		                ce.curator_staff_id = actor.id
+		                AND EXISTS (
+		                    SELECT 1
+		                    FROM student_curator_assignments assignment
+		                    JOIN staff_role_assignments curator_assignment
+		                      ON curator_assignment.staff_id = actor.id
+		                     AND curator_assignment.revoked_at IS NULL
+		                    JOIN staff_roles curator_role
+		                      ON curator_role.id = curator_assignment.role_id
+		                     AND curator_role.role_code = 'curator'
+		                    WHERE assignment.student_id = ce.student_id
+		                      AND assignment.curator_staff_id = actor.id
+		                      AND assignment.status = 'active'
+		                )
+		            )
+		        )
+		  )
 	`, curatorStaffID, studentID, courseEnrollmentID).Scan(
 		&result.Enrollment.ID, &result.Enrollment.StudentID, &result.Enrollment.CourseID,
 		&result.Enrollment.CourseTitle, &result.Enrollment.RunNumber, &result.Enrollment.Mode,
@@ -155,16 +187,10 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 		       latest.id, COALESCE(latest.submitted_answer_text, ''),
 		       COALESCE(latest.options, ARRAY[]::BIGINT[]),
 		       COALESCE(latest.processing_status, ''),
-		       review.decision, review.feedback, review.reviewed_at, latest.created_at
+		       review.decision, review.feedback, review.reviewed_at, latest.created_at,
+		       reviewer.id, reviewer.display_name,
+		       COALESCE(history.attempts, '[]'::jsonb)
 		FROM course_enrollments ce
-		JOIN student_curator_assignments assignment
-		  ON assignment.student_id = ce.student_id
-		 AND assignment.curator_staff_id = $1
-		 AND assignment.status = 'active'
-		JOIN staff_accounts staff ON staff.id = assignment.curator_staff_id
-		JOIN staff_role_assignments role_assignment
-		  ON role_assignment.staff_id = staff.id AND role_assignment.revoked_at IS NULL
-		JOIN staff_roles role ON role.id = role_assignment.role_id AND role.role_code = 'curator'
 		JOIN course_enrollment_lessons cel
 		  ON cel.course_enrollment_id = ce.id AND cel.lesson_id = $4
 		JOIN lesson_questions q ON q.lesson_version_id = cel.lesson_version_id
@@ -188,9 +214,100 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 		    LIMIT 1
 		) latest ON TRUE
 		LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
+		LEFT JOIN staff_accounts reviewer ON reviewer.id = review.curator_staff_id
+		LEFT JOIN LATERAL (
+		    SELECT COALESCE(
+		        jsonb_agg(
+		            jsonb_build_object(
+		                'id', history_attempt.id,
+		                'answer_id', history_attempt.answer_id,
+		                'submitted_answer', history_attempt.submitted_answer_text,
+		                'selected_option_ids', history_attempt.selected_option_ids,
+		                'processing_status', history_attempt.processing_status,
+		                'evaluation_result', history_attempt.evaluation_result,
+		                'explanation', history_attempt.explanation,
+		                'missing_points', history_attempt.missing_points,
+		                'provider', history_attempt.provider,
+		                'model', history_attempt.model,
+		                'duration_ms', history_attempt.duration_ms,
+		                'error_code', history_attempt.error_code,
+		                'review_decision', history_attempt.review_decision,
+		                'review_feedback', history_attempt.review_feedback,
+		                'reviewed_at', history_attempt.reviewed_at,
+		                'reviewer_staff_id', history_attempt.reviewer_staff_id,
+		                'reviewer_display_name', history_attempt.reviewer_display_name,
+		                'created_at', history_attempt.created_at,
+		                'completed_at', history_attempt.completed_at
+		            )
+		            ORDER BY history_attempt.created_at DESC, history_attempt.id DESC
+		        ),
+		        '[]'::jsonb
+		    ) AS attempts
+		    FROM (
+		        SELECT aa.id, aa.answer_id, aa.submitted_answer_text,
+		               COALESCE((
+		                   SELECT array_agg(option.option_id ORDER BY question_option.sort_order)
+		                   FROM answer_attempt_options option
+		                   JOIN question_options question_option
+		                     ON question_option.id = option.option_id
+		                    AND question_option.question_id = option.question_id
+		                   WHERE option.attempt_id = aa.id
+		               ), ARRAY[]::BIGINT[]) AS selected_option_ids,
+		               aa.processing_status, aa.evaluation_result, aa.explanation,
+		               aa.missing_points, aa.provider, aa.model, aa.duration_ms,
+		               aa.error_code, aa.created_at, aa.completed_at,
+		               review.decision AS review_decision, review.feedback AS review_feedback,
+		               review.reviewed_at, review.curator_staff_id AS reviewer_staff_id,
+		               reviewer.display_name AS reviewer_display_name
+		        FROM answer_attempts aa
+		        LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = aa.id
+		        LEFT JOIN staff_accounts reviewer ON reviewer.id = review.curator_staff_id
+		        WHERE aa.enrollment_id = le.id AND aa.question_id = q.id
+		    ) history_attempt
+		) history ON TRUE
 		WHERE ce.id = $3 AND ce.student_id = $2
-		  AND ce.mode = 'curator' AND ce.curator_staff_id = $1
-		  AND staff.account_status = 'active'
+		  AND (
+		      ce.mode = 'curator'
+		      OR EXISTS (
+		          SELECT 1
+		          FROM staff_role_assignments admin_assignment
+		          JOIN staff_roles admin_role ON admin_role.id = admin_assignment.role_id
+		          WHERE admin_assignment.staff_id = $1
+		            AND admin_assignment.revoked_at IS NULL
+		            AND admin_role.role_code = 'administrator'
+		      )
+		  )
+		  AND EXISTS (
+		      SELECT 1
+		      FROM staff_accounts actor
+		      WHERE actor.id = $1 AND actor.account_status = 'active'
+		        AND (
+		            EXISTS (
+		                SELECT 1
+		                FROM staff_role_assignments admin_assignment
+		                JOIN staff_roles admin_role ON admin_role.id = admin_assignment.role_id
+		                WHERE admin_assignment.staff_id = actor.id
+		                  AND admin_assignment.revoked_at IS NULL
+		                  AND admin_role.role_code = 'administrator'
+		            )
+		            OR (
+		                ce.curator_staff_id = actor.id
+		                AND EXISTS (
+		                    SELECT 1
+		                    FROM student_curator_assignments assignment
+		                    JOIN staff_role_assignments curator_assignment
+		                      ON curator_assignment.staff_id = actor.id
+		                     AND curator_assignment.revoked_at IS NULL
+		                    JOIN staff_roles curator_role
+		                      ON curator_role.id = curator_assignment.role_id
+		                     AND curator_role.role_code = 'curator'
+		                    WHERE assignment.student_id = ce.student_id
+		                      AND assignment.curator_staff_id = actor.id
+		                      AND assignment.status = 'active'
+		                )
+		            )
+		        )
+		  )
 		ORDER BY q.question_number, q.id
 	`, curatorStaffID, studentID, courseEnrollmentID, lessonID)
 	if err != nil {
@@ -200,23 +317,29 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 	answers := make([]domain.CuratorAnswer, 0)
 	for rows.Next() {
 		var answer domain.CuratorAnswer
-		var attemptID pgtype.Int8
-		var decision, feedback pgtype.Text
+		var attemptID, reviewerID pgtype.Int8
+		var decision, feedback, reviewerName pgtype.Text
 		var reviewedAt, submittedAt pgtype.Timestamptz
+		var attemptsJSON []byte
 		if err := rows.Scan(
 			&answer.QuestionID, &answer.QuestionNumber, &answer.Prompt, &answer.AnswerType,
 			&attemptID, &answer.SubmittedAnswer, &answer.SelectedOptionIDs,
 			&answer.ProcessingStatus, &decision, &feedback, &reviewedAt, &submittedAt,
+			&reviewerID, &reviewerName, &attemptsJSON,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать ответ ученика для куратора", err)
 		}
 		if attemptID.Valid {
 			value := attemptID.Int64
 			answer.AttemptID = &value
+			answer.ReviewStatus = "pending_review"
+		} else {
+			answer.ReviewStatus = "not_submitted"
 		}
 		if decision.Valid {
 			value := decision.String
 			answer.ReviewDecision = &value
+			answer.ReviewStatus = decision.String
 		}
 		if feedback.Valid {
 			value := feedback.String
@@ -229,6 +352,20 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 		if submittedAt.Valid {
 			value := submittedAt.Time
 			answer.SubmittedAt = &value
+		}
+		if reviewerID.Valid {
+			value := reviewerID.Int64
+			answer.ReviewerStaffID = &value
+		}
+		if reviewerName.Valid {
+			value := reviewerName.String
+			answer.ReviewerDisplayName = &value
+		}
+		answer.Attempts = make([]domain.AnswerAttempt, 0)
+		if len(attemptsJSON) > 0 {
+			if err := json.Unmarshal(attemptsJSON, &answer.Attempts); err != nil {
+				return nil, mapDatabaseError("разобрать историю попыток ответа", err)
+			}
 		}
 		answers = append(answers, answer)
 	}
@@ -301,8 +438,7 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		}
 		return domain.AnswerAttemptReview{}, mapDatabaseError("найти попытку для проверки куратором", err)
 	}
-	if mode != "curator" || courseStatus != "in_progress" ||
-		enrollmentStatus != "in_progress" || processingStatus != "pending" {
+	if mode != "curator" {
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
@@ -327,6 +463,36 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить закрепление куратора для ответа", err)
 	}
 	if !authorized {
+		return domain.AnswerAttemptReview{}, ErrInvalidState
+	}
+
+	// Повтор того же запроса возвращает уже сохранённое решение. Другое
+	// решение по одной попытке запрещено: исправленный ответ должен быть
+	// новой попыткой ученика, а не перезаписью истории.
+	var existing domain.AnswerAttemptReview
+	existingErr := tx.QueryRow(ctx, `
+		SELECT id, answer_attempt_id, curator_staff_id, decision, feedback, reviewed_at
+		FROM answer_attempt_reviews
+		WHERE answer_attempt_id = $1
+	`, params.AttemptID).Scan(
+		&existing.ID, &existing.AnswerAttemptID, &existing.CuratorStaffID,
+		&existing.Decision, &existing.Feedback, &existing.ReviewedAt,
+	)
+	if existingErr == nil {
+		if existing.CuratorStaffID != params.CuratorStaffID ||
+			existing.Decision != params.Decision || existing.Feedback != params.Feedback {
+			return domain.AnswerAttemptReview{}, ErrConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.AnswerAttemptReview{}, mapDatabaseError("зафиксировать повторную проверку ответа", err)
+		}
+		existing.Replayed = true
+		return existing, nil
+	}
+	if !errors.Is(existingErr, pgx.ErrNoRows) {
+		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить существующее решение куратора", existingErr)
+	}
+	if courseStatus != "in_progress" || enrollmentStatus != "in_progress" || processingStatus != "pending" {
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 

@@ -354,10 +354,15 @@ func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(databa
 		}
 		if h.courseLearning != nil {
 			staffCourseLearningMux := http.NewServeMux()
+			if h.management != nil {
+				// The existing staff student projection is assignment-scoped for
+				// curators and global for administrators; it now includes active course progress.
+				staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/students", h.staffListStudents)
+			}
 			staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/students/{studentID}/courses/{courseEnrollmentID}/lessons", h.staffCuratorCourseLessons)
 			staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/students/{studentID}/courses/{courseEnrollmentID}/lessons/{lessonID}/answers", h.staffCuratorLessonAnswers)
 			staffCourseLearningMux.HandleFunc("POST /api/v1/staff/course-learning/attempts/{attemptID}/review", h.staffCuratorReviewAttempt)
-			mux.Handle("/api/v1/staff/course-learning/", h.staffCuratorMiddleware(staffCourseLearningMux))
+			mux.Handle("/api/v1/staff/course-learning/", h.staffCourseLearningMiddleware(staffCourseLearningMux))
 		}
 		if h.staffTelegram != nil {
 			staffTelegramMux := http.NewServeMux()

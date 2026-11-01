@@ -204,20 +204,23 @@ type AttemptFailureParams struct {
 }
 
 type AnswerAttempt struct {
-	ID               int64      `json:"id"`
-	AnswerID         int64      `json:"answer_id"`
-	SubmittedAnswer  string     `json:"submitted_answer"`
-	ProcessingStatus string     `json:"processing_status"`
-	EvaluationResult *string    `json:"evaluation_result,omitempty"`
-	Explanation      *string    `json:"explanation,omitempty"`
-	MissingPoints    []string   `json:"missing_points"`
-	Provider         *string    `json:"provider,omitempty"`
-	Model            *string    `json:"model,omitempty"`
-	DurationMS       *int32     `json:"duration_ms,omitempty"`
-	ErrorCode        *string    `json:"error_code,omitempty"`
-	ReviewDecision   *string    `json:"review_decision,omitempty"`
-	ReviewFeedback   *string    `json:"review_feedback,omitempty"`
-	ReviewedAt       *time.Time `json:"reviewed_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	ID                  int64      `json:"id"`
+	AnswerID            int64      `json:"answer_id"`
+	SubmittedAnswer     string     `json:"submitted_answer"`
+	ProcessingStatus    string     `json:"processing_status"`
+	EvaluationResult    *string    `json:"evaluation_result,omitempty"`
+	Explanation         *string    `json:"explanation,omitempty"`
+	MissingPoints       []string   `json:"missing_points"`
+	Provider            *string    `json:"provider,omitempty"`
+	Model               *string    `json:"model,omitempty"`
+	DurationMS          *int32     `json:"duration_ms,omitempty"`
+	ErrorCode           *string    `json:"error_code,omitempty"`
+	ReviewDecision      *string    `json:"review_decision,omitempty"`
+	ReviewFeedback      *string    `json:"review_feedback,omitempty"`
+	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
+	ReviewerStaffID     *int64     `json:"reviewer_staff_id,omitempty"`
+	ReviewerDisplayName *string    `json:"reviewer_display_name,omitempty"`
+	SelectedOptionIDs   []int64    `json:"selected_option_ids"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 }
