@@ -125,7 +125,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		        ) latest ON TRUE
 		        LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
-		          AND ce.mode = 'curator'
+		          AND $2 = 'curator'
 		          AND latest.processing_status = 'pending'
 		          AND review.id IS NULL),
 		       (SELECT CASE WHEN EXISTS (
@@ -140,7 +140,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		            ) latest ON TRUE
 		            JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		            WHERE q.lesson_version_id = cel.lesson_version_id
-		              AND ce.mode = 'curator'
+		              AND $2 = 'curator'
 		              AND review.decision = 'needs_revision'
 		        ) THEN 1 ELSE 0 END),
 		       (SELECT count(*)::INTEGER
@@ -154,7 +154,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		        ) latest ON TRUE
 		        JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
-		          AND ce.mode = 'curator'
+		          AND $2 = 'curator'
 		          AND review.decision = 'needs_revision')
 		FROM course_enrollment_lessons cel
 		JOIN lesson_versions lv
@@ -165,7 +165,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		 AND le.lesson_version_id = cel.lesson_version_id
 		WHERE cel.course_enrollment_id = $1
 		ORDER BY cel.position, cel.lesson_id
-	`, courseEnrollmentID)
+	`, courseEnrollmentID, result.Enrollment.Mode)
 	if err != nil {
 		return domain.CuratorCourseAccess{}, mapDatabaseError("получить уроки закреплённого курса", err)
 	}
