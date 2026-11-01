@@ -232,7 +232,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 					count(*) FILTER (
 						WHERE latest_attempt.id IS NOT NULL AND review.id IS NULL
 					)::INTEGER AS pending_reviews,
-					count(*) FILTER (
+					count(DISTINCT review_lesson.lesson_id) FILTER (
 						WHERE review.decision = 'needs_revision'
 					)::INTEGER AS needs_revision
 				FROM course_enrollment_lessons review_lesson
