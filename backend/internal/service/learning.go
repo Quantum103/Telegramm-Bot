@@ -523,6 +523,15 @@ func (s *LearningService) ensureCourseRunActive(ctx context.Context, enrollment 
 	if course.Enrollment.Status != "in_progress" || course.Enrollment.Mode != enrollment.Mode {
 		return domain.ErrInvalidState
 	}
+	lesson, err := s.courseEnrollments.GetLessonForRun(
+		ctx, enrollment.StudentID, *enrollment.CourseEnrollmentID, enrollment.LessonID,
+	)
+	if err != nil {
+		return err
+	}
+	if lesson.LessonVersionID != enrollment.LessonVersionID {
+		return domain.ErrInvalidState
+	}
 	return nil
 }
 
