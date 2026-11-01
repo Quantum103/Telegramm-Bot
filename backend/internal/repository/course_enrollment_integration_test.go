@@ -324,6 +324,12 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 		if _, err := enrollments.Complete(ctx, student.ID, enrollment.ID); err != nil {
 			t.Fatalf("завершить урок после решения куратора: %v", err)
 		}
+		if _, err := answers.Submit(ctx, AnswerSubmission{
+			StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: questionID,
+			AnswerText: "Попытка изменить уже завершённый урок",
+		}); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("завершённый урок не должен принимать новый ответ, получено %v", err)
+		}
 		if index == 0 {
 			afterFirst, err := courses.GetForStudent(ctx, student.ID, run.Enrollment.ID)
 			if err != nil {
