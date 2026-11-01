@@ -6,7 +6,7 @@ CREATE TABLE course_enrollments (
     mode TEXT NOT NULL CHECK (mode IN ('ai', 'curator')),
     curator_staff_id BIGINT REFERENCES staff_accounts(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'in_progress'
-        CHECK (status IN ('awaiting_curator', 'in_progress', 'paused', 'completed', 'cancelled')),
+        CHECK (status IN ('awaiting_curator', 'in_progress', 'paused', 'completed', 'cancelled', 'superseded')),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -25,7 +25,7 @@ CREATE TABLE course_enrollments (
 
 CREATE UNIQUE INDEX course_enrollments_one_active_uq
     ON course_enrollments (student_id)
-    WHERE status IN ('awaiting_curator', 'in_progress');
+    WHERE status IN ('awaiting_curator', 'in_progress', 'paused');
 CREATE INDEX course_enrollments_student_history_idx
     ON course_enrollments (student_id, created_at DESC, id DESC);
 CREATE INDEX course_enrollments_curator_idx
@@ -129,7 +129,7 @@ SELECT
     ) ELSE NULL END,
     CASE
         WHEN NOT ranked_groups.has_open_lessons THEN 'completed'
-        WHEN ranked_groups.student_course_rank > 1 THEN 'paused'
+        WHEN ranked_groups.student_course_rank > 1 THEN 'superseded'
         WHEN ranked_groups.mode = 'curator' AND NOT EXISTS (
             SELECT 1
             FROM student_curator_assignments assignment
