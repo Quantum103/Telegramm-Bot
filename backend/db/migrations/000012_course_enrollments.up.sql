@@ -163,25 +163,10 @@ SELECT
     ranked_groups.last_activity_at
 FROM ranked_groups;
 
--- Attach only the legacy lesson records that unambiguously match the selected
--- (student, course, mode) run.
-UPDATE lesson_enrollments le
-SET course_enrollment_id = ce.id
-FROM course_enrollments ce
-JOIN (
-    SELECT lesson_id, min(course_id) AS course_id
-    FROM course_lessons
-    GROUP BY lesson_id
-    HAVING count(*) = 1
-) unique_lesson_course ON unique_lesson_course.course_id = ce.course_id
-WHERE le.student_id = ce.student_id
-  AND le.mode = ce.mode
-  AND le.lesson_id = unique_lesson_course.lesson_id
-  AND le.status <> 'cancelled'
-  AND le.course_enrollment_id IS NULL;
-
--- Snapshot each linked legacy run using the version it already started, falling
--- back to the currently published version for lessons not yet opened.
+-- Snapshot each migrated run before linking child rows so the consistency trigger
+-- can validate every relation as it is added. Reuse an old lesson version only if
+-- the lesson belonged to exactly one course; shared lessons remain unambiguous
+-- by choosing the currently published version rather than guessing old ownership.
 INSERT INTO course_enrollment_lessons (course_enrollment_id, lesson_id, lesson_version_id, position)
 SELECT ce.id, cl.lesson_id, COALESCE(existing.lesson_version_id, published.id), cl.position
 FROM course_enrollments ce
@@ -189,7 +174,15 @@ JOIN course_lessons cl ON cl.course_id = ce.course_id
 LEFT JOIN LATERAL (
     SELECT le.lesson_version_id
     FROM lesson_enrollments le
-    WHERE le.course_enrollment_id = ce.id AND le.lesson_id = cl.lesson_id
+    WHERE le.student_id = ce.student_id
+      AND le.mode = ce.mode
+      AND le.lesson_id = cl.lesson_id
+      AND le.status <> 'cancelled'
+      AND (
+          SELECT count(*)
+          FROM course_lessons owner_course
+          WHERE owner_course.lesson_id = cl.lesson_id
+      ) = 1
     ORDER BY COALESCE(le.last_activity_at, le.updated_at, le.created_at) DESC, le.id DESC
     LIMIT 1
 ) existing ON TRUE
@@ -202,6 +195,27 @@ LEFT JOIN LATERAL (
 ) published ON TRUE
 WHERE COALESCE(existing.lesson_version_id, published.id) IS NOT NULL
 ON CONFLICT DO NOTHING;
+
+-- Attach only old rows whose course ownership and frozen lesson version are both
+-- unambiguous. Other legacy rows stay untouched and can never corrupt a new run.
+UPDATE lesson_enrollments le
+SET course_enrollment_id = ce.id
+FROM course_enrollments ce
+JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
+JOIN (
+    SELECT lesson_id, min(course_id) AS course_id
+    FROM course_lessons
+    GROUP BY lesson_id
+    HAVING count(*) = 1
+) unique_lesson_course
+  ON unique_lesson_course.course_id = ce.course_id
+ AND unique_lesson_course.lesson_id = cel.lesson_id
+WHERE le.student_id = ce.student_id
+  AND le.mode = ce.mode
+  AND le.lesson_id = cel.lesson_id
+  AND le.lesson_version_id = cel.lesson_version_id
+  AND le.status <> 'cancelled'
+  AND le.course_enrollment_id IS NULL;
 
 CREATE TABLE answer_attempt_reviews (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
