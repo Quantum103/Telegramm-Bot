@@ -82,8 +82,22 @@ legacy_groups AS (
         le.mode,
         min(le.created_at) AS created_at,
         max(COALESCE(le.last_activity_at, le.updated_at, le.created_at)) AS last_activity_at,
-        bool_or(le.status IN ('not_started', 'in_progress', 'paused')) AS has_open_lessons,
-        bool_and(le.status = 'completed') AS all_lessons_completed,
+        (
+            bool_or(le.status IN ('not_started', 'in_progress', 'paused'))
+            OR count(DISTINCT le.lesson_id) < (
+                SELECT count(*)
+                FROM course_lessons required_lesson
+                WHERE required_lesson.course_id = unique_lesson_course.course_id
+            )
+        ) AS has_open_lessons,
+        (
+            bool_and(le.status = 'completed')
+            AND count(DISTINCT le.lesson_id) = (
+                SELECT count(*)
+                FROM course_lessons required_lesson
+                WHERE required_lesson.course_id = unique_lesson_course.course_id
+            )
+        ) AS all_lessons_completed,
         max(le.completed_at) AS completed_at
     FROM lesson_enrollments le
     JOIN unique_lesson_course ON unique_lesson_course.lesson_id = le.lesson_id
@@ -128,7 +142,7 @@ SELECT
         LIMIT 1
     ) ELSE NULL END,
     CASE
-        WHEN NOT ranked_groups.has_open_lessons THEN 'completed'
+        WHEN ranked_groups.all_lessons_completed THEN 'completed'
         WHEN ranked_groups.student_course_rank > 1 THEN 'superseded'
         WHEN ranked_groups.mode = 'curator' AND NOT EXISTS (
             SELECT 1
