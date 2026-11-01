@@ -297,6 +297,12 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("вернуть ответ на исправление: %v", err)
 			}
+			history, err := answers.ListAttemptHistory(ctx, student.ID, enrollment.ID, questionID)
+			if err != nil || len(history) != 1 || history[0].ReviewDecision == nil ||
+				*history[0].ReviewDecision != "needs_revision" ||
+				history[0].ReviewFeedback != nil && *history[0].ReviewFeedback != "Добавьте пояснение к ответу." {
+				t.Fatalf("ученик не получил решение и комментарий куратора: history=%+v err=%v", history, err)
+			}
 			revised, err := answers.Submit(ctx, AnswerSubmission{
 				StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: questionID,
 				AnswerText: "Исправленный ответ с пояснением",
