@@ -70,20 +70,20 @@ type SubmissionResult struct {
 	Progress domain.Progress
 }
 
-// StartLesson создаёт или восстанавливает прохождение по текущей опубликованной версии.
+// StartLesson сохраняет совместимость со старыми вызовами. В production-режиме
+// урок всегда открывается внутри отдельного запуска курса с сохранённым режимом.
 func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID int64, mode string) (domain.Progress, error) {
 	if studentID <= 0 || lessonID <= 0 || (mode != "ai" && mode != "curator") {
 		return domain.Progress{}, domain.ErrInvalidInput
 	}
-	student, err := s.students.GetByID(ctx, studentID)
+	lesson, err := s.courses.GetPublishedLessonByID(ctx, lessonID)
 	if err != nil {
 		return domain.Progress{}, err
 	}
-	if student.AccountStatus != "active" {
-		return domain.Progress{}, domain.ErrInvalidState
+	if s.courseEnrollments != nil {
+		return s.StartLessonInCourse(ctx, studentID, lesson.CourseID, lessonID, mode)
 	}
-	lesson, err := s.courses.GetPublishedLessonByID(ctx, lessonID)
-	if err != nil {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
 		return domain.Progress{}, err
 	}
 	enrollment, err := s.enrollments.Start(ctx, domain.StartEnrollmentParams{
@@ -96,16 +96,53 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 	if enrollment.Status == "cancelled" {
 		return domain.Progress{}, domain.ErrInvalidState
 	}
+	return s.loadInitialProgress(ctx, studentID, enrollment.ID)
+}
 
-	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollment.ID)
+// StartLessonInCourse проверяет принадлежность урока конкретному курсу и использует
+// только режим, сохранённый в course_enrollments.
+func (s *LearningService) StartLessonInCourse(
+	ctx context.Context,
+	studentID, courseID, lessonID int64,
+	mode string,
+) (domain.Progress, error) {
+	if studentID <= 0 || courseID <= 0 || lessonID <= 0 ||
+		(mode != "ai" && mode != "curator") {
+		return domain.Progress{}, domain.ErrInvalidInput
+	}
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.Progress{}, err
+	}
+	if s.courseEnrollments == nil {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	lesson, err := s.courses.GetPublishedLessonInCourse(ctx, courseID, lessonID)
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	run, err := s.StartCourse(ctx, studentID, courseID, mode)
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	if run.Enrollment.Status != "in_progress" {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	return s.StartLessonForCourse(ctx, studentID, run.Enrollment.ID, courseID, lesson.ID)
+}
+
+func (s *LearningService) loadInitialProgress(
+	ctx context.Context,
+	studentID, enrollmentID int64,
+) (domain.Progress, error) {
+	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		return domain.Progress{}, err
 	}
 	if progress.Enrollment.CurrentQuestionID == nil && progress.FirstQuestionID != nil {
-		if err := s.enrollments.SetCurrentQuestion(ctx, studentID, progress.Enrollment.ID, *progress.FirstQuestionID); err != nil {
+		if err := s.enrollments.SetCurrentQuestion(ctx, studentID, enrollmentID, *progress.FirstQuestionID); err != nil {
 			return domain.Progress{}, err
 		}
-		progress, err = s.enrollments.GetProgress(ctx, studentID, progress.Enrollment.ID)
+		progress, err = s.enrollments.GetProgress(ctx, studentID, enrollmentID)
 		if err != nil {
 			return domain.Progress{}, err
 		}
