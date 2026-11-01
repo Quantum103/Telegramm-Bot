@@ -23,6 +23,7 @@ type ConversationStore interface {
 	UnreadCountForCurator(context.Context, int64) (int64, error)
 	UnreadCountForStudent(context.Context, int64) (int64, error)
 	SetStudentChatMode(context.Context, int64, bool) error
+	SetStudentLessonMode(context.Context, int64, bool) error
 	IsStudentChatMode(context.Context, int64) (bool, error)
 }
 
@@ -142,6 +143,13 @@ func (s *ConversationService) SetStudentChatMode(ctx context.Context, studentID 
 		return domain.ErrInvalidInput
 	}
 	return s.store.SetStudentChatMode(ctx, studentID, enabled)
+}
+
+func (s *ConversationService) SetStudentLessonMode(ctx context.Context, studentID int64, enabled bool) error {
+	if studentID <= 0 {
+		return domain.ErrInvalidInput
+	}
+	return s.store.SetStudentLessonMode(ctx, studentID, enabled)
 }
 
 func (s *ConversationService) IsStudentChatMode(ctx context.Context, studentID int64) (bool, error) {
