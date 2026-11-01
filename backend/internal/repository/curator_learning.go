@@ -460,6 +460,33 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
+	// Повтор того же запроса возвращает уже сохранённое решение. Другое
+	// решение по одной попытке запрещено: исправленный ответ должен быть
+	// новой попыткой ученика, а не перезаписью истории.
+	var existing domain.AnswerAttemptReview
+	existingErr := tx.QueryRow(ctx, `
+		SELECT id, answer_attempt_id, curator_staff_id, decision, feedback, reviewed_at
+		FROM answer_attempt_reviews
+		WHERE answer_attempt_id = $1
+	`, params.AttemptID).Scan(
+		&existing.ID, &existing.AnswerAttemptID, &existing.CuratorStaffID,
+		&existing.Decision, &existing.Feedback, &existing.ReviewedAt,
+	)
+	if existingErr == nil {
+		if existing.CuratorStaffID != params.CuratorStaffID ||
+			existing.Decision != params.Decision || existing.Feedback != params.Feedback {
+			return domain.AnswerAttemptReview{}, ErrConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.AnswerAttemptReview{}, mapDatabaseError("зафиксировать повторную проверку ответа", err)
+		}
+		existing.Replayed = true
+		return existing, nil
+	}
+	if !errors.Is(existingErr, pgx.ErrNoRows) {
+		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить существующее решение куратора", existingErr)
+	}
+
 	var review domain.AnswerAttemptReview
 	err = tx.QueryRow(ctx, `
 		INSERT INTO answer_attempt_reviews (
