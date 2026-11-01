@@ -499,10 +499,60 @@ export default function StudentsPage({
       <div><p className="eyebrow">СОПРОВОЖДЕНИЕ УЧЕНИКОВ</p><h1>Ученики</h1>
         <p className="page-subtitle">{isAdmin ? 'Прогресс всех учеников, ответы и распределение кураторов.' : 'Ваш список учеников, их обучение и ответы на проверку.'}</p>
       </div>
-      <button className="secondary-button" type="button" onClick={() => setRevision((v) => v + 1)} disabled={loading}>Обновить</button>
+      <button className="secondary-button" type="button" onClick={() => {
+        setRevision((value) => value + 1)
+        if (isCurator) setReviewQueueRevision((value) => value + 1)
+      }} disabled={loading}>Обновить</button>
     </div>
     {error && <p className="auth-inline-error" role="alert">{error}</p>}
     {notice && <p className="management-notice" role="status">{notice}</p>}
+    {isCurator && <section className="panel review-queue-panel" aria-labelledby="review-queue-title">
+      <div className="review-queue-heading">
+        <div>
+          <p className="eyebrow">РАБОЧЕЕ МЕСТО КУРАТОРА</p>
+          <h2 id="review-queue-title">Уроки на проверку</h2>
+          <p>{reviewQueueLoading ? 'Обновляем очередь…' : `${reviewQueue.length} заданий ожидают вашего решения`}</p>
+        </div>
+        <button className="secondary-button" type="button"
+          onClick={() => setReviewQueueRevision((value) => value + 1)} disabled={reviewQueueLoading}>
+          {reviewQueueLoading ? 'Обновляем…' : 'Обновить'}
+        </button>
+      </div>
+      {reviewQueueError && <div className="catalog-error" role="alert">
+        <span>{reviewQueueError}</span>
+        <button className="secondary-button" type="button"
+          onClick={() => setReviewQueueRevision((value) => value + 1)}>Повторить</button>
+      </div>}
+      {!reviewQueueError && reviewQueueLoading && <p className="catalog-message" role="status">Загружаем задания на проверку…</p>}
+      {!reviewQueueError && !reviewQueueLoading && reviewQueue.length === 0 &&
+        <p className="review-queue-empty">Пока нет уроков, ожидающих проверки</p>}
+      {!reviewQueueLoading && reviewQueue.length > 0 && <div className="review-queue-list">
+        {reviewQueue.map((item) => {
+          const checked = Math.min(item.reviewed_answers, item.total_questions)
+          const progress = item.total_questions > 0 ? Math.round(checked / item.total_questions * 100) : 0
+          return <article className="review-queue-card" key={`${item.course_enrollment_id}:${item.lesson_id}`}>
+            <div className="review-queue-card-main">
+              <div className="review-queue-person">
+                <span className="review-queue-avatar">{item.student_name.trim().slice(0, 1).toLocaleUpperCase('ru-RU') || 'У'}</span>
+                <div><strong>{item.student_name}</strong><small>{item.course_title}</small></div>
+              </div>
+              <h3>{item.lesson_title}</h3>
+              <div className="review-queue-meta">
+                <span className="students-count students-count--pending">Ожидают проверки: {item.pending_answers}</span>
+                <span>Отправлено: {dateText(item.first_submitted_at)}</span>
+                <span>Проверено: {checked} из {item.total_questions}</span>
+              </div>
+              <div className="review-queue-progress" role="progressbar" aria-label="Прогресс проверки урока"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+                <span style={{ width: `${progress}%` }} />
+              </div>
+            </div>
+            <button className="primary-button review-queue-open" type="button"
+              onClick={() => openReviewQueueItem(item)}>Проверить урок</button>
+          </article>
+        })}
+      </div>}
+    </section>}
     <div className="panel table-panel">
       <div className="panel-heading"><div><h2>Список учеников</h2><p>{loading ? 'Загружаем данные…' : `${students.length} учеников`}</p></div></div>
       {loading && <p className="catalog-message" role="status">Загружаем учеников и прогресс…</p>}
