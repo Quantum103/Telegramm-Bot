@@ -85,7 +85,7 @@ safe_legacy_students AS (
         SELECT 1
         FROM lesson_enrollments le
         WHERE le.student_id = student.id
-          AND le.status IN ('not_started', 'in_progress', 'paused')
+          AND le.status <> 'cancelled'
           AND (
               SELECT count(*)
               FROM course_lessons cl
@@ -220,7 +220,10 @@ LEFT JOIN LATERAL (
           FROM course_lessons owner_course
           WHERE owner_course.lesson_id = cl.lesson_id
       ) = 1
-    ORDER BY COALESCE(le.last_activity_at, le.updated_at, le.created_at) DESC, le.id DESC
+    ORDER BY
+        CASE WHEN le.status IN ('not_started', 'in_progress', 'paused') THEN 0 ELSE 1 END,
+        COALESCE(le.last_activity_at, le.updated_at, le.created_at) DESC,
+        le.id DESC
     LIMIT 1
 ) existing ON TRUE
 LEFT JOIN LATERAL (
