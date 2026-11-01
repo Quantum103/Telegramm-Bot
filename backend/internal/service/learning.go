@@ -32,11 +32,11 @@ type CourseRunLearningStore interface {
 }
 
 type LearningService struct {
-	students    StudentStore
-	courses     CatalogStore
-	questions   QuestionStore
-	enrollments EnrollmentStore
-	answers          AnswerStore
+	students          StudentStore
+	courses           CatalogStore
+	questions         QuestionStore
+	enrollments       EnrollmentStore
+	answers           AnswerStore
 	courseEnrollments CourseRunLearningStore
 }
 
@@ -151,7 +151,6 @@ func (s *LearningService) loadInitialProgress(
 }
 
 
-
 // StartCourse сохраняет режим и возвращает существующий запуск, если он уже есть.
 // При попытке открыть другой курс возвращает ErrActiveCourse вместе с его прогрессом.
 func (s *LearningService) StartCourse(
@@ -228,9 +227,9 @@ func (s *LearningService) StartLessonForCourse(
 	}
 	enrollment, err := s.enrollments.Start(ctx, domain.StartEnrollmentParams{
 		StudentID: studentID, LessonID: lesson.ID,
-		LessonVersionID: lesson.LessonVersionID,
+		LessonVersionID:    lesson.LessonVersionID,
 		CourseEnrollmentID: courseEnrollmentID,
-		Mode: course.Enrollment.Mode,
+		Mode:               course.Enrollment.Mode,
 	})
 	if err != nil {
 		return domain.Progress{}, err
