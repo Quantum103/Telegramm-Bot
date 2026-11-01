@@ -265,6 +265,8 @@ export default function StudentsPage({
       setCourseLoading(false)
       return
     }
+    const activeCourseEnrollmentID = selectedStudent.active_course?.course_enrollment_id
+    if (activeCourseEnrollmentID === undefined) return
     const controller = new AbortController()
     setCourseLoading(true)
     setCourseAccess(null)
@@ -276,7 +278,7 @@ export default function StudentsPage({
     setAnswersErrors({})
     answerLoadingRef.current.clear()
     void listCuratorCourseLessons(
-      selectedStudent.id, selectedStudent.active_course.course_enrollment_id, controller.signal,
+      selectedStudent.id, activeCourseEnrollmentID, controller.signal,
     ).then((result) => {
       if (controller.signal.aborted) return
       setCourseAccess(result)
