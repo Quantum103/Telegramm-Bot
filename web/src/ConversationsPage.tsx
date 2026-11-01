@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   listStaffConversations, listStaffConversationMessages, markStaffConversationRead, sendStaffConversationMessage,
-  type StaffConversationMessage, type StaffConversationSummary, type StaffIdentity,
+  staffConversationEventsURL, type StaffConversationMessage, type StaffConversationSummary, type StaffIdentity,
 } from './api'
 import './communications.css'
 
@@ -25,6 +25,63 @@ export default function ConversationsPage({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [revision, setRevision] = useState(0)
+  const [realtimeState, setRealtimeState] = useState<'connecting' | 'online' | 'reconnecting'>('connecting')
+
+  useEffect(() => {
+    let stopped = false
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+    let retryDelay = 1000
+
+    function connect() {
+      if (stopped) return
+      setRealtimeState((current) => current === 'online' ? current : 'connecting')
+      const currentSocket = new WebSocket(staffConversationEventsURL())
+      socket = currentSocket
+
+      currentSocket.onopen = () => {
+        if (stopped || socket !== currentSocket) return
+        retryDelay = 1000
+        setRealtimeState('online')
+        setRevision((value) => value + 1)
+      }
+      currentSocket.onmessage = (event) => {
+        if (stopped || socket !== currentSocket || typeof event.data !== 'string') return
+        try {
+          const payload: unknown = JSON.parse(event.data)
+          if (typeof payload === 'object' && payload !== null &&
+              (payload as Record<string, unknown>).type === 'conversation_changed') {
+            setRevision((value) => value + 1)
+          }
+        } catch {
+          // Некорректное или служебное событие не влияет на историю диалога.
+        }
+      }
+      currentSocket.onerror = () => currentSocket.close()
+      currentSocket.onclose = () => {
+        if (stopped || socket !== currentSocket) return
+        socket = null
+        setRealtimeState('reconnecting')
+        reconnectTimer = window.setTimeout(connect, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, 30000)
+      }
+    }
+
+    connect()
+    return () => {
+      stopped = true
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (realtimeState === 'online') return
+    const fallback = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setRevision((value) => value + 1)
+    }, 15000)
+    return () => window.clearInterval(fallback)
+  }, [realtimeState])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -106,7 +163,10 @@ export default function ConversationsPage({
   return <section className="section-page communications-page">
     <div className="welcome-row">
       <div><p className="eyebrow">СОПРОВОЖДЕНИЕ УЧЕНИКОВ</p><h1>Диалоги</h1>
-        <p className="page-subtitle">Переписка с учениками, закреплёнными за вами. Отправка ответа создаёт задачу Telegram-доставки.</p>
+        <p className="page-subtitle">Переписка с учениками, закреплёнными за вами. Новые сообщения появляются автоматически.</p>
+        <p className={'conversation-realtime-status conversation-realtime-status--' + realtimeState} role="status">
+          <span aria-hidden="true" />{realtimeState === 'online' ? 'Соединение активно · сообщения обновляются сразу' : 'Восстанавливаем соединение · включено резервное обновление'}
+        </p>
       </div>
       <button className="secondary-button" type="button" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Обновить</button>
     </div>

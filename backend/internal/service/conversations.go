@@ -44,6 +44,7 @@ func DefaultResponseWaitPolicy() ResponseWaitPolicy {
 type ConversationService struct {
 	store  ConversationStore
 	policy ResponseWaitPolicy
+	events *conversationEventHub
 }
 
 func NewConversationService(store ConversationStore) *ConversationService {
@@ -57,7 +58,7 @@ func NewConversationServiceWithPolicy(store ConversationStore, policy ResponseWa
 		policy.EscalationAfter <= policy.SecondReminderAfter {
 		policy = defaults
 	}
-	return &ConversationService{store: store, policy: policy}
+	return &ConversationService{store: store, policy: policy, events: newConversationEventHub()}
 }
 
 func (s *ConversationService) GetOrCreateForStudent(ctx context.Context, studentID int64) (domain.Conversation, error) {
@@ -98,7 +99,12 @@ func (s *ConversationService) CreateStudentMessage(ctx context.Context, params d
 	params.FirstReminderAfter = s.policy.FirstReminderAfter
 	params.SecondReminderAfter = s.policy.SecondReminderAfter
 	params.EscalationAfter = s.policy.EscalationAfter
-	return s.store.CreateStudentMessage(ctx, params)
+	message, err := s.store.CreateStudentMessage(ctx, params)
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	s.events.publish()
+	return message, nil
 }
 
 func (s *ConversationService) SendCuratorMessage(ctx context.Context, curatorStaffID, conversationID int64, bodyText string) (domain.ConversationMessage, error) {
@@ -107,7 +113,17 @@ func (s *ConversationService) SendCuratorMessage(ctx context.Context, curatorSta
 		!utf8.ValidString(bodyText) || utf8.RuneCountInString(bodyText) > maxConversationMessageRunes {
 		return domain.ConversationMessage{}, domain.ErrInvalidInput
 	}
-	return s.store.SendCuratorMessage(ctx, curatorStaffID, conversationID, bodyText)
+	message, err := s.store.SendCuratorMessage(ctx, curatorStaffID, conversationID, bodyText)
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	s.events.publish()
+	return message, nil
+}
+
+
+func (s *ConversationService) SubscribeConversationEvents() (<-chan struct{}, func()) {
+	return s.events.subscribe()
 }
 
 func (s *ConversationService) MarkReadForCurator(ctx context.Context, curatorStaffID, conversationID int64) (int64, error) {

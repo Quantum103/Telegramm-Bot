@@ -273,3 +273,24 @@
   .notification-time-grid { grid-template-columns: 1fr; }
 }
 
+
+.conversation-realtime-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: #849087;
+  font-size: 11px;
+}
+.conversation-realtime-status span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b8c1bb;
+}
+.conversation-realtime-status--online span {
+  background: #5b936a;
+}
+.conversation-realtime-status--reconnecting span {
+  background: #c59a50;
+}

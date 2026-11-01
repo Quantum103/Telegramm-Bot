@@ -641,7 +641,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	if saved.Replayed {
 		b.send(ctx, message.Chat.ID, "Это сообщение уже принято и сохранено. Куратор увидит его в диалоге.")
 	} else {
-		b.send(ctx, message.Chat.ID, "Сообщение сохранено и передано куратору. Он ответит, когда сможет.")
+		b.send(ctx, message.Chat.ID, "Сообщение сохранено и передано куратору. Он обязательно вам ответит.")
 	}
 	return true
 }

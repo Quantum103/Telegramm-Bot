@@ -459,6 +459,12 @@ type StaffConversationsResponse = { conversations: StaffConversationSummary[] }
 type StaffConversationMessagesResponse = { messages: StaffConversationMessage[] }
 type StaffTelegramNotificationsResponse = { notifications: CuratorNotification[] }
 
+export function staffConversationEventsURL(): string {
+  const url = new URL('/api/v1/staff/conversations/events', window.location.href)
+  url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
 export async function listStaffConversations(signal?: AbortSignal): Promise<StaffConversationSummary[]> {
   const body = await getJSON<StaffConversationsResponse>('/api/v1/staff/conversations', signal)
   if (!body || !Array.isArray(body.conversations)) throw new Error('Сервер вернул некорректный список диалогов.')

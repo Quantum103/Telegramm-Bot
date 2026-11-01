@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/coder/websocket"
 )
 
 type ConversationAPI interface {
@@ -17,6 +19,90 @@ type ConversationAPI interface {
 	SendCuratorMessage(context.Context, int64, int64, string) (domain.ConversationMessage, error)
 	MarkReadForCurator(context.Context, int64, int64) (int64, error)
 	UnreadCountForCurator(context.Context, int64) (int64, error)
+}
+
+
+type conversationEventSubscriber interface {
+	SubscribeConversationEvents() (<-chan struct{}, func())
+}
+
+// staffConversationEvents открывает общий канал обновлений для панели куратора.
+// WebSocket содержит только сигнал перечитать данные; сами сообщения остаются в защищённом HTTP API.
+func (h handlers) staffConversationEvents(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "origin_not_allowed"})
+		return
+	}
+	subscriber, ok := h.conversations.(conversationEventSubscriber)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "realtime_unavailable"})
+		return
+	}
+	sessionCookie, err := r.Cookie(staffSessionCookieName)
+	if err != nil || sessionCookie.Value == "" {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	identity := staffIdentityFromRequest(r)
+
+	connection, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		h.logger.Warn("не удалось открыть WebSocket диалогов", "error", err)
+		return
+	}
+	defer connection.CloseNow()
+
+	events, unsubscribe := subscriber.SubscribeConversationEvents()
+	defer unsubscribe()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = connection.CloseRead(ctx)
+
+	heartbeat := time.NewTicker(25 * time.Second)
+	defer heartbeat.Stop()
+	sessionCheck := time.NewTicker(30 * time.Second)
+	defer sessionCheck.Stop()
+
+	writeRefresh := func() error {
+		writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer writeCancel()
+		return connection.Write(writeCtx, websocket.MessageText, []byte(`{"type":"conversation_changed"}`))
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, open := <-events:
+			if !open {
+				return
+			}
+			if err := writeRefresh(); err != nil {
+				return
+			}
+		case <-heartbeat.C:
+			pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+			err := connection.Ping(pingCtx)
+			pingCancel()
+			if err != nil {
+				return
+			}
+		case <-sessionCheck.C:
+			checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
+			current, authErr := h.staffAuth.AuthenticateSession(checkCtx, sessionCookie.Value)
+			checkCancel()
+			if authErr != nil || current.StaffID != identity.StaffID ||
+				!current.ExpiresAt.After(time.Now()) || !staffHasRole(current, "curator") ||
+				current.MustChangePassword {
+				closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = connection.Close(closeCtx, websocket.StatusPolicyViolation, "staff session is no longer valid")
+				closeCancel()
+				return
+			}
+		}
+	}
 }
 
 type staffConversationMessageRequest struct {

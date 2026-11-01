@@ -313,6 +313,7 @@ func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger
 			staffConversationMux := http.NewServeMux()
 			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations", h.staffListConversations)
 			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations/unread", h.staffConversationUnreadCount)
+			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations/events", h.staffConversationEvents)
 			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations/{conversationID}/messages", h.staffListConversationMessages)
 			staffConversationMux.HandleFunc("POST /api/v1/staff/conversations/{conversationID}/messages", h.staffSendConversationMessage)
 			staffConversationMux.HandleFunc("POST /api/v1/staff/conversations/{conversationID}/read", h.staffMarkConversationRead)

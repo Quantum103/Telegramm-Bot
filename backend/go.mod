@@ -5,6 +5,7 @@ go 1.27.0
 toolchain go1.27.2
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/redis/go-redis/v9 v9.23.0
 )
