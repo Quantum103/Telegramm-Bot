@@ -121,7 +121,6 @@ func (s *ConversationService) SendCuratorMessage(ctx context.Context, curatorSta
 	return message, nil
 }
 
-
 func (s *ConversationService) SubscribeConversationEvents() (<-chan struct{}, func()) {
 	return s.events.subscribe()
 }

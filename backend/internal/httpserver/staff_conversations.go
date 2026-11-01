@@ -21,7 +21,6 @@ type ConversationAPI interface {
 	UnreadCountForCurator(context.Context, int64) (int64, error)
 }
 
-
 type conversationEventSubscriber interface {
 	SubscribeConversationEvents() (<-chan struct{}, func())
 }
