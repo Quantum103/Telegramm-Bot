@@ -215,9 +215,12 @@ type AnswerAttempt struct {
 	Model            *string    `json:"model,omitempty"`
 	DurationMS       *int32     `json:"duration_ms,omitempty"`
 	ErrorCode        *string    `json:"error_code,omitempty"`
-	ReviewDecision   *string    `json:"review_decision,omitempty"`
-	ReviewFeedback   *string    `json:"review_feedback,omitempty"`
-	ReviewedAt       *time.Time `json:"reviewed_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	ReviewDecision       *string    `json:"review_decision,omitempty"`
+	ReviewFeedback       *string    `json:"review_feedback,omitempty"`
+	ReviewedAt           *time.Time `json:"reviewed_at,omitempty"`
+	ReviewerStaffID      *int64     `json:"reviewer_staff_id,omitempty"`
+	ReviewerDisplayName  *string    `json:"reviewer_display_name,omitempty"`
+	SelectedOptionIDs    []int64    `json:"selected_option_ids"`
+	CreatedAt            time.Time  `json:"created_at"`
+	CompletedAt          *time.Time `json:"completed_at,omitempty"`
 }
