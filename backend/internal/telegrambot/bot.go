@@ -511,7 +511,6 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 		b.send(ctx, message.Chat.ID, "У этой учётной записи больше нет активной роли куратора. Уведомления отключены; обратитесь к администратору.")
 		return true, true
 	}
-	fields := strings.Fields(strings.TrimSpace(message.Text))
 	command := ""
 	if len(fields) > 0 && strings.HasPrefix(fields[0], "/") {
 		command = strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
