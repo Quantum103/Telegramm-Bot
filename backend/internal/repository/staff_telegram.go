@@ -434,38 +434,80 @@ func (r *StaffTelegramRepository) ListNotifications(ctx context.Context, staffID
 	if !authorized {
 		return nil, ErrInvalidState
 	}
+
 	rows, err := r.pool.Query(ctx, `
-		SELECT delivery.id, message.id, conversation.id, student.display_name, delivery.channel,
-		       delivery.delivery_status, delivery.attempt_count, delivery.last_error_code,
-		       delivery.last_error_at, delivery.sent_at, delivery.created_at
-		FROM conversation_message_deliveries delivery
-		JOIN conversation_messages message ON message.id = delivery.message_id
-		JOIN conversations conversation ON conversation.id = message.conversation_id
-		JOIN students student ON student.id = conversation.student_id
-		WHERE delivery.recipient_staff_id = $1
-		  AND (
-		    (
-		      delivery.channel IN ('curator_telegram', 'curator_transfer', 'curator_reminder_4h', 'curator_reminder_24h')
-		      AND EXISTS (
-		        SELECT 1 FROM student_curator_assignments assignment
-		        WHERE assignment.student_id = conversation.student_id
-		          AND assignment.curator_staff_id = $1 AND assignment.status = 'active'
-		      )
-		    )
-		    OR (
-		      delivery.channel = 'admin_escalation'
-		      AND EXISTS (
-		        SELECT 1 FROM staff_accounts staff
-		        JOIN staff_role_assignments assignment ON assignment.staff_id = staff.id AND assignment.revoked_at IS NULL
-		        JOIN staff_roles role ON role.id = assignment.role_id AND role.role_code = 'administrator'
-		        WHERE staff.id = $1 AND staff.account_status = 'active'
-		      )
-		    )
-		  )
-		ORDER BY delivery.created_at DESC, delivery.id DESC LIMIT $2
+		SELECT unread.id, unread.message_id, unread.conversation_id, unread.student_display_name,
+		       unread.channel, unread.delivery_status, unread.attempt_count, unread.last_error_code,
+		       unread.last_error_at, unread.sent_at, unread.created_at
+		FROM (
+			SELECT DISTINCT ON (message.id)
+			       delivery.id, message.id AS message_id, conversation.id AS conversation_id,
+			       student.display_name AS student_display_name, delivery.channel,
+			       delivery.delivery_status, delivery.attempt_count, delivery.last_error_code,
+			       delivery.last_error_at, delivery.sent_at, delivery.created_at
+			FROM conversation_message_deliveries delivery
+			JOIN conversation_messages message ON message.id = delivery.message_id
+			JOIN conversations conversation ON conversation.id = message.conversation_id
+			JOIN students student ON student.id = conversation.student_id
+			WHERE delivery.recipient_staff_id = $1
+			  AND (
+				(
+				  delivery.channel IN ('curator_telegram', 'curator_transfer')
+				  AND EXISTS (
+					SELECT 1
+					FROM student_curator_assignments assignment
+					JOIN conversation_participants participant
+					  ON participant.conversation_id = conversation.id
+					 AND participant.staff_id = $1 AND participant.left_at IS NULL
+					WHERE assignment.student_id = conversation.student_id
+					  AND assignment.curator_staff_id = $1 AND assignment.status = 'active'
+					  AND conversation.assigned_curator_staff_id = $1
+					  AND participant.id <> message.sender_participant_id
+					  AND NOT EXISTS (
+						SELECT 1 FROM conversation_message_reads read_mark
+						WHERE read_mark.message_id = message.id
+						  AND read_mark.participant_id = participant.id
+						  AND read_mark.conversation_id = conversation.id
+					  )
+				  )
+				)
+				OR (
+				  delivery.channel = 'admin_escalation'
+				  AND EXISTS (
+					SELECT 1 FROM staff_accounts staff
+					JOIN staff_role_assignments assignment ON assignment.staff_id = staff.id AND assignment.revoked_at IS NULL
+					JOIN staff_roles role ON role.id = assignment.role_id AND role.role_code = 'administrator'
+					WHERE staff.id = $1 AND staff.account_status = 'active'
+				  )
+				  AND EXISTS (
+					SELECT 1
+					FROM student_curator_assignments assignment
+					JOIN conversation_participants participant
+					  ON participant.conversation_id = conversation.id
+					 AND participant.staff_id = assignment.curator_staff_id
+					 AND participant.left_at IS NULL
+					WHERE assignment.student_id = conversation.student_id
+					  AND assignment.curator_staff_id = conversation.assigned_curator_staff_id
+					  AND assignment.status = 'active'
+					  AND participant.id <> message.sender_participant_id
+					  AND NOT EXISTS (
+						SELECT 1 FROM conversation_message_reads read_mark
+						WHERE read_mark.message_id = message.id
+						  AND read_mark.participant_id = participant.id
+						  AND read_mark.conversation_id = conversation.id
+					  )
+				  )
+				)
+			  )
+			ORDER BY message.id,
+			         CASE WHEN delivery.channel = 'curator_transfer' THEN 0 ELSE 1 END,
+			         delivery.created_at DESC, delivery.id DESC
+		) unread
+		ORDER BY unread.created_at DESC, unread.id DESC
+		LIMIT $2
 	`, staffID, limit)
 	if err != nil {
-		return nil, mapDatabaseError("получить журнал уведомлений куратора", err)
+		return nil, mapDatabaseError("получить журнал непрочитанных уведомлений", err)
 	}
 	defer rows.Close()
 	result := make([]domain.CuratorNotification, 0)
@@ -475,7 +517,7 @@ func (r *StaffTelegramRepository) ListNotifications(ctx context.Context, staffID
 		var lastErrorAt, sentAt pgtype.Timestamptz
 		if err := rows.Scan(&item.ID, &item.MessageID, &item.ConversationID, &item.StudentDisplayName, &item.Channel,
 			&item.DeliveryStatus, &item.AttemptCount, &errorCode, &lastErrorAt, &sentAt, &item.CreatedAt); err != nil {
-			return nil, mapDatabaseError("прочитать уведомление куратора", err)
+			return nil, mapDatabaseError("прочитать непрочитанное уведомление", err)
 		}
 		if errorCode.Valid {
 			value := errorCode.String
@@ -492,11 +534,10 @@ func (r *StaffTelegramRepository) ListNotifications(ctx context.Context, staffID
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, mapDatabaseError("обойти журнал уведомлений куратора", err)
+		return nil, mapDatabaseError("обойти журнал непрочитанных уведомлений", err)
 	}
 	return result, nil
 }
-
 var _ interface {
 	GetBindingStatus(context.Context, int64) (domain.StaffTelegramBindingStatus, error)
 	IssueLinkToken(context.Context, int64, [32]byte, time.Time) error

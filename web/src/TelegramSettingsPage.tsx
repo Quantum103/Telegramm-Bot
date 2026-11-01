@@ -129,7 +129,7 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
 
   return <section className="section-page communications-page">
     <div className="welcome-row"><div><p className="eyebrow">СВЯЗЬ С TELEGRAM</p><h1>Уведомления</h1>
-      <p className="page-subtitle">Привяжите личный Telegram-аккаунт и отслеживайте состояние уведомлений о новых сообщениях учеников.</p>
+      <p className="page-subtitle">Привяжите личный Telegram-аккаунт. В журнале отображаются только непрочитанные входящие сообщения.</p>
       <p className="telegram-help-note">Уведомления для: {staff.display_name}</p>
     </div><button className="secondary-button" type="button" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Обновить</button></div>
     {error && <p className="auth-inline-error" role="alert">{error}</p>}
@@ -196,9 +196,9 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
       <button className="primary-button" type="submit" disabled={savingPreferences}>{savingPreferences ? 'Сохраняем…' : 'Сохранить настройки'}</button>
     </form>}
     <section className="panel table-panel telegram-notifications-panel">
-      <div className="panel-heading"><div><h2>Журнал уведомлений</h2><p>{loading ? 'Загружаем…' : items.length + ' последних задач'}</p></div></div>
+      <div className="panel-heading"><div><h2>Журнал уведомлений</h2><p>{loading ? 'Загружаем…' : items.length + ' непрочитанных сообщений'}</p></div></div>
       {loading && <p className="catalog-message">Загружаем историю отправки…</p>}
-      {!loading && items.length === 0 && <p className="catalog-message">Пока нет уведомлений. Когда ученик напишет вам, запись появится здесь.</p>}
+      {!loading && items.length === 0 && <p className="catalog-message">Непрочитанных сообщений нет. Новые записи появятся здесь, когда ученик напишет вам.</p>}
       {!loading && items.length > 0 && <div className="table-scroll"><table><thead><tr><th>Ученик</th><th>Тип</th><th>Состояние</th><th>Попытки</th><th>Последняя ошибка</th><th>Создано</th><th /></tr></thead><tbody>
         {items.map((item) => <tr key={item.id}><td><strong>{item.student_display_name}</strong></td>
           <td>{item.channel === 'admin_escalation' ? 'Эскалация' : item.channel === 'curator_transfer' ? 'Передача диалога' : item.channel === 'curator_reminder_4h' ? 'Напоминание 4 ч' : item.channel === 'curator_reminder_24h' ? 'Напоминание 24 ч' : 'Новое сообщение'}</td>

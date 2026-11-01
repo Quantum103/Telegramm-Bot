@@ -543,3 +543,32 @@ type workerRoundTripFunc func(*http.Request) (*http.Response, error)
 func (f workerRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
+
+func TestDeliveryWorkerIdentifiesCuratorAsMessageSender(t *testing.T) {
+	var payload struct {
+		ChatID int64  `json:"chat_id"`
+		Text   string `json:"text"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode curator reply request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":94}}`))
+	}))
+	defer server.Close()
+
+	queue := &fakeConversationDeliveryQueue{}
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 20, MessageID: 21, Channel: "telegram", RecipientChatID: 123456,
+		MessageSenderDisplayName: "  Анна   Иванова\n", BodyText: "Добрый день! Чем могу помочь?",
+		AttemptCount: 1,
+	})
+	if !queue.sent || queue.failed || queue.retry {
+		t.Fatalf("ответ куратора не доставлен: %+v", queue)
+	}
+	if payload.ChatID != 123456 || payload.Text != "Сообщение от куратора — Анна Иванова:\n\nДобрый день! Чем могу помочь?" {
+		t.Fatalf("ученик должен видеть явного автора сообщения: %+v", payload)
+	}
+}

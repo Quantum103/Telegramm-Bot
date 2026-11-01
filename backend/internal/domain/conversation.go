@@ -54,8 +54,9 @@ type ConversationDelivery struct {
 	RecipientChatID        int64
 	RecipientStaffID       int64
 	ConversationID         int64
-	StudentDisplayName     string
-	BodyText               string
+	StudentDisplayName      string
+	MessageSenderDisplayName string
+	BodyText                string
 	AttemptCount           int
 	PreparationErrorCode   string
 	CuratorDisplayName     string

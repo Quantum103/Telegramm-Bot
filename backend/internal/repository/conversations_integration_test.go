@@ -193,7 +193,7 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 		t.Fatalf("захватить задание Telegram outbox: %v", err)
 	}
 	if delivery.MessageID != reply.ID || delivery.RecipientChatID != fixture.telegramID ||
-		delivery.BodyText != "Добрый день! Чем могу помочь?" || delivery.AttemptCount != 1 {
+		delivery.BodyText != "Добрый день! Чем могу помочь?" || delivery.MessageSenderDisplayName != "Первый куратор" || delivery.AttemptCount != 1 {
 		t.Fatalf("неверное задание Telegram outbox: %+v", delivery)
 	}
 	if err := deliveryRepository.MarkDeliverySent(ctx, delivery.ID); err != nil {

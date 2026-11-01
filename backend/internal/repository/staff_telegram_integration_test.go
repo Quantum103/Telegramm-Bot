@@ -79,3 +79,53 @@ func TestAdministratorCanLinkTelegramForEscalations(t *testing.T) {
 		t.Fatalf("статус Telegram администратора должен быть linked: %+v err=%v", status, err)
 	}
 }
+
+func TestListNotificationsReturnsOnlyUnreadMessages(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	conversations := NewConversationRepository(pool)
+
+	message, err := conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 778899, BodyText: "Непрочитанный вопрос ученика",
+	})
+	if err != nil {
+		t.Fatalf("создать сообщение ученика: %v", err)
+	}
+
+	notifications := NewStaffTelegramRepository(pool)
+	curatorItems, err := notifications.ListNotifications(ctx, fixture.curator1ID, 50)
+	if err != nil {
+		t.Fatalf("получить непрочитанные уведомления куратора: %v", err)
+	}
+	if len(curatorItems) != 1 || curatorItems[0].MessageID != message.ID ||
+		(curatorItems[0].Channel != "curator_telegram" && curatorItems[0].Channel != "curator_transfer") {
+		t.Fatalf("журнал должен показывать одно непрочитанное сообщение без строк напоминаний: %+v", curatorItems)
+	}
+
+	if tag, err := pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries
+		SET recipient_staff_id = $2
+		WHERE message_id = $1 AND channel = 'admin_escalation'
+	`, message.ID, fixture.adminID); err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("подготовить адресата эскалации для администратора: rows=%d err=%v", tag.RowsAffected(), err)
+	}
+	adminItems, err := notifications.ListNotifications(ctx, fixture.adminID, 50)
+	if err != nil || len(adminItems) != 1 || adminItems[0].MessageID != message.ID {
+		t.Fatalf("администратор должен видеть эскалацию по непрочитанному сообщению: items=%+v err=%v", adminItems, err)
+	}
+
+	if marked, err := conversations.MarkReadForCurator(ctx, fixture.curator1ID, message.ConversationID); err != nil || marked != 1 {
+		t.Fatalf("отметить сообщение прочитанным: marked=%d err=%v", marked, err)
+	}
+	curatorItems, err = notifications.ListNotifications(ctx, fixture.curator1ID, 50)
+	if err != nil || len(curatorItems) != 0 {
+		t.Fatalf("прочитанное сообщение не должно оставаться в журнале куратора: items=%+v err=%v", curatorItems, err)
+	}
+	adminItems, err = notifications.ListNotifications(ctx, fixture.adminID, 50)
+	if err != nil || len(adminItems) != 0 {
+		t.Fatalf("эскалация по прочитанному сообщению не должна оставаться в журнале администратора: items=%+v err=%v", adminItems, err)
+	}
+}

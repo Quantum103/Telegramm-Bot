@@ -186,6 +186,8 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 			return
 		}
 		bodyText = formatAdminEscalation(delivery)
+	case "telegram":
+		bodyText = formatCuratorReply(delivery)
 	default:
 		bodyText = delivery.BodyText
 	}
@@ -393,6 +395,24 @@ func formatCuratorNotification(delivery domain.ConversationDelivery, hasButton b
 		destination = "Откройте переписку кнопкой ниже и ответьте ученику."
 	}
 	return "Новое сообщение от ученика: " + name + "\n\n«" + snippet + "»\n\n" + destination
+}
+
+func formatCuratorReply(delivery domain.ConversationDelivery) string {
+	name := strings.Join(strings.Fields(delivery.MessageSenderDisplayName), " ")
+	name = strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, name)
+	if runes := []rune(name); len(runes) > 64 {
+		name = string(runes[:64]) + "…"
+	}
+	author := "Сообщение от куратора"
+	if name != "" {
+		author += " — " + name
+	}
+	return author + ":\n\n" + strings.TrimSpace(delivery.BodyText)
 }
 
 func classifyDeliveryError(err error) (errorCode string, permanent bool, retryAfter time.Duration) {

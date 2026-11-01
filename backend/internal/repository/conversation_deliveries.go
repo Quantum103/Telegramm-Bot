@@ -63,6 +63,13 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 		SELECT delivery.id, delivery.message_id, delivery.channel,
 		       COALESCE(delivery.recipient_chat_id, 0), COALESCE(delivery.recipient_staff_id, 0),
 		       delivery.attempt_count, COALESCE(message.body_text, ''), conversation.id, student.display_name,
+		       COALESCE((
+		           SELECT sender_staff.display_name
+		           FROM conversation_participants sender_participant
+		           JOIN staff_accounts sender_staff ON sender_staff.id = sender_participant.staff_id
+		           WHERE sender_participant.id = message.sender_participant_id
+		             AND sender_participant.conversation_id = conversation.id
+		       ), ''),
 		       current_assignment.curator_staff_id, curator.telegram_id, curator.account_status,
 		       COALESCE(curator_role.has_curator_role, FALSE), COALESCE(curator.display_name, ''),
 		       admin.staff_id, admin.telegram_id,
@@ -114,7 +121,7 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 	`, deliveryID).Scan(
 		&delivery.ID, &delivery.MessageID, &delivery.Channel,
 		&delivery.RecipientChatID, &delivery.RecipientStaffID, &delivery.AttemptCount,
-		&delivery.BodyText, &delivery.ConversationID, &delivery.StudentDisplayName,
+		&delivery.BodyText, &delivery.ConversationID, &delivery.StudentDisplayName, &delivery.MessageSenderDisplayName,
 		&currentCuratorID, &currentTelegramID, &accountStatus, &hasCuratorRole, &delivery.CuratorDisplayName,
 		&adminStaffID, &adminTelegramID,
 		&waitID, &waitGeneration, &waitMessageID, &waitRespondedAt, &waitOpenedAt, &waitValid,
