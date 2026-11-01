@@ -468,8 +468,6 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 
 	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
 	switch command {
-	case "/link":
-		b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
 	case "/start":
 		b.handleStart(ctx, message.Chat.ID, *message.From)
 	case "/chat":

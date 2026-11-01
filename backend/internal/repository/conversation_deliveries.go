@@ -50,6 +50,7 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 	`, deliveryID); err != nil {
 		return domain.ConversationDelivery{}, mapDatabaseError("захватить задание Telegram outbox", err)
 	}
+	var delivery domain.ConversationDelivery
 	var currentCuratorID, currentTelegramID pgtype.Int8
 	var accountStatus pgtype.Text
 	var hasCuratorRole bool
