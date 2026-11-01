@@ -352,3 +352,65 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 		t.Fatalf("старт ai изменил административное назначение: got=%d want=%d", assignedCuratorID, secondCuratorID)
 	}
 }
+
+func TestLegacyLessonProgressRemainsAccessibleAndBlocksUnsafeCourseGuess(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "legacy-course-progress-test",
+	})
+	if err != nil {
+		t.Fatalf("создать ученика: %v", err)
+	}
+	courseID, lessonIDs, versionIDs := createCourseForEnrollmentTest(
+		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Старый курс", 1,
+	)
+
+	// This models a lesson enrollment created by the pre-course-enrollment API.
+	legacy, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
+		StudentID: student.ID,
+		LessonID: lessonIDs[0],
+		LessonVersionID: versionIDs[0],
+		Mode: "ai",
+	})
+	if err != nil {
+		t.Fatalf("создать старое прохождение урока: %v", err)
+	}
+	var questionID int64
+	if err := pool.QueryRow(ctx, "SELECT id FROM lesson_questions WHERE lesson_version_id = $1", versionIDs[0]).Scan(&questionID); err != nil {
+		t.Fatalf("получить вопрос старого урока: %v", err)
+	}
+	if _, err := NewAnswerRepository(pool).Submit(ctx, AnswerSubmission{
+		StudentID: student.ID,
+		EnrollmentID: legacy.ID,
+		QuestionID: questionID,
+		AnswerText: "Сохранённый ответ старого ученика",
+	}); err != nil {
+		t.Fatalf("сохранить старый ответ: %v", err)
+	}
+
+	progress, err := NewEnrollmentRepository(pool).GetProgress(ctx, student.ID, legacy.ID)
+	if err != nil || progress.AnsweredQuestions != 1 ||
+		progress.Enrollment.CourseEnrollmentID != nil {
+		t.Fatalf("старый прогресс потерян или автоматически привязан: progress=%+v err=%v", progress, err)
+	}
+	saved, err := NewAnswerRepository(pool).GetSavedAnswer(ctx, student.ID, legacy.ID, questionID)
+	if err != nil || saved.AnswerText != "Сохранённый ответ старого ученика" {
+		t.Fatalf("ответ старого ученика не сохранился: answer=%+v err=%v", saved, err)
+	}
+
+	// If the relation cannot be proven from legacy rows, a new parent run must
+	// not be guessed or created alongside that unlinked progress.
+	if _, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, courseID, "ai"); !errors.Is(err, domain.ErrLegacyProgress) {
+		t.Fatalf("неоднозначное старое прохождение должно блокировать догадку о курсе, получено %v", err)
+	}
+	var courseRuns int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM course_enrollments WHERE student_id = $1", student.ID).Scan(&courseRuns); err != nil {
+		t.Fatalf("проверить отсутствие нового запуска курса: %v", err)
+	}
+	if courseRuns != 0 {
+		t.Fatalf("при неоднозначном legacy-прогрессе создалось %d запусков курса", courseRuns)
+	}
+}
