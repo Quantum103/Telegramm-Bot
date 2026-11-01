@@ -8,6 +8,7 @@ import (
 )
 
 type CuratorLearningStore interface {
+	ListReviewQueue(context.Context, int64) ([]domain.CuratorReviewQueueItem, error)
 	ListCourseLessons(context.Context, int64, int64, int64) (domain.CuratorCourseAccess, error)
 	ListLessonAnswers(context.Context, int64, int64, int64, int64) ([]domain.CuratorAnswer, error)
 	ReviewAttempt(context.Context, domain.ReviewAnswerAttemptParams) (domain.AnswerAttemptReview, error)
@@ -21,6 +22,16 @@ type CuratorLearningService struct {
 
 func NewCuratorLearningService(store CuratorLearningStore) *CuratorLearningService {
 	return &CuratorLearningService{store: store}
+}
+
+func (s *CuratorLearningService) ListReviewQueue(
+	ctx context.Context,
+	staffID int64,
+) ([]domain.CuratorReviewQueueItem, error) {
+	if staffID <= 0 {
+		return nil, domain.ErrInvalidInput
+	}
+	return s.store.ListReviewQueue(ctx, staffID)
 }
 
 func (s *CuratorLearningService) ListCourseLessons(

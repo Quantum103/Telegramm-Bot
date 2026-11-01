@@ -9,9 +9,26 @@ import (
 )
 
 type CuratorLearningAPI interface {
+	ListReviewQueue(context.Context, int64) ([]domain.CuratorReviewQueueItem, error)
 	ListCourseLessons(context.Context, int64, int64, int64) (domain.CuratorCourseAccess, error)
 	ListLessonAnswers(context.Context, int64, int64, int64, int64) ([]domain.CuratorAnswer, error)
 	ReviewAttempt(context.Context, int64, int64, string, string) (domain.AnswerAttemptReview, error)
+}
+
+func (h handlers) staffCuratorReviewQueue(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity := staffIdentityFromRequest(r)
+	items, err := h.courseLearning.ListReviewQueue(r.Context(), identity.StaffID)
+	if err != nil {
+		h.writeAPIError(w, err, "получить очередь проверки куратора")
+		return
+	}
+	if items == nil {
+		items = []domain.CuratorReviewQueueItem{}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items []domain.CuratorReviewQueueItem `json:"items"`
+	}{Items: items})
 }
 
 type curatorReviewRequest struct {

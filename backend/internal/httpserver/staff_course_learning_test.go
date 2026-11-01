@@ -16,6 +16,8 @@ type fakeCuratorLearningAPI struct {
 	access          domain.CuratorCourseAccess
 	answers         []domain.CuratorAnswer
 	review          domain.AnswerAttemptReview
+	queue           []domain.CuratorReviewQueueItem
+	listQueueCalls  int
 	listCourseCalls int
 	listAnswerCalls int
 	reviewCalls     int
@@ -26,6 +28,12 @@ type fakeCuratorLearningAPI struct {
 	lastAttemptID   int64
 	lastDecision    string
 	lastFeedback    string
+}
+
+func (f *fakeCuratorLearningAPI) ListReviewQueue(_ context.Context, staffID int64) ([]domain.CuratorReviewQueueItem, error) {
+	f.listQueueCalls++
+	f.lastStaffID = staffID
+	return f.queue, nil
 }
 
 func (f *fakeCuratorLearningAPI) ListCourseLessons(_ context.Context, staffID, studentID, runID int64) (domain.CuratorCourseAccess, error) {
@@ -217,5 +225,71 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	if replay.Code != http.StatusOK || curatorLearning.reviewCalls != 2 {
 		t.Fatalf("replayed curator review status/calls = %d/%d; body=%s",
 			replay.Code, curatorLearning.reviewCalls, replay.Body.String())
+	}
+}
+
+
+func TestStaffCourseLearningReviewQueueUsesAuthenticatedReadRole(t *testing.T) {
+	queueItem := domain.CuratorReviewQueueItem{
+		StudentID: 88, StudentName: "Ученик",
+		CourseID: 10, CourseTitle: "Курс", CourseEnrollmentID: 77,
+		LessonID: 99, LessonTitle: "Урок", FirstSubmittedAt: time.Now(),
+		PendingAnswers: 2, ReviewedAnswers: 1, TotalQuestions: 3,
+		LessonStatus: "in_progress",
+	}
+	makeHandler := func(identity domain.StaffSessionIdentity, learning *fakeCuratorLearningAPI) http.Handler {
+		authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+		return NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearning(
+			fakePinger{}, testLogger(), nil, authAPI, nil, nil, nil, nil,
+			learning, newStaffLoginLimiter(), true,
+		)
+	}
+	requestQueue := func(handler http.Handler) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet,
+			"https://staff.example.test/api/v1/staff/course-learning/review-queue", nil)
+		request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "valid-session-token"})
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	adminIdentity := domain.StaffSessionIdentity{
+		StaffID: 41, DisplayName: "Admin", Email: "admin@example.test",
+		Roles: []string{"administrator"}, ExpiresAt: time.Now().Add(time.Hour),
+	}
+	adminLearning := &fakeCuratorLearningAPI{queue: []domain.CuratorReviewQueueItem{queueItem}}
+	adminResponse := requestQueue(makeHandler(adminIdentity, adminLearning))
+	if adminResponse.Code != http.StatusOK || adminLearning.listQueueCalls != 1 ||
+		adminLearning.lastStaffID != adminIdentity.StaffID {
+		t.Fatalf("admin queue status/calls/actor = %d/%d/%d; body=%s",
+			adminResponse.Code, adminLearning.listQueueCalls, adminLearning.lastStaffID, adminResponse.Body.String())
+	}
+	for _, expected := range []string{
+		"\"items\":[{", "\"student_id\":88", "\"course_enrollment_id\":77",
+		"\"pending_answers\":2", "\"reviewed_answers\":1", "\"total_questions\":3",
+	} {
+		if !strings.Contains(adminResponse.Body.String(), expected) {
+			t.Fatalf("queue response is missing %q: %s", expected, adminResponse.Body.String())
+		}
+	}
+
+	curatorIdentity := adminIdentity
+	curatorIdentity.StaffID = 42
+	curatorIdentity.Roles = []string{"curator"}
+	curatorLearning := &fakeCuratorLearningAPI{queue: []domain.CuratorReviewQueueItem{queueItem}}
+	curatorResponse := requestQueue(makeHandler(curatorIdentity, curatorLearning))
+	if curatorResponse.Code != http.StatusOK || curatorLearning.listQueueCalls != 1 ||
+		curatorLearning.lastStaffID != curatorIdentity.StaffID {
+		t.Fatalf("curator queue status/calls/actor = %d/%d/%d; body=%s",
+			curatorResponse.Code, curatorLearning.listQueueCalls, curatorLearning.lastStaffID, curatorResponse.Body.String())
+	}
+
+	otherIdentity := adminIdentity
+	otherIdentity.Roles = []string{"content_editor"}
+	otherLearning := &fakeCuratorLearningAPI{queue: []domain.CuratorReviewQueueItem{queueItem}}
+	otherResponse := requestQueue(makeHandler(otherIdentity, otherLearning))
+	if otherResponse.Code != http.StatusForbidden || otherLearning.listQueueCalls != 0 {
+		t.Fatalf("non-curator/non-admin obtained queue: status=%d calls=%d body=%s",
+			otherResponse.Code, otherLearning.listQueueCalls, otherResponse.Body.String())
 	}
 }

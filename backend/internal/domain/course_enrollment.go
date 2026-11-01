@@ -83,3 +83,20 @@ type CuratorCourseAccess struct {
 	Enrollment CourseEnrollment         `json:"enrollment"`
 	Lessons    []CourseEnrollmentLesson `json:"lessons"`
 }
+
+// CuratorReviewQueueItem — сводная запись очереди: один ученик и один урок,
+// независимо от количества ожидающих проверки ответов.
+type CuratorReviewQueueItem struct {
+	StudentID          int64     `json:"student_id"`
+	StudentName        string    `json:"student_name"`
+	CourseID           int64     `json:"course_id"`
+	CourseTitle        string    `json:"course_title"`
+	CourseEnrollmentID int64     `json:"course_enrollment_id"`
+	LessonID           int64     `json:"lesson_id"`
+	LessonTitle        string    `json:"lesson_title"`
+	FirstSubmittedAt   time.Time `json:"first_submitted_at"`
+	PendingAnswers     int       `json:"pending_answers"`
+	ReviewedAnswers    int       `json:"reviewed_answers"`
+	TotalQuestions     int       `json:"total_questions"`
+	LessonStatus       string    `json:"lesson_status"`
+}

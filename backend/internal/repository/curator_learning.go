@@ -22,6 +22,158 @@ func NewCuratorLearningRepository(pool *pgxpool.Pool) *CuratorLearningRepository
 	return &CuratorLearningRepository{pool: pool}
 }
 
+// ListReviewQueue возвращает по одной записи на урок с актуальными попытками,
+// ожидающими решения. Все текущие попытки агрегируются одним SQL-запросом;
+// устаревшие попытки и решения по ним не влияют на очередь.
+func (r *CuratorLearningRepository) ListReviewQueue(
+	ctx context.Context,
+	staffID int64,
+) ([]domain.CuratorReviewQueueItem, error) {
+	if staffID <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	var isAdministrator, isCurator bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT
+			EXISTS (
+				SELECT 1
+				FROM staff_accounts actor
+				JOIN staff_role_assignments assignment
+				  ON assignment.staff_id = actor.id AND assignment.revoked_at IS NULL
+				JOIN staff_roles role ON role.id = assignment.role_id
+				WHERE actor.id = $1 AND actor.account_status = 'active'
+				  AND role.role_code = 'administrator'
+			),
+			EXISTS (
+				SELECT 1
+				FROM staff_accounts actor
+				JOIN staff_role_assignments assignment
+				  ON assignment.staff_id = actor.id AND assignment.revoked_at IS NULL
+				JOIN staff_roles role ON role.id = assignment.role_id
+				WHERE actor.id = $1 AND actor.account_status = 'active'
+				  AND role.role_code = 'curator'
+			)
+	`, staffID).Scan(&isAdministrator, &isCurator); err != nil {
+		return nil, mapDatabaseError("проверить полномочия для очереди проверки", err)
+	}
+	if !isAdministrator && !isCurator {
+		return nil, ErrInvalidState
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT student.id, student.display_name,
+		       ce.course_id, course.title, ce.id,
+		       cel.lesson_id, lesson_version.title,
+		       min(latest.created_at) FILTER (
+		           WHERE latest.processing_status = 'pending' AND review.id IS NULL
+		       ) AS first_submitted_at,
+		       count(*) FILTER (
+		           WHERE latest.id IS NOT NULL
+		             AND latest.processing_status = 'pending'
+		             AND review.id IS NULL
+		       )::INTEGER AS pending_answers,
+		       count(*) FILTER (WHERE review.id IS NOT NULL)::INTEGER AS reviewed_answers,
+		       count(question.id)::INTEGER AS total_questions,
+		       lesson.status
+		FROM staff_accounts actor
+		JOIN course_enrollments ce
+		  ON ce.mode = 'curator' AND ce.status = 'in_progress'
+		JOIN students student ON student.id = ce.student_id
+		JOIN courses course ON course.id = ce.course_id
+		JOIN student_curator_assignments assignment
+		  ON assignment.student_id = ce.student_id
+		 AND assignment.curator_staff_id = ce.curator_staff_id
+		 AND assignment.status = 'active'
+		JOIN staff_accounts assigned_curator
+		  ON assigned_curator.id = assignment.curator_staff_id
+		 AND assigned_curator.account_status = 'active'
+		JOIN staff_role_assignments assigned_curator_role
+		  ON assigned_curator_role.staff_id = assigned_curator.id
+		 AND assigned_curator_role.revoked_at IS NULL
+		JOIN staff_roles assigned_curator_role_definition
+		  ON assigned_curator_role_definition.id = assigned_curator_role.role_id
+		 AND assigned_curator_role_definition.role_code = 'curator'
+		JOIN course_enrollment_lessons cel
+		  ON cel.course_enrollment_id = ce.id
+		JOIN lesson_versions lesson_version
+		  ON lesson_version.id = cel.lesson_version_id
+		 AND lesson_version.lesson_id = cel.lesson_id
+		JOIN lesson_enrollments lesson
+		  ON lesson.course_enrollment_id = ce.id
+		 AND lesson.lesson_id = cel.lesson_id
+		 AND lesson.lesson_version_id = cel.lesson_version_id
+		JOIN lesson_questions question
+		  ON question.lesson_version_id = cel.lesson_version_id
+		LEFT JOIN LATERAL (
+			SELECT attempt.id, attempt.created_at, attempt.processing_status
+			FROM answer_attempts attempt
+			WHERE attempt.enrollment_id = lesson.id
+			  AND attempt.question_id = question.id
+			ORDER BY attempt.created_at DESC, attempt.id DESC
+			LIMIT 1
+		) latest ON TRUE
+		LEFT JOIN answer_attempt_reviews review
+		  ON review.answer_attempt_id = latest.id
+		WHERE actor.id = $1
+		  AND actor.account_status = 'active'
+		  AND lesson.status = 'in_progress'
+		  AND (
+		      EXISTS (
+		          SELECT 1
+		          FROM staff_role_assignments actor_assignment
+		          JOIN staff_roles actor_role ON actor_role.id = actor_assignment.role_id
+		          WHERE actor_assignment.staff_id = actor.id
+		            AND actor_assignment.revoked_at IS NULL
+		            AND actor_role.role_code = 'administrator'
+		      )
+		      OR (
+		          ce.curator_staff_id = actor.id
+		          AND assignment.curator_staff_id = actor.id
+		          AND EXISTS (
+		              SELECT 1
+		              FROM staff_role_assignments actor_assignment
+		              JOIN staff_roles actor_role ON actor_role.id = actor_assignment.role_id
+		              WHERE actor_assignment.staff_id = actor.id
+		                AND actor_assignment.revoked_at IS NULL
+		                AND actor_role.role_code = 'curator'
+		          )
+		      )
+		  )
+		GROUP BY student.id, student.display_name, ce.course_id, course.title,
+		         ce.id, cel.lesson_id, lesson_version.title, lesson.status
+		HAVING count(*) FILTER (
+		    WHERE latest.id IS NOT NULL
+		      AND latest.processing_status = 'pending'
+		      AND review.id IS NULL
+		) > 0
+		ORDER BY first_submitted_at ASC, student.id, ce.id, cel.lesson_id
+	`, staffID)
+	if err != nil {
+		return nil, mapDatabaseError("получить очередь проверки куратора", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.CuratorReviewQueueItem, 0)
+	for rows.Next() {
+		var item domain.CuratorReviewQueueItem
+		if err := rows.Scan(
+			&item.StudentID, &item.StudentName,
+			&item.CourseID, &item.CourseTitle, &item.CourseEnrollmentID,
+			&item.LessonID, &item.LessonTitle, &item.FirstSubmittedAt,
+			&item.PendingAnswers, &item.ReviewedAnswers,
+			&item.TotalQuestions, &item.LessonStatus,
+		); err != nil {
+			return nil, mapDatabaseError("прочитать задание из очереди проверки", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDatabaseError("обойти очередь проверки куратора", err)
+	}
+	return items, nil
+}
+
 func (r *CuratorLearningRepository) ListCourseLessons(
 	ctx context.Context,
 	curatorStaffID, studentID, courseEnrollmentID int64,

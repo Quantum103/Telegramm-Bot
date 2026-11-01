@@ -354,6 +354,7 @@ func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(databa
 		}
 		if h.courseLearning != nil {
 			staffCourseLearningMux := http.NewServeMux()
+			staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/review-queue", h.staffCuratorReviewQueue)
 			if h.management != nil {
 				// The existing staff student projection is assignment-scoped for
 				// curators and global for administrators; it now includes active course progress.
