@@ -438,9 +438,7 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		}
 		return domain.AnswerAttemptReview{}, mapDatabaseError("найти попытку для проверки куратором", err)
 	}
-	if mode != "curator" ||
-		(courseStatus != "in_progress" && courseStatus != "completed") ||
-		(enrollmentStatus != "in_progress" && enrollmentStatus != "completed") {
+	if mode != "curator" {
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
