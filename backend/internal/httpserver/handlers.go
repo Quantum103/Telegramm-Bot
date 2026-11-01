@@ -190,17 +190,17 @@ type healthResponse struct {
 }
 
 type handlers struct {
-	database      databasePinger
-	logger        *slog.Logger
-	catalog       CatalogAPI
-	staffAuth     StaffAuthAPI
-	authoring     StaffAuthoringAPI
-	management    StaffManagementAPI
+	database       databasePinger
+	logger         *slog.Logger
+	catalog        CatalogAPI
+	staffAuth      StaffAuthAPI
+	authoring      StaffAuthoringAPI
+	management     StaffManagementAPI
 	conversations  ConversationAPI
 	staffTelegram  StaffTelegramAPI
 	courseLearning CuratorLearningAPI
 	cookieSecure   bool
-	loginLimiter  StaffLoginRateLimiter
+	loginLimiter   StaffLoginRateLimiter
 }
 
 // NewHandler собирает публичные маршруты и сохраняет обратную совместимость тестов.
