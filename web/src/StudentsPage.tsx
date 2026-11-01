@@ -261,20 +261,28 @@ export default function StudentsPage({
     setNotice('')
     try {
       const result = await reviewCuratorAnswerAttempt(attemptID, decision, decision === 'approved' ? '' : feedback)
-      if (selectedStudent && activeCourse) {
-        const [updatedAnswers, updatedCourse] = await Promise.all([
-          listCuratorLessonAnswers(selectedStudent.id, activeCourse.course_enrollment_id, lesson.lesson_id),
-          listCuratorCourseLessons(selectedStudent.id, activeCourse.course_enrollment_id),
-        ])
-        setAnswersByLesson((current) => ({ ...current, [lesson.lesson_id]: updatedAnswers }))
-        setAnswersLoaded((current) => ({ ...current, [lesson.lesson_id]: true }))
-        setCourseAccess(updatedCourse)
-      }
       setNotice(result.replayed ? 'Решение уже было сохранено ранее.' : decision === 'approved'
         ? 'Ответ принят.' : 'Ответ отправлен ученику на исправление.')
       setRevision((value) => value + 1)
       setRevisionQuestionID(null)
       setFeedbackDrafts((current) => ({ ...current, [answer.question_id]: '' }))
+      if (selectedStudent && activeCourse) {
+        try {
+          const [updatedAnswers, updatedCourse] = await Promise.all([
+            listCuratorLessonAnswers(selectedStudent.id, activeCourse.course_enrollment_id, lesson.lesson_id),
+            listCuratorCourseLessons(selectedStudent.id, activeCourse.course_enrollment_id),
+          ])
+          setAnswersByLesson((current) => ({ ...current, [lesson.lesson_id]: updatedAnswers }))
+          setAnswersLoaded((current) => ({ ...current, [lesson.lesson_id]: true }))
+          setCourseAccess(updatedCourse)
+        } catch (refreshError: unknown) {
+          setAnswersErrors((current) => ({
+            ...current,
+            [lesson.lesson_id]: 'Решение сохранено, но данные не обновились. Нажмите «Обновить» и откройте урок снова.',
+          }))
+          if (messageOf(refreshError, '').includes('Сессия завершена')) onSessionExpired()
+        }
+      }
     } catch (reason: unknown) {
       const message = messageOf(reason, 'Не удалось сохранить решение.')
       setAnswersErrors((current) => ({ ...current, [lesson.lesson_id]: message }))
