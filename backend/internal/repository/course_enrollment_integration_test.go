@@ -472,3 +472,93 @@ func TestLegacyLessonProgressRemainsAccessibleAndBlocksUnsafeCourseGuess(t *test
 		t.Fatalf("при неоднозначном legacy-прогрессе создалось %d запусков курса", courseRuns)
 	}
 }
+
+func TestCourseEnrollmentSerializesDifferentConcurrentStarts(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "course-cross-concurrency-test",
+	})
+	if err != nil {
+		t.Fatalf("создать ученика: %v", err)
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	firstCourse, _, _ := createCourseForEnrollmentTest(t, ctx, pool, suffix+"-first", "Первый конкурентный курс", 1)
+	secondCourse, _, _ := createCourseForEnrollmentTest(t, ctx, pool, suffix+"-second", "Второй конкурентный курс", 1)
+
+	const workers = 12
+	type result struct {
+		requestedCourseID int64
+		progress          domain.CourseEnrollmentProgress
+		err               error
+	}
+	results := make(chan result, workers)
+	var wait sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		courseID := firstCourse
+		if i%2 == 1 {
+			courseID = secondCourse
+		}
+		wait.Add(1)
+		go func(requestedCourseID int64) {
+			defer wait.Done()
+			progress, startErr := NewCourseEnrollmentRepository(pool).Start(
+				ctx, student.ID, requestedCourseID, "ai",
+			)
+			results <- result{
+				requestedCourseID: requestedCourseID,
+				progress:          progress,
+				err:               startErr,
+			}
+		}(courseID)
+	}
+	wait.Wait()
+	close(results)
+
+	var winningCourseID, winningEnrollmentID int64
+	successfulStarts, conflicts := 0, 0
+	for item := range results {
+		if item.progress.Enrollment.ID <= 0 {
+			t.Fatalf("конкурентный запрос не вернул активное прохождение: %+v", item)
+		}
+		if item.err == nil {
+			successfulStarts++
+			if item.progress.Enrollment.CourseID != item.requestedCourseID {
+				t.Fatalf("успешный запрос получил чужой курс: %+v", item)
+			}
+			if winningCourseID == 0 {
+				winningCourseID = item.progress.Enrollment.CourseID
+				winningEnrollmentID = item.progress.Enrollment.ID
+			} else if item.progress.Enrollment.ID != winningEnrollmentID {
+				t.Fatalf("созданы два разных незавершённых запуска: %d и %d", winningEnrollmentID, item.progress.Enrollment.ID)
+			}
+			continue
+		}
+		if !errors.Is(item.err, domain.ErrActiveCourse) {
+			t.Fatalf("ожидался конфликт активного курса, получено %v", item.err)
+		}
+		conflicts++
+		if item.progress.Enrollment.CourseID != winningCourseID && winningCourseID != 0 {
+			t.Fatalf("проигравший запрос получил неверный текущий курс: %+v", item.progress.Enrollment)
+		}
+	}
+	if successfulStarts == 0 || conflicts == 0 || winningCourseID == 0 {
+		t.Fatalf("ожидался один победивший курс и конфликты второго: success=%d conflicts=%d", successfulStarts, conflicts)
+	}
+
+	var activeCount int
+	var activeCourseID, activeEnrollmentID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), max(course_id), max(id)
+		FROM course_enrollments
+		WHERE student_id = $1 AND status IN ('awaiting_curator', 'in_progress', 'paused')
+	`, student.ID).Scan(&activeCount, &activeCourseID, &activeEnrollmentID); err != nil {
+		t.Fatalf("проверить единственный активный курс: %v", err)
+	}
+	if activeCount != 1 || activeCourseID != winningCourseID || activeEnrollmentID != winningEnrollmentID {
+		t.Fatalf("конкурентные запросы создали несколько активных курсов: count=%d course=%d enrollment=%d",
+			activeCount, activeCourseID, activeEnrollmentID)
+	}
+}
