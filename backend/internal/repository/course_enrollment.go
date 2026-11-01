@@ -354,6 +354,56 @@ func (r *CourseEnrollmentRepository) GetLessonForRun(
 	return lesson, nil
 }
 
+func (r *CourseEnrollmentRepository) ListLessons(
+	ctx context.Context,
+	studentID, courseEnrollmentID int64,
+) ([]domain.CourseEnrollmentLesson, error) {
+	if studentID <= 0 || courseEnrollmentID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT cel.lesson_id, cel.lesson_version_id, cel.position, lv.title,
+		       le.id, COALESCE(le.status, 'not_started'),
+		       (SELECT count(*)::INTEGER FROM lesson_questions q
+		        WHERE q.lesson_version_id = cel.lesson_version_id),
+		       (SELECT count(*)::INTEGER FROM student_answers sa
+		        WHERE sa.enrollment_id = le.id AND sa.lesson_version_id = cel.lesson_version_id)
+		FROM course_enrollments ce
+		JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
+		JOIN lesson_versions lv ON lv.id = cel.lesson_version_id AND lv.lesson_id = cel.lesson_id
+		LEFT JOIN lesson_enrollments le
+		  ON le.course_enrollment_id = ce.id
+		 AND le.lesson_id = cel.lesson_id
+		 AND le.lesson_version_id = cel.lesson_version_id
+		WHERE ce.id = $1 AND ce.student_id = $2
+		ORDER BY cel.position, cel.lesson_id
+	`, courseEnrollmentID, studentID)
+	if err != nil {
+		return nil, mapDatabaseError("получить обязательные уроки курса", err)
+	}
+	defer rows.Close()
+	lessons := make([]domain.CourseEnrollmentLesson, 0)
+	for rows.Next() {
+		var lesson domain.CourseEnrollmentLesson
+		var enrollmentID pgtype.Int8
+		if err := rows.Scan(
+			&lesson.LessonID, &lesson.LessonVersionID, &lesson.Position, &lesson.Title,
+			&enrollmentID, &lesson.Status, &lesson.TotalQuestions, &lesson.AnsweredQuestions,
+		); err != nil {
+			return nil, mapDatabaseError("прочитать обязательный урок курса", err)
+		}
+		if enrollmentID.Valid {
+			value := enrollmentID.Int64
+			lesson.EnrollmentID = &value
+		}
+		lessons = append(lessons, lesson)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDatabaseError("обойти обязательные уроки курса", err)
+	}
+	return lessons, nil
+}
+
 func (r *CourseEnrollmentRepository) RefreshCompletion(
 	ctx context.Context,
 	studentID, courseEnrollmentID int64,
