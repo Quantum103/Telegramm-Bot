@@ -150,7 +150,6 @@ func (s *LearningService) loadInitialProgress(
 	return progress, nil
 }
 
-
 // StartCourse сохраняет режим и возвращает существующий запуск, если он уже есть.
 // При попытке открыть другой курс возвращает ErrActiveCourse вместе с его прогрессом.
 func (s *LearningService) StartCourse(
