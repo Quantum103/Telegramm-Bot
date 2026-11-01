@@ -40,7 +40,17 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		FROM course_enrollments ce
 		JOIN courses c ON c.id = ce.course_id
 		WHERE ce.id = $3 AND ce.student_id = $2
-		  AND ce.mode = 'curator'
+		  AND (
+		      ce.mode = 'curator'
+		      OR EXISTS (
+		          SELECT 1
+		          FROM staff_role_assignments admin_assignment
+		          JOIN staff_roles admin_role ON admin_role.id = admin_assignment.role_id
+		          WHERE admin_assignment.staff_id = $1
+		            AND admin_assignment.revoked_at IS NULL
+		            AND admin_role.role_code = 'administrator'
+		      )
+		  )
 		  AND EXISTS (
 		      SELECT 1
 		      FROM staff_accounts actor
@@ -256,7 +266,17 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 		    ) history_attempt
 		) history ON TRUE
 		WHERE ce.id = $3 AND ce.student_id = $2
-		  AND ce.mode = 'curator'
+		  AND (
+		      ce.mode = 'curator'
+		      OR EXISTS (
+		          SELECT 1
+		          FROM staff_role_assignments admin_assignment
+		          JOIN staff_roles admin_role ON admin_role.id = admin_assignment.role_id
+		          WHERE admin_assignment.staff_id = $1
+		            AND admin_assignment.revoked_at IS NULL
+		            AND admin_role.role_code = 'administrator'
+		      )
+		  )
 		  AND EXISTS (
 		      SELECT 1
 		      FROM staff_accounts actor
@@ -418,8 +438,9 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		}
 		return domain.AnswerAttemptReview{}, mapDatabaseError("найти попытку для проверки куратором", err)
 	}
-	if mode != "curator" || courseStatus != "in_progress" ||
-		enrollmentStatus != "in_progress" || processingStatus != "pending" {
+	if mode != "curator" ||
+		(courseStatus != "in_progress" && courseStatus != "completed") ||
+		(enrollmentStatus != "in_progress" && enrollmentStatus != "completed") {
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
@@ -485,6 +506,9 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	}
 	if !errors.Is(existingErr, pgx.ErrNoRows) {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить существующее решение куратора", existingErr)
+	}
+	if courseStatus != "in_progress" || enrollmentStatus != "in_progress" || processingStatus != "pending" {
+		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
 	var review domain.AnswerAttemptReview
