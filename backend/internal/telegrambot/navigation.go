@@ -111,7 +111,14 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		return
 	}
 
-	progress, err := b.learning.StartLesson(ctx, studentID, detail.Lesson.ID, "ai")
+	var progress domain.Progress
+	if courseStarter, ok := b.learning.(interface {
+		StartLessonInCourse(context.Context, int64, int64, int64, string) (domain.Progress, error)
+	}); ok {
+		progress, err = courseStarter.StartLessonInCourse(ctx, studentID, courseID, detail.Lesson.ID, "ai")
+	} else {
+		progress, err = b.learning.StartLesson(ctx, studentID, detail.Lesson.ID, "ai")
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidState) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Не удалось начать этот урок: он мог стать недоступен. Вернитесь к списку уроков.", keyboard(button("К урокам", fmt.Sprintf("lessons:%d", courseID))))
