@@ -86,7 +86,10 @@ func currentCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (int64, e
 
 func getOrCreateConversationTx(ctx context.Context, tx pgx.Tx, studentID int64) (domain.Conversation, int64, int64, error) {
 	curatorID, err := currentCuratorTx(ctx, tx, studentID)
-	if err != nil {
+	if errors.Is(err, ErrInvalidState) {
+		// Ученик может начать диалог до назначения куратора; задача уведомления останется в outbox.
+		curatorID = 0
+	} else if err != nil {
 		return domain.Conversation{}, 0, 0, err
 	}
 	var conversation domain.Conversation
@@ -102,8 +105,8 @@ func getOrCreateConversationTx(ctx context.Context, tx pgx.Tx, studentID int64) 
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `
 			INSERT INTO conversations (student_id, assigned_curator_staff_id, status)
-			VALUES ($1, $2, 'active')
-			RETURNING id, student_id, assigned_curator_staff_id, status, created_at, updated_at
+			VALUES ($1, NULLIF($2, 0), 'active')
+			RETURNING id, student_id, COALESCE(assigned_curator_staff_id, 0), status, created_at, updated_at
 		`, studentID, curatorID).Scan(
 			&conversation.ID, &conversation.StudentID, &conversation.AssignedCuratorStaffID,
 			&conversation.Status, &conversation.CreatedAt, &conversation.UpdatedAt,
@@ -133,23 +136,25 @@ func getOrCreateConversationTx(ctx context.Context, tx pgx.Tx, studentID int64) 
 	`, conversation.ID, curatorID); err != nil {
 		return domain.Conversation{}, 0, 0, mapDatabaseError("закрыть прежних участников-кураторов", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO conversation_participants (conversation_id, staff_id)
-		VALUES ($1, $2)
-		ON CONFLICT (conversation_id, staff_id)
-		WHERE staff_id IS NOT NULL AND left_at IS NULL DO NOTHING
-	`, conversation.ID, curatorID); err != nil {
-		return domain.Conversation{}, 0, 0, mapDatabaseError("добавить текущего куратора", err)
-	}
 	var curatorParticipantID int64
-	if err := tx.QueryRow(ctx, `
-		SELECT id FROM conversation_participants
-		WHERE conversation_id = $1 AND staff_id = $2 AND left_at IS NULL
-	`, conversation.ID, curatorID).Scan(&curatorParticipantID); err != nil {
-		return domain.Conversation{}, 0, 0, mapDatabaseError("получить участника-куратора", err)
+	if curatorID > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_participants (conversation_id, staff_id)
+			VALUES ($1, $2)
+			ON CONFLICT (conversation_id, staff_id)
+			WHERE staff_id IS NOT NULL AND left_at IS NULL DO NOTHING
+		`, conversation.ID, curatorID); err != nil {
+			return domain.Conversation{}, 0, 0, mapDatabaseError("добавить текущего куратора", err)
+		}
+		if err := tx.QueryRow(ctx, `
+			SELECT id FROM conversation_participants
+			WHERE conversation_id = $1 AND staff_id = $2 AND left_at IS NULL
+		`, conversation.ID, curatorID).Scan(&curatorParticipantID); err != nil {
+			return domain.Conversation{}, 0, 0, mapDatabaseError("получить участника-куратора", err)
+		}
 	}
 	if conversation.AssignedCuratorStaffID != curatorID {
-		if _, err := tx.Exec(ctx, "UPDATE conversations SET assigned_curator_staff_id = $2, updated_at = now() WHERE id = $1", conversation.ID, curatorID); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE conversations SET assigned_curator_staff_id = NULLIF($2, 0), updated_at = now() WHERE id = $1", conversation.ID, curatorID); err != nil {
 			return domain.Conversation{}, 0, 0, mapDatabaseError("синхронизировать куратора диалога", err)
 		}
 		conversation.AssignedCuratorStaffID = curatorID
@@ -205,8 +210,19 @@ func (r *ConversationRepository) CreateStudentMessage(ctx context.Context, param
 		message.Replayed = true
 	} else if err != nil {
 		return domain.ConversationMessage{}, mapDatabaseError("сохранить сообщение ученика", err)
-	} else if _, err := tx.Exec(ctx, "UPDATE conversations SET updated_at = now() WHERE id = $1", conversation.ID); err != nil {
-		return domain.ConversationMessage{}, mapDatabaseError("обновить активность диалога", err)
+	} else {
+		if _, err := tx.Exec(ctx, "UPDATE conversations SET updated_at = now() WHERE id = $1", conversation.ID); err != nil {
+			return domain.ConversationMessage{}, mapDatabaseError("обновить активность диалога", err)
+		}
+		// Сообщение и намерение уведомить назначенного куратора фиксируются атомарно.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_message_deliveries
+				(message_id, channel, recipient_staff_id, delivery_status, next_attempt_at)
+			VALUES ($1, 'curator_telegram', NULLIF($2, 0), 'pending', now())
+			ON CONFLICT (message_id, channel) DO NOTHING
+		`, message.ID, conversation.AssignedCuratorStaffID); err != nil {
+			return domain.ConversationMessage{}, mapDatabaseError("создать задачу уведомления куратора", err)
+		}
 	}
 	message.ConversationID, message.SenderParticipantID = conversation.ID, studentParticipantID
 	if err := tx.Commit(ctx); err != nil {

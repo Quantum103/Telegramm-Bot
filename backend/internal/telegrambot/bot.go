@@ -282,6 +282,12 @@ type StudentConversationAPI interface {
 	IsStudentChatMode(context.Context, int64) (bool, error)
 }
 
+type StaffTelegramBotAPI interface {
+	BindTelegramAccount(context.Context, int64, string, string) (domain.StaffTelegramAccount, error)
+	FindByTelegramID(context.Context, int64) (domain.StaffTelegramAccount, error)
+	RestoreNotifications(context.Context, int64) error
+}
+
 type Bot struct {
 	api              TelegramAPI
 	students         StudentRegistrar
@@ -290,6 +296,7 @@ type Bot struct {
 	logger           *slog.Logger
 	chapterPublisher ChapterPagePublisher
 	conversations    StudentConversationAPI
+	staffTelegram    StaffTelegramBotAPI
 
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
@@ -310,12 +317,15 @@ func NewBotWithChapterPublisher(api TelegramAPI, students StudentRegistrar, cata
 
 // NewBotWithChapterPublisherAndConversations reuses the current Telegram Bot API client.
 func NewBotWithChapterPublisherAndConversations(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher, conversations StudentConversationAPI) *Bot {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	return NewBotWithChapterPublisherAndConversationsAndStaffTelegram(api, students, catalog, learning, logger, publisher, conversations, nil)
+}
+
+// NewBotWithChapterPublisherAndConversationsAndStaffTelegram adds verified curator account binding.
+func NewBotWithChapterPublisherAndConversationsAndStaffTelegram(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher, conversations StudentConversationAPI, staffTelegram StaffTelegramBotAPI) *Bot {
+	if logger == nil { logger = slog.Default() }
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
-		chapterPublisher: publisher, conversations: conversations,
+		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
 		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
@@ -420,6 +430,11 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 	if message.Chat.Type != "" && message.Chat.Type != "private" {
 		return true
 	}
+	if handled, ok := b.handleLinkedStaffUpdate(ctx, *message); !ok {
+		return false
+	} else if handled {
+		return true
+	}
 
 	trimmedText := strings.TrimSpace(message.Text)
 	if trimmedText == "" {
@@ -451,18 +466,78 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 
 	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
 	switch command {
+	case "/link":
+		b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
 	case "/start":
 		b.handleStart(ctx, message.Chat.ID, *message.From)
 	case "/chat":
 		b.handleChatCommand(ctx, message.Chat.ID, *message.From)
+	case "/link":
+		b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
 	case "/help":
-		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть каталог курсов\n/chat — написать куратору\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
+		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть каталог курсов\n/chat — написать куратору\n/link КОД — привязать Telegram к учётной записи куратора\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
 	case "/cancel":
 		b.handleCancelCommand(ctx, message.Chat.ID, *message.From)
 	default:
 		b.send(ctx, message.Chat.ID, "Пока доступны команды /start, /chat, /help и /cancel.")
 	}
 	return true
+}
+
+func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (bool, bool) {
+	if b.staffTelegram == nil || message.From == nil { return false, true }
+	account, err := b.staffTelegram.FindByTelegramID(ctx, message.From.ID)
+	if errors.Is(err, domain.ErrNotFound) { return false, true }
+	if err != nil {
+		b.logger.Error("не удалось проверить Telegram-привязку сотрудника", "telegram_user_id", message.From.ID, "error", err)
+		b.send(ctx, message.Chat.ID, "Не удалось проверить учётную запись. Повторите сообщение позже.")
+		return true, false
+	}
+	if account.AccountStatus != "active" {
+		b.send(ctx, message.Chat.ID, "Эта учётная запись сотрудника отключена. Уведомления не отправляются; обратитесь к администратору.")
+		return true, true
+	}
+	if !account.IsCurator {
+		b.send(ctx, message.Chat.ID, "У этой учётной записи больше нет активной роли куратора. Уведомления отключены; обратитесь к администратору.")
+		return true, true
+	}
+	fields := strings.Fields(strings.TrimSpace(message.Text))
+	command := ""
+	if len(fields) > 0 && strings.HasPrefix(fields[0], "/") { command = strings.ToLower(strings.SplitN(fields[0], "@", 2)[0]) }
+	if command == "/start" {
+		if err := b.staffTelegram.RestoreNotifications(ctx, account.StaffID); err != nil {
+			b.logger.Error("не удалось восстановить уведомления куратора", "staff_id", account.StaffID, "error", err)
+			b.send(ctx, message.Chat.ID, "Привязка активна, но не удалось восстановить уведомления. Повторите /start позже.")
+			return true, false
+		}
+		b.send(ctx, message.Chat.ID, "Telegram привязан к учётной записи куратора. Уведомления включены. Отвечайте ученикам в веб-панели, в разделе «Диалоги».")
+	} else {
+		b.send(ctx, message.Chat.ID, "Ваша учётная запись привязана как куратор. Просматривайте сообщения и отвечайте ученикам в веб-панели, в разделе «Диалоги».")
+	}
+	return true, true
+}
+
+func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user User, fields []string) {
+	if b.staffTelegram == nil { b.send(ctx, chatID, "Привязка Telegram сотрудника пока недоступна."); return }
+	if chatID != user.ID || len(fields) != 2 {
+		b.send(ctx, chatID, "Для привязки откройте личный чат с ботом и отправьте команду /link КОД из веб-панели.")
+		return
+	}
+	account, err := b.staffTelegram.BindTelegramAccount(ctx, user.ID, user.Username, fields[1])
+	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
+		b.send(ctx, chatID, "Код привязки недействителен или истёк. Создайте новый код в веб-панели."); return
+	}
+	if errors.Is(err, domain.ErrInvalidState) {
+		b.send(ctx, chatID, "Привязка недоступна: учётная запись отключена или у неё больше нет роли куратора."); return
+	}
+	if errors.Is(err, domain.ErrConflict) {
+		b.send(ctx, chatID, "Этот Telegram-аккаунт уже привязан к другой учётной записи."); return
+	}
+	if err != nil {
+		b.logger.Error("не удалось привязать Telegram к учётной записи", "telegram_user_id", user.ID, "error", err)
+		b.send(ctx, chatID, "Не удалось завершить привязку из-за временной ошибки. Создайте новый код позже."); return
+	}
+	b.send(ctx, chatID, "Telegram успешно привязан к учётной записи «"+account.DisplayName+"». Уведомления о новых сообщениях будут приходить сюда. Отвечайте ученикам в веб-панели.")
 }
 
 func (b *Bot) handleChatCommand(ctx context.Context, chatID int64, user User) {

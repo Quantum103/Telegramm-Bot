@@ -463,6 +463,19 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	`, actorID, action, studentID, curatorStaffID, nullableInt64(previousCuratorID)); err != nil {
 		return mapDatabaseError("записать аудит назначения куратора", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_message_deliveries delivery
+		SET delivery_status = 'pending', recipient_staff_id = $2,
+		    attempt_count = 0, next_attempt_at = now(), locked_at = NULL,
+		    last_error_code = NULL, last_error_at = NULL, updated_at = now()
+		FROM conversation_messages message
+		JOIN conversations conversation ON conversation.id = message.conversation_id
+		WHERE delivery.message_id = message.id AND conversation.student_id = $1
+		  AND conversation.status = 'active' AND delivery.channel = 'curator_telegram'
+		  AND delivery.delivery_status IN ('pending', 'retry', 'failed')
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("перенаправить незавершённые уведомления новому куратору", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать назначение куратора", err)
 	}

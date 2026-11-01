@@ -197,6 +197,7 @@ type handlers struct {
 	authoring     StaffAuthoringAPI
 	management    StaffManagementAPI
 	conversations ConversationAPI
+	staffTelegram StaffTelegramAPI
 	cookieSecure  bool
 	loginLimiter  StaffLoginRateLimiter
 }
@@ -234,6 +235,11 @@ func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversat
 	return newHandlerWithManagementAndConversations(database, logger, catalog, staffAuth, authoring, management, conversations, cookieSecure, limiter)
 }
 
+// NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegram adds the curator Telegram endpoints.
+func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegram(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, staffTelegram StaffTelegramAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
+	return newHandlerWithManagementAndConversationsAndTelegram(database, logger, catalog, staffAuth, authoring, management, conversations, staffTelegram, cookieSecure, limiter)
+}
+
 // NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter configures the production staff API.
 func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
 	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, management, cookieSecure, limiter)
@@ -244,6 +250,10 @@ func newHandlerWithManagement(database databasePinger, logger *slog.Logger, cata
 }
 
 func newHandlerWithManagementAndConversations(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
+	return newHandlerWithManagementAndConversationsAndTelegram(database, logger, catalog, staffAuth, authoring, management, conversations, nil, cookieSecure, limiter)
+}
+
+func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, staffTelegram StaffTelegramAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -252,7 +262,7 @@ func newHandlerWithManagementAndConversations(database databasePinger, logger *s
 	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, authoring: authoring, management: management, conversations: conversations, cookieSecure: cookieSecure, loginLimiter: limiter,
+		staffAuth: staffAuth, authoring: authoring, management: management, conversations: conversations, staffTelegram: staffTelegram, cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -309,6 +319,13 @@ func newHandlerWithManagementAndConversations(database databasePinger, logger *s
 			protectedConversations := h.staffCuratorMiddleware(staffConversationMux)
 			mux.Handle("/api/v1/staff/conversations", protectedConversations)
 			mux.Handle("/api/v1/staff/conversations/", protectedConversations)
+		}
+		if h.staffTelegram != nil {
+			staffTelegramMux := http.NewServeMux()
+			staffTelegramMux.HandleFunc("GET /api/v1/staff/telegram/status", h.staffTelegramStatus)
+			staffTelegramMux.HandleFunc("GET /api/v1/staff/telegram/notifications", h.staffTelegramNotifications)
+			staffTelegramMux.HandleFunc("POST /api/v1/staff/telegram/link-token", h.staffTelegramLinkToken)
+			mux.Handle("/api/v1/staff/telegram/", h.staffCuratorMiddleware(staffTelegramMux))
 		}
 	}
 	return securityHeaders(mux)

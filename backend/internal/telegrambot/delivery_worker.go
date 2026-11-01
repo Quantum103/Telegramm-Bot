@@ -5,6 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +31,8 @@ type ConversationDeliveryQueue interface {
 type DeliveryWorker struct {
 	queue  ConversationDeliveryQueue
 	api    TelegramAPI
-	logger *slog.Logger
+	logger   *slog.Logger
+	panelURL string
 }
 
 func NewDeliveryWorker(queue ConversationDeliveryQueue, api TelegramAPI, logger *slog.Logger) *DeliveryWorker {
@@ -36,6 +40,15 @@ func NewDeliveryWorker(queue ConversationDeliveryQueue, api TelegramAPI, logger 
 		logger = slog.Default()
 	}
 	return &DeliveryWorker{queue: queue, api: api, logger: logger}
+}
+
+func (w *DeliveryWorker) SetPanelURL(panelURL string) {
+	parsed, err := url.Parse(strings.TrimSpace(panelURL))
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		w.panelURL = ""
+		return
+	}
+	w.panelURL = parsed.String()
 }
 
 func (w *DeliveryWorker) Run(ctx context.Context) error {
@@ -74,8 +87,28 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 		}
 		return
 	}
-
-	err := w.api.SendMessage(ctx, delivery.RecipientChatID, delivery.BodyText)
+	if delivery.PreparationErrorCode != "" {
+		if err := w.queue.MarkDeliveryFailed(ctx, delivery.ID, delivery.PreparationErrorCode); err != nil {
+			w.logger.Error("не удалось сохранить состояние уведомления куратора", "delivery_id", delivery.ID, "staff_id", delivery.RecipientStaffID, "error", err)
+		} else {
+			w.logger.Warn("уведомление куратора не отправлено", "delivery_id", delivery.ID, "staff_id", delivery.RecipientStaffID, "error_code", delivery.PreparationErrorCode)
+		}
+		return
+	}
+	var err error
+	if delivery.Channel == "curator_telegram" {
+		panelURL := w.conversationURL(delivery.ConversationID)
+		if panelURL != "" {
+			markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{{
+				{Text: "Открыть диалог", URL: panelURL},
+			}}}
+			_, err = w.api.SendMessageWithKeyboard(ctx, delivery.RecipientChatID, formatCuratorNotification(delivery, true), markup)
+		} else {
+			err = w.api.SendMessage(ctx, delivery.RecipientChatID, formatCuratorNotification(delivery, false))
+		}
+	} else {
+		err = w.api.SendMessage(ctx, delivery.RecipientChatID, delivery.BodyText)
+	}
 	if err == nil {
 		if err := w.queue.MarkDeliverySent(ctx, delivery.ID); err != nil {
 			// Telegram мог принять сообщение до ошибки PostgreSQL. После lease возможен повтор и дубль.
@@ -108,6 +141,60 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 	if markErr := w.queue.ScheduleDeliveryRetry(ctx, delivery.ID, errorCode, retryAfter); markErr != nil {
 		w.logger.Error("не удалось запланировать повтор Telegram-доставки", "delivery_id", delivery.ID, "error", markErr)
 	}
+}
+
+func (w *DeliveryWorker) conversationURL(conversationID int64) string {
+	if w.panelURL == "" || conversationID <= 0 {
+		return ""
+	}
+	parsed, err := url.Parse(w.panelURL)
+	if err != nil {
+		return ""
+	}
+	query := parsed.Query()
+	query.Set("page", "dialogs")
+	query.Set("conversation_id", strconv.FormatInt(conversationID, 10))
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+var (
+	notificationEmailPattern = regexp.MustCompile(`(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`)
+	notificationURLPattern = regexp.MustCompile(`(?i)https?://[^\s]+`)
+	notificationPhonePattern = regexp.MustCompile(`(?:\+|00)[0-9][0-9 ()-]{7,}[0-9]`)
+	notificationTokenPattern = regexp.MustCompile(`[0-9]{5,}:[A-Za-z0-9_-]{20,}`)
+)
+
+func formatCuratorNotification(delivery domain.ConversationDelivery, hasButton bool) string {
+	name := strings.Join(strings.Fields(delivery.StudentDisplayName), " ")
+	if name == "" {
+		name = "Ученик"
+	}
+	if runes := []rune(name); len(runes) > 64 {
+		name = string(runes[:64]) + "…"
+	}
+	snippet := strings.Join(strings.Fields(delivery.BodyText), " ")
+	snippet = notificationTokenPattern.ReplaceAllString(snippet, "[токен скрыт]")
+	snippet = notificationEmailPattern.ReplaceAllString(snippet, "[email скрыт]")
+	snippet = notificationURLPattern.ReplaceAllString(snippet, "[ссылка скрыта]")
+	snippet = notificationPhonePattern.ReplaceAllString(snippet, "[номер скрыт]")
+	snippet = strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, snippet)
+	if runes := []rune(snippet); len(runes) > 160 {
+		snippet = string(runes[:160]) + "…"
+	}
+	if snippet == "" {
+		snippet = "Новое сообщение"
+	}
+	destination := "Ответьте в веб-панели: раздел «Диалоги»."
+	if hasButton {
+		destination = "Откройте переписку кнопкой ниже и ответьте ученику."
+	}
+	return "Новое сообщение от ученика: " + name + "\n\n«" + snippet + "»\n\n" + destination
 }
 
 func classifyDeliveryError(err error) (errorCode string, permanent bool, retryAfter time.Duration) {

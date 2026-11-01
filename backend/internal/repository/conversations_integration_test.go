@@ -74,6 +74,9 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	fixture := createConversationFixture(t, pool, true)
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+1000); err != nil {
+		t.Fatalf("привязать Telegram первого куратора для теста: %v", err)
+	}
 	repo := NewConversationRepository(pool)
 
 	const concurrency = 8
@@ -128,6 +131,30 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	if replay.ID != first.ID || !replay.Replayed {
 		t.Fatalf("повтор создал дубликат: first=%+v replay=%+v", first, replay)
 	}
+	var notificationCount int
+	var notificationStaffID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), max(recipient_staff_id)
+		FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, first.ID).Scan(&notificationCount, &notificationStaffID); err != nil {
+		t.Fatalf("проверить задачу уведомления: %v", err)
+	}
+	if notificationCount != 1 || notificationStaffID != fixture.curator1ID {
+		t.Fatalf("задача уведомления должна создаваться один раз для назначенного куратора: count=%d staff=%d", notificationCount, notificationStaffID)
+	}
+	deliveryRepository := NewConversationDeliveryRepository(pool)
+	notification, err := deliveryRepository.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить уведомление куратора: %v", err)
+	}
+	if notification.Channel != "curator_telegram" || notification.MessageID != first.ID ||
+		notification.RecipientStaffID != fixture.curator1ID || notification.RecipientChatID != fixture.telegramID+1000 {
+		t.Fatalf("неверный адресат уведомления: %+v", notification)
+	}
+	if err := deliveryRepository.MarkDeliverySent(ctx, notification.ID); err != nil {
+		t.Fatalf("отметить уведомление отправленным: %v", err)
+	}
 	dialogs, err := repo.ListForCurator(ctx, fixture.curator1ID)
 	if err != nil || len(dialogs) != 1 || dialogs[0].UnreadCount != 1 {
 		t.Fatalf("диалоги и непрочитанные: dialogs=%+v err=%v", dialogs, err)
@@ -153,7 +180,6 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	if deliveryStatus != "pending" || recipientChatID != fixture.telegramID {
 		t.Fatalf("неверное намерение доставки: status=%s chat_id=%d", deliveryStatus, recipientChatID)
 	}
-	deliveryRepository := NewConversationDeliveryRepository(pool)
 	delivery, err := deliveryRepository.ClaimDueDelivery(ctx, time.Minute)
 	if err != nil {
 		t.Fatalf("захватить задание Telegram outbox: %v", err)
@@ -211,8 +237,9 @@ func TestConversationWithoutAssignmentAndWrongTelegramChat(t *testing.T) {
 	defer cancel()
 	fixture := createConversationFixture(t, pool, false)
 	repo := NewConversationRepository(pool)
-	if _, err := repo.GetOrCreateForStudent(ctx, fixture.studentID); !errors.Is(err, domain.ErrInvalidState) {
-		t.Fatalf("диалог без куратора должен быть запрещён: %v", err)
+	conversation, err := repo.GetOrCreateForStudent(ctx, fixture.studentID)
+	if err != nil || conversation.AssignedCuratorStaffID != 0 {
+		t.Fatalf("диалог без куратора должен сохраняться без участника-куратора: %+v err=%v", conversation, err)
 	}
 	dialogs, err := repo.ListForCurator(ctx, fixture.curator1ID)
 	if err != nil || len(dialogs) != 0 {
@@ -223,6 +250,10 @@ func TestConversationWithoutAssignmentAndWrongTelegramChat(t *testing.T) {
 		VALUES ($1, $2)
 	`, fixture.studentID, fixture.curator1ID); err != nil {
 		t.Fatalf("назначить куратора: %v", err)
+	}
+	conversation, err = repo.GetOrCreateForStudent(ctx, fixture.studentID)
+	if err != nil || conversation.AssignedCuratorStaffID != fixture.curator1ID {
+		t.Fatalf("после назначения куратор должен получить диалог: %+v err=%v", conversation, err)
 	}
 	_, err = repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID + 1,
@@ -279,6 +310,177 @@ func TestConversationMessageAndDeliveryRollbackTogether(t *testing.T) {
 	}
 	if afterCount != beforeCount {
 		t.Fatalf("сообщение сохранилось без записи доставки: before=%d after=%d", beforeCount, afterCount)
+	}
+	// Тот же триггер отклоняет задачу уведомления ученика: само сообщение тоже должно откатиться.
+	_, err = repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887766, BodyText: "Это сообщение также должно откатиться",
+	})
+	if err == nil {
+		t.Fatal("ожидалась ошибка создания задачи уведомления ученика")
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM conversation_messages WHERE conversation_id = $1", conversation.ID).Scan(&afterCount); err != nil {
+		t.Fatalf("получить число сообщений после отката уведомления: %v", err)
+	}
+	if afterCount != beforeCount {
+		t.Fatalf("сообщение ученика сохранилось без задачи уведомления: before=%d after=%d", beforeCount, afterCount)
+	}
+}
+
+func TestCuratorNotificationClaimIsConcurrentAndLeaseRecovers(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+2000); err != nil {
+		t.Fatalf("привязать Telegram куратора: %v", err)
+	}
+	repo := NewConversationRepository(pool)
+	message, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887767, BodyText: "Проверка конкурентного захвата",
+	})
+	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	// Повтор того же update не должен создавать вторую задачу.
+	if _, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887767, BodyText: "Проверка конкурентного захвата",
+	}); err != nil { t.Fatalf("повторить update: %v", err) }
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM conversation_message_deliveries WHERE message_id = $1 AND channel = 'curator_telegram'", message.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("ожидалась одна задача после повторного update: count=%d err=%v", count, err)
+	}
+	deliveries := NewConversationDeliveryRepository(pool)
+	const workers = 8
+	var wait sync.WaitGroup
+	var mu sync.Mutex
+	claimed := 0
+	var claimedID int64
+	failures := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			item, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+			if errors.Is(err, ErrNotFound) { return }
+			if err != nil { failures <- err; return }
+			mu.Lock()
+			claimed++
+			claimedID = item.ID
+			mu.Unlock()
+		}()
+	}
+	wait.Wait()
+	close(failures)
+	for err := range failures { t.Errorf("параллельный claim: %v", err) }
+	if claimed != 1 || claimedID == 0 {
+		t.Fatalf("задачу должен захватить ровно один worker: claimed=%d id=%d", claimed, claimedID)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE conversation_message_deliveries SET locked_at = now() - interval '3 minutes' WHERE id = $1", claimedID); err != nil {
+		t.Fatalf("имитировать просроченный lease: %v", err)
+	}
+	recovered, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil { t.Fatalf("восстановить просроченную задачу: %v", err) }
+	if recovered.ID != claimedID || recovered.AttemptCount != 2 {
+		t.Fatalf("просроченная задача не была восстановлена: %+v", recovered)
+	}
+}
+
+func TestCuratorNotificationFollowsNewAssignment(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	newCuratorTelegramID := fixture.telegramID + 3000
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator2ID, newCuratorTelegramID); err != nil {
+		t.Fatalf("привязать Telegram нового куратора: %v", err)
+	}
+	repo := NewConversationRepository(pool)
+	message, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887768, BodyText: "Сообщение перед переводом",
+	})
+	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator2ID); err != nil {
+		t.Fatalf("передать ученика новому куратору: %v", err)
+	}
+	delivery, err := NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
+	if err != nil { t.Fatalf("захватить перенаправленное уведомление: %v", err) }
+	if delivery.MessageID != message.ID || delivery.RecipientStaffID != fixture.curator2ID || delivery.RecipientChatID != newCuratorTelegramID {
+		t.Fatalf("уведомление не перенаправлено текущему куратору: %+v", delivery)
+	}
+}
+
+func TestCuratorNotificationRequiresLinkedActiveCurator(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	repo := NewConversationRepository(pool)
+	message, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887769, BodyText: "Уведомление без привязки",
+	})
+	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	delivery, err := NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
+	if err != nil { t.Fatalf("захватить задачу без привязки: %v", err) }
+	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_telegram_not_linked" {
+		t.Fatalf("неверное состояние при отсутствии Telegram-привязки: %+v", delivery)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET account_status = 'inactive', telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+4000); err != nil {
+		t.Fatalf("отключить куратора с привязанным Telegram: %v", err)
+	}
+	// Новое сообщение создаёт новую задачу, claim должен увидеть отключённую учётную запись.
+	message, err = repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887770, BodyText: "Уведомление отключённому куратору",
+	})
+	if err != nil { t.Fatalf("создать второе сообщение ученика: %v", err) }
+	delivery, err = NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
+	if err != nil { t.Fatalf("захватить задачу отключённого куратора: %v", err) }
+	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_account_inactive" {
+		t.Fatalf("отключённый сотрудник не был отклонён: %+v", delivery)
+	}
+}
+
+func TestStudentMessageBeforeCuratorAssignmentIsStoredAndDeliveredAfterAssignment(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, false)
+	repo := NewConversationRepository(pool)
+
+	message, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887771, BodyText: "Сообщение до назначения куратора",
+	})
+	if err != nil {
+		t.Fatalf("сообщение ученика должно сохраниться до назначения куратора: %v", err)
+	}
+	deliveryRepo := NewConversationDeliveryRepository(pool)
+	delivery, err := deliveryRepo.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить уведомление без назначенного куратора: %v", err)
+	}
+	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_assignment_missing" {
+		t.Fatalf("ожидалась задача без адресата и с понятной ошибкой: %+v", delivery)
+	}
+	if err := deliveryRepo.MarkDeliveryFailed(ctx, delivery.ID, delivery.PreparationErrorCode); err != nil {
+		t.Fatalf("сохранить отсутствие назначенного куратора: %v", err)
+	}
+	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator1ID); err != nil {
+		t.Fatalf("назначить первого куратора: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+5000); err != nil {
+		t.Fatalf("привязать Telegram нового куратора: %v", err)
+	}
+	delivery, err = deliveryRepo.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("повторно захватить задачу после назначения: %v", err)
+	}
+	if delivery.MessageID != message.ID || delivery.RecipientStaffID != fixture.curator1ID ||
+		delivery.RecipientChatID != fixture.telegramID+5000 || delivery.PreparationErrorCode != "" {
+		t.Fatalf("задача не была восстановлена для нового куратора: %+v", delivery)
 	}
 }
 

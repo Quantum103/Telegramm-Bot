@@ -114,10 +114,7 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
     credentials: 'same-origin',
     signal,
   })
-  if (!response.ok) {
-    throw new Error(response.status === 404 ? 'Запрошенные данные не найдены.' : 'Не удалось загрузить данные с сервера.')
-  }
-  return response.json() as Promise<T>
+  return readJSONResponse<T>(response)
 }
 
 function asAPIErrorBody(value: unknown): APIErrorBody {
@@ -401,4 +398,104 @@ export async function resetStaffPassword(staffID: number): Promise<string> {
     throw new Error('Сервер вернул некорректный временный пароль.')
   }
   return body.temporary_password
+}
+
+
+export type StaffConversationSummary = {
+  id: number
+  student_id: number
+  student_display_name: string
+  status: string
+  unread_count: number
+  last_activity_at: string
+  last_message?: StaffConversationMessage
+}
+
+export type StaffConversationMessage = {
+  id: number
+  conversation_id: number
+  sender_type: 'student' | 'curator'
+  message_type: string
+  body_text?: string
+  created_at: string
+  delivery_status?: string
+  delivery_error_code?: string
+}
+
+export type StaffTelegramBindingStatus = {
+  linked: boolean
+  telegram_username?: string
+}
+
+export type StaffTelegramLinkToken = {
+  token: string
+  expires_at: string
+}
+
+export type CuratorNotification = {
+  id: number
+  message_id: number
+  conversation_id: number
+  student_display_name: string
+  delivery_status: string
+  attempt_count: number
+  last_error_code?: string
+  last_error_at?: string
+  sent_at?: string
+  created_at: string
+}
+
+type StaffConversationsResponse = { conversations: StaffConversationSummary[] }
+type StaffConversationMessagesResponse = { messages: StaffConversationMessage[] }
+type StaffTelegramNotificationsResponse = { notifications: CuratorNotification[] }
+
+export async function listStaffConversations(signal?: AbortSignal): Promise<StaffConversationSummary[]> {
+  const body = await getJSON<StaffConversationsResponse>('/api/v1/staff/conversations', signal)
+  if (!body || !Array.isArray(body.conversations)) throw new Error('Сервер вернул некорректный список диалогов.')
+  return body.conversations
+}
+
+export async function listStaffConversationMessages(conversationID: number, signal?: AbortSignal): Promise<StaffConversationMessage[]> {
+  if (!Number.isSafeInteger(conversationID) || conversationID <= 0) throw new Error('Некорректный идентификатор диалога.')
+  const body = await getJSON<StaffConversationMessagesResponse>(`/api/v1/staff/conversations/${conversationID}/messages?limit=100`, signal)
+  if (!body || !Array.isArray(body.messages)) throw new Error('Сервер вернул некорректную историю диалога.')
+  return body.messages
+}
+
+export async function sendStaffConversationMessage(conversationID: number, bodyText: string): Promise<StaffConversationMessage> {
+  if (!Number.isSafeInteger(conversationID) || conversationID <= 0 || !bodyText.trim()) throw new Error('Введите текст ответа.')
+  const response = await fetch(`/api/v1/staff/conversations/${conversationID}/messages`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: JSON.stringify({ body_text: bodyText.trim() }),
+  })
+  return readJSONResponse<StaffConversationMessage>(response)
+}
+
+export async function markStaffConversationRead(conversationID: number): Promise<void> {
+  if (!Number.isSafeInteger(conversationID) || conversationID <= 0) throw new Error('Некорректный идентификатор диалога.')
+  const response = await fetch(`/api/v1/staff/conversations/${conversationID}/read`, {
+    method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: '{}',
+  })
+  await readJSONResponse<unknown>(response)
+}
+
+export async function getStaffTelegramBindingStatus(signal?: AbortSignal): Promise<StaffTelegramBindingStatus> {
+  return getJSON<StaffTelegramBindingStatus>('/api/v1/staff/telegram/status', signal)
+}
+
+export async function createStaffTelegramLinkToken(): Promise<StaffTelegramLinkToken> {
+  const response = await fetch('/api/v1/staff/telegram/link-token', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: '{}',
+  })
+  return readJSONResponse<StaffTelegramLinkToken>(response)
+}
+
+export async function listCuratorTelegramNotifications(signal?: AbortSignal): Promise<CuratorNotification[]> {
+  const body = await getJSON<StaffTelegramNotificationsResponse>('/api/v1/staff/telegram/notifications', signal)
+  if (!body || !Array.isArray(body.notifications)) throw new Error('Сервер вернул некорректный журнал уведомлений.')
+  return body.notifications
 }

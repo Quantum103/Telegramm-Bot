@@ -45,9 +45,14 @@ type CreateStudentConversationMessageParams struct {
 
 // ConversationDelivery — задание на доставку ответа куратора в Telegram.
 type ConversationDelivery struct {
-	ID              int64
-	MessageID       int64
-	RecipientChatID int64
-	BodyText        string
-	AttemptCount    int
+	ID                   int64
+	MessageID            int64
+	Channel              string
+	RecipientChatID      int64
+	RecipientStaffID     int64
+	ConversationID       int64
+	StudentDisplayName   string
+	BodyText             string
+	AttemptCount         int
+	PreparationErrorCode string
 }

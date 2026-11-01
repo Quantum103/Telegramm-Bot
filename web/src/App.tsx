@@ -6,13 +6,15 @@ import {
 import DocxImportPage from './DocxImportPage'
 import StudentsPage from './StudentsPage'
 import StaffManagementPage from './StaffManagementPage'
+import ConversationsPage from './ConversationsPage'
+import TelegramSettingsPage from './TelegramSettingsPage'
 import PasswordChangePage from './PasswordChangePage'
 import './catalog.css'
 import './auth.css'
 
-type Page = 'overview' | 'courses' | 'lessons' | 'docx-import' | 'students' | 'staff'
+type Page = 'overview' | 'courses' | 'lessons' | 'docx-import' | 'students' | 'staff' | 'dialogs' | 'telegram'
 type AuthState = 'checking' | 'signed-out' | 'signed-in'
-type IconName = 'grid' | 'book' | 'layers' | 'file-up' | 'chevron' | 'menu' | 'x' | 'logout' | 'search' | 'refresh' | 'users' | 'staff'
+type IconName = 'grid' | 'book' | 'layers' | 'file-up' | 'chevron' | 'menu' | 'x' | 'logout' | 'search' | 'refresh' | 'users' | 'staff' | 'messages' | 'telegram'
 const iconPaths: Record<IconName, string> = {
   grid: 'M3 3h7v7H3z M14 3h7v4h-7z M14 10h7v11h-7z M3 13h7v8H3z',
   book: 'M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z M4 4.5v17 M8 6h8 M8 10h7',
@@ -24,6 +26,8 @@ const iconPaths: Record<IconName, string> = {
   refresh: 'M20 7v5h-5 M4 17v-5h5 M5.6 9a7 7 0 0 1 12-2L20 12 M4 12l2.4 5a7 7 0 0 0 12-2',
   users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
   staff: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M4 21v-2a8 8 0 0 1 16 0v2 M19 8h3 M20.5 6.5v3',
+  messages: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3H13a8.5 8.5 0 0 1 8 8v.5z M8 10h8 M8 14h5',
+  telegram: 'M21.8 3.2 18.6 20c-.2 1.2-.9 1.5-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 13.7l-4.8-1.5c-1-.3-1-1 .2-1.5L20 3.1c.9-.3 1.9.2 1.8.1z',
 }
 const navigation: { id: Page; label: string; icon: IconName }[] = [
   { id: 'overview', label: 'Обзор', icon: 'grid' },
@@ -31,11 +35,13 @@ const navigation: { id: Page; label: string; icon: IconName }[] = [
   { id: 'lessons', label: 'Уроки', icon: 'layers' },
   { id: 'docx-import', label: 'Импорт DOCX', icon: 'file-up' },
   { id: 'students', label: 'Ученики', icon: 'users' },
+  { id: 'dialogs', label: 'Диалоги', icon: 'messages' },
+  { id: 'telegram', label: 'Уведомления', icon: 'telegram' },
   { id: 'staff', label: 'Сотрудники', icon: 'staff' },
 ]
 const pageTitles: Record<Page, string> = {
   overview: 'Обзор', courses: 'Курсы', lessons: 'Уроки', 'docx-import': 'Импорт DOCX',
-  students: 'Ученики', staff: 'Сотрудники',
+  students: 'Ученики', staff: 'Сотрудники', dialogs: 'Диалоги', telegram: 'Уведомления',
 }
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -82,7 +88,14 @@ function App() {
   const [loginBusy, setLoginBusy] = useState(false)
   const [logoutBusy, setLogoutBusy] = useState(false)
   const [logoutError, setLogoutError] = useState('')
-  const [activePage, setActivePage] = useState<Page>('overview')
+  const [activePage, setActivePage] = useState<Page>(() => {
+    const page = new URLSearchParams(window.location.search).get('page')
+    return page === 'dialogs' || page === 'telegram' ? page : 'overview'
+  })
+  const [initialConversationID] = useState<number | null>(() => {
+    const value = Number(new URLSearchParams(window.location.search).get('conversation_id'))
+    return Number.isSafeInteger(value) && value > 0 ? value : null
+  })
   const [searchTerm, setSearchTerm] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [courses, setCourses] = useState<Course[]>([])
@@ -246,7 +259,19 @@ function App() {
   const learningStudentCount = dashboardStudents.filter((student) => student.in_progress_enrollments > 0).length
   const completedStudentCount = dashboardStudents.filter((student) => student.completed_enrollments > 0).length
   const isAdministrator = staff?.roles.includes('administrator') ?? false
-  const navigate = (page: Page) => { setActivePage(page); setSidebarOpen(false); setSearchTerm('') }
+  const navigate = (page: Page, conversationID?: number | null) => {
+    const url = new URL(window.location.href)
+    if (page === 'dialogs') {
+      url.searchParams.set('page', 'dialogs')
+      if (conversationID && conversationID > 0) url.searchParams.set('conversation_id', String(conversationID))
+      else if (conversationID === null) url.searchParams.delete('conversation_id')
+    } else {
+      url.searchParams.delete('page')
+      url.searchParams.delete('conversation_id')
+    }
+    window.history.replaceState({}, '', url.toString())
+    setActivePage(page); setSidebarOpen(false); setSearchTerm('')
+  }
 
   if (authState === 'checking') {
     return <main className="auth-shell"><div className="auth-loading" role="status">Проверяем сессию…</div></main>
@@ -269,7 +294,11 @@ function App() {
     <aside className={'sidebar' + (sidebarOpen ? ' sidebar--open' : '')}>
       <div className="brand"><div className="brand-mark" aria-hidden="true"><span /><span /><span /></div><div className="brand-copy"><strong>Слово</strong><span>ОБУЧАЮЩАЯ ПЛАТФОРМА</span></div><button className="icon-button sidebar-close" aria-label="Закрыть меню" onClick={() => setSidebarOpen(false)}><Icon name="x" /></button></div>
       <div className="workspace-switcher"><div className="workspace-avatar">С</div><div className="workspace-copy"><span>Рабочее пространство</span><strong>Библейская платформа</strong></div><span className="workspace-chevron"><Icon name="chevron" size={15} /></span></div>
-      <nav className="primary-nav" aria-label="Основная навигация"><p className="nav-caption">МЕНЮ</p>{navigation.filter((item) => item.id !== 'staff' || staff.roles.includes('administrator')).map((item) => <button key={item.id} className={'nav-item' + (activePage === item.id ? ' nav-item--active' : '')} aria-current={activePage === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
+      <nav className="primary-nav" aria-label="Основная навигация"><p className="nav-caption">МЕНЮ</p>{navigation.filter((item) => {
+            if (item.id === 'staff') return staff.roles.includes('administrator')
+            if (item.id === 'dialogs' || item.id === 'telegram') return staff.roles.includes('curator')
+            return true
+          }).map((item) => <button key={item.id} className={'nav-item' + (activePage === item.id ? ' nav-item--active' : '')} aria-current={activePage === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
       <div className="sidebar-spacer" />
       <div className="help-card"><strong>Работа с уроками</strong><p>Создайте черновой курс и импортируйте вопросы из DOCX.</p><button onClick={() => navigate('docx-import')}>Импортировать DOCX <Icon name="chevron" size={14} /></button></div>
       <div className="sidebar-user"><div className="avatar avatar--dark">{(staff.display_name || staff.email).trim().slice(0, 1).toLocaleUpperCase('ru-RU')}</div><div className="sidebar-user-copy"><strong>{staff.display_name || staff.email}</strong><span>{staff.email}</span></div></div>
@@ -344,6 +373,8 @@ function App() {
 
         {activePage === 'docx-import' && <DocxImportPage staff={staff} onSessionExpired={onSessionExpired} />}
         {activePage === 'students' && <StudentsPage staff={staff} onSessionExpired={onSessionExpired} />}
+        {activePage === 'dialogs' && staff.roles.includes('curator') && <ConversationsPage staff={staff} initialConversationID={initialConversationID} onSessionExpired={onSessionExpired} onSelectConversation={(id) => navigate('dialogs', id)} />}
+        {activePage === 'telegram' && staff.roles.includes('curator') && <TelegramSettingsPage staff={staff} onSessionExpired={onSessionExpired} />}
         {activePage === 'staff' && staff.roles.includes('administrator') && <StaffManagementPage staff={staff} onSessionExpired={onSessionExpired} />}
 
         <footer className="page-footer"><span>© 2026 Слово · Обучающая платформа</span><span>Вход выполнен: {staff.email}</span></footer>

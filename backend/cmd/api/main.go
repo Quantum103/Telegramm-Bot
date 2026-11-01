@@ -98,15 +98,16 @@ func run(logger *slog.Logger) error {
 		repository.NewAnswerRepository(pool),
 	)
 	conversationService := service.NewConversationService(repository.NewConversationRepository(pool))
+	staffTelegramService := service.NewStaffTelegramService(repository.NewStaffTelegramRepository(pool))
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversations(
+		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegram(
 			pool, logger, catalogService,
 			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
 			authoringService,
 			service.NewStaffManagementService(repository.NewStaffManagementRepository(pool)),
-			conversationService, loginLimiter, true,
+			conversationService, staffTelegramService, loginLimiter, true,
 		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
@@ -151,9 +152,9 @@ func run(logger *slog.Logger) error {
 			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
 		}
 		telegramAPI := telegrambot.NewHTTPClient(cfg.TelegramBotToken)
-		bot := telegrambot.NewBotWithChapterPublisherAndConversations(
+		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
 			telegramAPI, studentService, catalogService, learningService,
-			logger, chapterPublisher, conversationService,
+			logger, chapterPublisher, conversationService, staffTelegramService,
 		)
 		go func() {
 			defer close(botDone)
@@ -166,6 +167,7 @@ func run(logger *slog.Logger) error {
 		deliveryWorker := telegrambot.NewDeliveryWorker(
 			repository.NewConversationDeliveryRepository(pool), telegramAPI, logger,
 		)
+		deliveryWorker.SetPanelURL(os.Getenv("STAFF_PANEL_URL"))
 		go func() {
 			defer close(deliveryDone)
 			if err := deliveryWorker.Run(appCtx); err != nil {

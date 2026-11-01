@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +150,70 @@ func TestDeliveryWorkerRetriesUnknownTransportResult(t *testing.T) {
 	})
 	if !queue.retry || queue.failed || queue.sent || queue.errorCode != "delivery_outcome_unknown" {
 		t.Fatalf("неизвестный исход запроса не запланирован на повтор: %+v", queue)
+	}
+}
+
+
+func TestDeliveryWorkerSendsCuratorNotificationWithConversationButton(t *testing.T) {
+	var payload struct {
+		ChatID      int64  `json:"chat_id"`
+		Text        string `json:"text"`
+		ReplyMarkup struct {
+			InlineKeyboard [][]struct {
+				Text string `json:"text"`
+				URL  string `json:"url"`
+			} `json:"inline_keyboard"`
+		} `json:"reply_markup"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode sendMessage request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":92}}`))
+	}))
+	defer server.Close()
+
+	queue := &fakeConversationDeliveryQueue{}
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.SetPanelURL("https://panel.example/")
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 10, MessageID: 11, Channel: "curator_telegram", RecipientChatID: 123456,
+		RecipientStaffID: 99, ConversationID: 321, StudentDisplayName: "Мария",
+		BodyText: "Помогите с заданием", AttemptCount: 1,
+	})
+	if !queue.sent || queue.failed || queue.retry {
+		t.Fatalf("уведомление не отмечено как доставленное: %+v", queue)
+	}
+	if payload.ChatID != 123456 || !strings.Contains(payload.Text, "Мария") ||
+		!strings.Contains(payload.Text, "Помогите с заданием") {
+		t.Fatalf("неверный текст уведомления: %+v", payload)
+	}
+	if len(payload.ReplyMarkup.InlineKeyboard) != 1 || len(payload.ReplyMarkup.InlineKeyboard[0]) != 1 {
+		t.Fatalf("кнопка открытия диалога отсутствует: %+v", payload.ReplyMarkup)
+	}
+	button := payload.ReplyMarkup.InlineKeyboard[0][0]
+	if button.Text != "Открыть диалог" || button.URL != "https://panel.example/?conversation_id=321&page=dialogs" {
+		t.Fatalf("неверная ссылка на диалог: %+v", button)
+	}
+}
+
+func TestDeliveryWorkerDoesNotSendWhenCuratorIsNotLinked(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":93}}`))
+	}))
+	defer server.Close()
+	queue := &fakeConversationDeliveryQueue{}
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 12, MessageID: 13, Channel: "curator_telegram",
+		PreparationErrorCode: "curator_telegram_not_linked", AttemptCount: 1,
+	})
+	if !queue.failed || queue.errorCode != "curator_telegram_not_linked" || calls != 0 {
+		t.Fatalf("при отсутствии привязки Telegram не должен вызываться: queue=%+v calls=%d", queue, calls)
 	}
 }
 
