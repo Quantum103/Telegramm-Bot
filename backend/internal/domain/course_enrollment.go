@@ -49,6 +49,7 @@ type AnswerAttemptReview struct {
 	Decision        string    `json:"decision"`
 	Feedback        string    `json:"feedback"`
 	ReviewedAt      time.Time `json:"reviewed_at"`
+	Replayed        bool      `json:"replayed,omitempty"`
 }
 
 type ReviewAnswerAttemptParams struct {
