@@ -369,11 +369,11 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 		t.Fatalf("получить урок для AI-прохождения: %v", err)
 	}
 	aiEnrollment, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
-		StudentID: student.ID,
-		LessonID: lessonIDs[0],
-		LessonVersionID: aiLesson.LessonVersionID,
+		StudentID:          student.ID,
+		LessonID:           lessonIDs[0],
+		LessonVersionID:    aiLesson.LessonVersionID,
 		CourseEnrollmentID: nextRun.Enrollment.ID,
-		Mode: "ai",
+		Mode:               "ai",
 	})
 	if err != nil {
 		t.Fatalf("начать урок в режиме ai: %v", err)
@@ -383,19 +383,19 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 		t.Fatalf("получить вопрос AI-прохождения: %v", err)
 	}
 	aiAnswer, err := answers.Submit(ctx, AnswerSubmission{
-		StudentID: student.ID,
+		StudentID:    student.ID,
 		EnrollmentID: aiEnrollment.ID,
-		QuestionID: aiQuestionID,
-		AnswerText: "Ответ для самостоятельного прохождения",
+		QuestionID:   aiQuestionID,
+		AnswerText:   "Ответ для самостоятельного прохождения",
 	})
 	if err != nil {
 		t.Fatalf("отправить ответ в режиме ai: %v", err)
 	}
 	if _, err := curatorRepository.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: secondCuratorID,
-		AttemptID: aiAnswer.AttemptID,
-		Decision: "approved",
-		Feedback: "Не должно приниматься в режиме ai.",
+		AttemptID:      aiAnswer.AttemptID,
+		Decision:       "approved",
+		Feedback:       "Не должно приниматься в режиме ai.",
 	}); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("режим ai не должен запускать ручную проверку куратора, получено %v", err)
 	}
