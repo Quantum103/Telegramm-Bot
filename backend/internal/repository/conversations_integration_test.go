@@ -780,7 +780,7 @@ func TestConsecutiveCuratorTransfersKeepOneTaskForLastAssignee(t *testing.T) {
 	fixture := createConversationFixture(t, pool, true)
 	message, err := NewConversationRepository(pool).CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID, TelegramMessageID: 990006,
-		BodyText: "Проверка нескольких последовательных передач",
+		BodyText:           "Проверка нескольких последовательных передач",
 		FirstReminderAfter: time.Hour, SecondReminderAfter: 2 * time.Hour, EscalationAfter: 3 * time.Hour,
 	})
 	if err != nil {
