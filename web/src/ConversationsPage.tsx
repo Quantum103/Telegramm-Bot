@@ -8,10 +8,12 @@ import './communications.css'
 const messageOf = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 
 export default function ConversationsPage({
-  staff, initialConversationID, onSessionExpired, onSelectConversation,
+  staff, initialConversationID, initialDraft, onInitialDraftConsumed, onSessionExpired, onSelectConversation,
 }: {
   staff: StaffIdentity
   initialConversationID: number | null
+  initialDraft: string
+  onInitialDraftConsumed: () => void
   onSessionExpired: () => void
   onSelectConversation: (id: number | null) => void
 }) {
@@ -26,6 +28,12 @@ export default function ConversationsPage({
   const [notice, setNotice] = useState('')
   const [revision, setRevision] = useState(0)
   const [realtimeState, setRealtimeState] = useState<'connecting' | 'online' | 'reconnecting'>('connecting')
+
+  useEffect(() => {
+    if (!initialDraft.trim()) return
+    setDraft(initialDraft)
+    onInitialDraftConsumed()
+  }, [initialDraft])
 
   useEffect(() => {
     let stopped = false
