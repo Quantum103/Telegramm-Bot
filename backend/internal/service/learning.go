@@ -23,12 +23,18 @@ type AnswerStore interface {
 	ListAttemptHistory(context.Context, int64, int64, int64) ([]domain.AnswerAttempt, error)
 }
 
+type CourseRunLearningStore interface {
+	GetForStudent(context.Context, int64, int64) (domain.CourseEnrollmentProgress, error)
+	GetLessonForRun(context.Context, int64, int64, int64) (domain.Lesson, error)
+}
+
 type LearningService struct {
 	students    StudentStore
 	courses     CatalogStore
 	questions   QuestionStore
 	enrollments EnrollmentStore
-	answers     AnswerStore
+	answers          AnswerStore
+	courseEnrollments CourseRunLearningStore
 }
 
 func NewLearningService(
@@ -37,11 +43,16 @@ func NewLearningService(
 	questions QuestionStore,
 	enrollments EnrollmentStore,
 	answers AnswerStore,
+	courseRuns ...CourseRunLearningStore,
 ) *LearningService {
-	return &LearningService{
+	service := &LearningService{
 		students: students, courses: courses, questions: questions,
 		enrollments: enrollments, answers: answers,
 	}
+	if len(courseRuns) > 0 {
+		service.courseEnrollments = courseRuns[0]
+	}
+	return service
 }
 
 type NavigationState struct {
@@ -92,6 +103,64 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 			return domain.Progress{}, err
 		}
 		progress, err = s.enrollments.GetProgress(ctx, studentID, progress.Enrollment.ID)
+		if err != nil {
+			return domain.Progress{}, err
+		}
+	}
+	return progress, nil
+}
+
+
+// StartLessonForCourse начинает или восстанавливает урок только внутри ранее созданного
+// запуска курса. Режим берётся из PostgreSQL и не принимается от клиента.
+func (s *LearningService) StartLessonForCourse(
+	ctx context.Context,
+	studentID, courseEnrollmentID, courseID, lessonID int64,
+) (domain.Progress, error) {
+	if studentID <= 0 || courseEnrollmentID <= 0 || courseID <= 0 || lessonID <= 0 {
+		return domain.Progress{}, domain.ErrInvalidInput
+	}
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.Progress{}, err
+	}
+	if s.courseEnrollments == nil {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	course, err := s.courseEnrollments.GetForStudent(ctx, studentID, courseEnrollmentID)
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	if course.Enrollment.CourseID != courseID || course.Enrollment.Status != "in_progress" {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	lesson, err := s.courseEnrollments.GetLessonForRun(ctx, studentID, courseEnrollmentID, lessonID)
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	if lesson.CourseID != courseID || lesson.QuestionCount <= 0 {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	enrollment, err := s.enrollments.Start(ctx, domain.StartEnrollmentParams{
+		StudentID: studentID, LessonID: lesson.ID,
+		LessonVersionID: lesson.LessonVersionID,
+		CourseEnrollmentID: courseEnrollmentID,
+		Mode: course.Enrollment.Mode,
+	})
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	if enrollment.Status != "in_progress" {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollment.ID)
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	if progress.Enrollment.CurrentQuestionID == nil && progress.FirstQuestionID != nil {
+		if err := s.enrollments.SetCurrentQuestion(ctx, studentID, enrollment.ID, *progress.FirstQuestionID); err != nil {
+			return domain.Progress{}, err
+		}
+		progress, err = s.enrollments.GetProgress(ctx, studentID, enrollment.ID)
 		if err != nil {
 			return domain.Progress{}, err
 		}
