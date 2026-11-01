@@ -144,6 +144,14 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 		t.Fatalf("задача уведомления должна создаваться один раз для назначенного куратора: count=%d staff=%d", notificationCount, notificationStaffID)
 	}
 	deliveryRepository := NewConversationDeliveryRepository(pool)
+	// В fixture уже есть старый ответ куратора; отделяем его от проверки нового notification-канала.
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries
+		SET delivery_status = 'sent', sent_at = now()
+		WHERE channel = 'telegram' AND delivery_status = 'pending'
+	`); err != nil {
+		t.Fatalf("подготовить очередь для проверки уведомления: %v", err)
+	}
 	notification, err := deliveryRepository.ClaimDueDelivery(ctx, time.Minute)
 	if err != nil {
 		t.Fatalf("захватить уведомление куратора: %v", err)

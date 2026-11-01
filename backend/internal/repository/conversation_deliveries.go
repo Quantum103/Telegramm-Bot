@@ -57,7 +57,7 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 	err = tx.QueryRow(ctx, `
 		SELECT delivery.id, delivery.message_id, delivery.channel,
 		       COALESCE(delivery.recipient_chat_id, 0), COALESCE(delivery.recipient_staff_id, 0),
-		       message.body_text, conversation.id, student.display_name,
+		       delivery.attempt_count, message.body_text, conversation.id, student.display_name,
 		       current_assignment.curator_staff_id, staff.telegram_id, staff.account_status,
 		       COALESCE(role_state.has_curator_role, FALSE)
 		FROM conversation_message_deliveries delivery
@@ -79,7 +79,7 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 		) role_state ON TRUE
 		WHERE delivery.id = $1
 	`, deliveryID).Scan(&delivery.ID, &delivery.MessageID, &delivery.Channel,
-		&delivery.RecipientChatID, &delivery.RecipientStaffID, &delivery.BodyText, &delivery.ConversationID,
+		&delivery.RecipientChatID, &delivery.RecipientStaffID, &delivery.AttemptCount, &delivery.BodyText, &delivery.ConversationID,
 		&delivery.StudentDisplayName, &currentCuratorID, &currentTelegramID, &accountStatus, &hasCuratorRole)
 	if err != nil {
 		return domain.ConversationDelivery{}, mapDatabaseError("прочитать захваченное задание Telegram outbox", err)
