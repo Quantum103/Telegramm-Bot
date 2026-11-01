@@ -286,6 +286,13 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ученик не смог отправить новую попытку после исправления: %v", err)
 	}
+	replayAfterNewAttempt, err := curatorLearning.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		CuratorStaffID: currentCuratorID, AttemptID: lessonRun.answer.AttemptID,
+		Decision: "needs_revision", Feedback: "Добавьте пояснение к ответу.",
+	})
+	if err != nil || !replayAfterNewAttempt.Replayed || replayAfterNewAttempt.ID != revision.ID {
+		t.Fatalf("повтор старого решения после новой попытки не идемпотентен: review=%+v err=%v", replayAfterNewAttempt, err)
+	}
 	courseAnswers, err = curatorLearning.ListLessonAnswers(ctx, currentCuratorID, student.ID, run.Enrollment.ID, lessonIDs[0])
 	if err != nil || len(courseAnswers[0].Attempts) != 2 ||
 		courseAnswers[0].Attempts[0].ID != revised.AttemptID ||
