@@ -9,12 +9,10 @@ import (
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func createCourseForEnrollmentTest(t *testing.T, ctx context.Context, pool interface {
-	QueryRow(context.Context, string, ...any) interface{ Scan(...any) error }
-	Exec(context.Context, string, ...any) (interface{ RowsAffected() int64 }, error)
-}, suffix string, title string, lessonCount int) (int64, []int64, []int64) {
+func createCourseForEnrollmentTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, suffix string, title string, lessonCount int) (int64, []int64, []int64) {
 	t.Helper()
 	var courseID int64
 	if err := pool.QueryRow(ctx, `
@@ -58,10 +56,7 @@ func createCourseForEnrollmentTest(t *testing.T, ctx context.Context, pool inter
 	return courseID, lessonIDs, versionIDs
 }
 
-func createStaffForCourseTest(t *testing.T, ctx context.Context, pool interface {
-	QueryRow(context.Context, string, ...any) interface{ Scan(...any) error }
-	Exec(context.Context, string, ...any) (interface{ RowsAffected() int64 }, error)
-}, roleCode string) int64 {
+func createStaffForCourseTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, roleCode string) int64 {
 	t.Helper()
 	var staffID int64
 	email := fmt.Sprintf("%s-%d@example.test", roleCode, time.Now().UnixNano())
