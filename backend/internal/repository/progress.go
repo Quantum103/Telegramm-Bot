@@ -22,10 +22,18 @@ func (r *EnrollmentRepository) GetCurrentForStudent(ctx context.Context, student
 		WHERE student_id = $1
 		  AND status = 'in_progress'
 		  AND current_question_id IS NOT NULL
-		  AND (course_enrollment_id IS NULL OR EXISTS (
-		      SELECT 1 FROM course_enrollments ce
-		      WHERE ce.id = lesson_enrollments.course_enrollment_id
-		        AND ce.status = 'in_progress'
+		  AND (course_enrollment_id IS NULL OR (
+		      EXISTS (
+		          SELECT 1 FROM course_enrollments ce
+		          WHERE ce.id = lesson_enrollments.course_enrollment_id
+		            AND ce.status = 'in_progress'
+		      )
+		      AND EXISTS (
+		          SELECT 1 FROM course_enrollment_lessons cel
+		          WHERE cel.course_enrollment_id = lesson_enrollments.course_enrollment_id
+		            AND cel.lesson_id = lesson_enrollments.lesson_id
+		            AND cel.lesson_version_id = lesson_enrollments.lesson_version_id
+		      )
 		  ))
 		ORDER BY last_activity_at DESC NULLS LAST, updated_at DESC, id DESC
 		LIMIT 1
@@ -72,10 +80,18 @@ func (r *EnrollmentRepository) SetCurrentQuestion(ctx context.Context, studentID
 		      FROM lesson_questions q
 		      WHERE q.id = $3 AND q.lesson_version_id = e.lesson_version_id
 		  )
-		  AND (e.course_enrollment_id IS NULL OR EXISTS (
-		      SELECT 1 FROM course_enrollments ce
-		      WHERE ce.id = e.course_enrollment_id
-		        AND ce.status = 'in_progress'
+		  AND (e.course_enrollment_id IS NULL OR (
+		      EXISTS (
+		          SELECT 1 FROM course_enrollments ce
+		          WHERE ce.id = e.course_enrollment_id
+		            AND ce.status = 'in_progress'
+		      )
+		      AND EXISTS (
+		          SELECT 1 FROM course_enrollment_lessons cel
+		          WHERE cel.course_enrollment_id = e.course_enrollment_id
+		            AND cel.lesson_id = e.lesson_id
+		            AND cel.lesson_version_id = e.lesson_version_id
+		      )
 		  ))
 	`, studentID, enrollmentID, questionID)
 	if err != nil {
@@ -217,9 +233,18 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	if enrollment.CourseEnrollmentID != nil {
 		var courseStatus string
 		if err := tx.QueryRow(ctx, `
-			SELECT status FROM course_enrollments
-			WHERE id = $1 AND student_id = $2 FOR UPDATE
-		`, *enrollment.CourseEnrollmentID, studentID).Scan(&courseStatus); err != nil {
+			SELECT ce.status
+			FROM course_enrollments ce
+			WHERE ce.id = $1
+			  AND ce.student_id = $2
+			  AND EXISTS (
+			      SELECT 1 FROM course_enrollment_lessons cel
+			      WHERE cel.course_enrollment_id = ce.id
+			        AND cel.lesson_id = $3
+			        AND cel.lesson_version_id = $4
+			  )
+			FOR UPDATE
+		`, *enrollment.CourseEnrollmentID, studentID, enrollment.LessonID, enrollment.LessonVersionID).Scan(&courseStatus); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Enrollment{}, ErrNotFound
 			}
