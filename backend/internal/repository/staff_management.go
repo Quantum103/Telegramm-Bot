@@ -579,6 +579,13 @@ func (r *StaffManagementRepository) EndStudentCuratorAssignment(ctx context.Cont
 	if !actorIsAdmin {
 		return ErrInvalidState
 	}
+	var lockedStudentID int64
+	if err := tx.QueryRow(ctx, "SELECT id FROM students WHERE id = $1 FOR UPDATE", studentID).Scan(&lockedStudentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return mapDatabaseError("заблокировать ученика при завершении назначения куратора", err)
+	}
 	var curatorStaffID int64
 	if err := tx.QueryRow(ctx, `
 		SELECT curator_staff_id FROM student_curator_assignments
