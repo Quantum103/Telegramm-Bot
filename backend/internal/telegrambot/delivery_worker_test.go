@@ -153,11 +153,10 @@ func TestDeliveryWorkerRetriesUnknownTransportResult(t *testing.T) {
 	}
 }
 
-
 func TestCuratorNotificationMasksCommonSensitiveFragments(t *testing.T) {
 	message := domain.ConversationDelivery{
 		StudentDisplayName: "  Мария   Иванова  ",
-		BodyText: "Свяжитесь mail@example.com, сайт https://example.com/private, телефон +7 (999) 123-45-67, токен 123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi. Остальной текст нужен.",
+		BodyText:           "Свяжитесь mail@example.com, сайт https://example.com/private, телефон +7 (999) 123-45-67, токен 123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi. Остальной текст нужен.",
 	}
 	got := formatCuratorNotification(message, false)
 	for _, secret := range []string{"mail@example.com", "https://example.com/private", "+7 (999) 123-45-67", "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"} {

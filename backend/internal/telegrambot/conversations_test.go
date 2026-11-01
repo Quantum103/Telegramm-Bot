@@ -45,7 +45,6 @@ func (f *fakeStudentConversationService) IsStudentChatMode(_ context.Context, st
 	return f.chatMode[studentID], nil
 }
 
-
 type fakeStaffTelegramAPIForBinding struct {
 	account       domain.StaffTelegramAccount
 	findErr       error

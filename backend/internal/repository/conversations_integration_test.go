@@ -476,7 +476,6 @@ func TestCuratorNotificationRequiresLinkedActiveCurator(t *testing.T) {
 	}
 }
 
-
 func TestProcessingCuratorNotificationIsRedirectedDuringTransfer(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
