@@ -167,7 +167,7 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 			adminCourse.Code, learning.listCourseCalls, learning.lastStaffID, adminCourse.Body.String())
 	}
 
-	adminAnswers := makeRequest([]string{"administrator"}, http.MethodGet,
+	adminAnswers := makeAdminRequest( http.MethodGet,
 		"/api/v1/staff/course-learning/students/88/courses/77/lessons/99/answers", "", false)
 	if adminAnswers.Code != http.StatusOK || learning.listAnswerCalls != 1 ||
 		learning.lastStudentID != 88 || learning.lastRunID != 77 || learning.lastLessonID != 99 {
@@ -175,7 +175,7 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 			adminAnswers.Code, learning.listAnswerCalls, adminAnswers.Body.String())
 	}
 
-	adminReview := makeRequest([]string{"administrator"}, http.MethodPost,
+	adminReview := makeAdminRequest( http.MethodPost,
 		"/api/v1/staff/course-learning/attempts/2/review", `{"decision":"approved","feedback":"Принято."}`, true)
 	if adminReview.Code != http.StatusForbidden || learning.reviewCalls != 0 {
 		t.Fatalf("administrator must not submit curator review: status=%d calls=%d body=%s",
