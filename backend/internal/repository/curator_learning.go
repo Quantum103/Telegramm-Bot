@@ -570,7 +570,6 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	return review, nil
 }
 
-
 // completeCuratorLessonAndCourseTx completes a lesson only after every question
 // has a saved answer and its latest attempt has been approved. Both transitions
 // share the transaction that records the curator's decision.
