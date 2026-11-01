@@ -67,10 +67,14 @@ type CuratorAnswer struct {
 	SubmittedAnswer   string     `json:"submitted_answer"`
 	SelectedOptionIDs []int64    `json:"selected_option_ids"`
 	ProcessingStatus  string     `json:"processing_status"`
-	ReviewDecision    *string    `json:"review_decision,omitempty"`
-	ReviewFeedback    *string    `json:"review_feedback,omitempty"`
-	ReviewedAt        *time.Time `json:"reviewed_at,omitempty"`
-	SubmittedAt       *time.Time `json:"submitted_at,omitempty"`
+	ReviewDecision       *string         `json:"review_decision,omitempty"`
+	ReviewFeedback       *string         `json:"review_feedback,omitempty"`
+	ReviewStatus         string          `json:"review_status"`
+	ReviewedAt           *time.Time      `json:"reviewed_at,omitempty"`
+	ReviewerStaffID      *int64          `json:"reviewer_staff_id,omitempty"`
+	ReviewerDisplayName  *string         `json:"reviewer_display_name,omitempty"`
+	SubmittedAt          *time.Time      `json:"submitted_at,omitempty"`
+	Attempts             []AnswerAttempt `json:"attempts"`
 }
 
 type CuratorCourseAccess struct {
