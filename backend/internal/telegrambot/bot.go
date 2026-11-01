@@ -517,11 +517,17 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 	}
 	if command == "/start" {
 		if err := b.staffTelegram.RestoreNotifications(ctx, account.StaffID); err != nil {
-			b.logger.Error("не удалось восстановить уведомления куратора", "staff_id", account.StaffID, "error", err)
+			b.logger.Error("не удалось восстановить уведомления сотрудника", "staff_id", account.StaffID, "error", err)
 			b.send(ctx, message.Chat.ID, "Привязка активна, но не удалось восстановить уведомления. Повторите /start позже.")
 			return true, false
 		}
-		b.send(ctx, message.Chat.ID, "Telegram привязан к учётной записи куратора. Уведомления включены. Отвечайте ученикам в веб-панели, в разделе «Диалоги».")
+		if account.IsAdministrator {
+			b.send(ctx, message.Chat.ID, "Telegram привязан к учётной записи администратора. Уведомления об эскалациях включены. Проверяйте переданные диалоги в веб-панели, в разделе «Диалоги».")
+		} else {
+			b.send(ctx, message.Chat.ID, "Telegram привязан к учётной записи куратора. Уведомления включены. Отвечайте ученикам в веб-панели, в разделе «Диалоги».")
+		}
+	} else if account.IsAdministrator {
+		b.send(ctx, message.Chat.ID, "Ваша учётная запись привязана как администратор. Уведомления об эскалациях будут приходить сюда; проверяйте диалоги в веб-панели.")
 	} else {
 		b.send(ctx, message.Chat.ID, "Ваша учётная запись привязана как куратор. Просматривайте сообщения и отвечайте ученикам в веб-панели, в разделе «Диалоги».")
 	}
@@ -543,7 +549,7 @@ func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user Use
 		return
 	}
 	if errors.Is(err, domain.ErrInvalidState) {
-		b.send(ctx, chatID, "Привязка недоступна: учётная запись отключена или у неё больше нет роли куратора.")
+		b.send(ctx, chatID, "Привязка недоступна: учётная запись отключена или у неё больше нет активной роли куратора либо администратора.")
 		return
 	}
 	if errors.Is(err, domain.ErrConflict) {

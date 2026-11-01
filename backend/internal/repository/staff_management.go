@@ -514,7 +514,9 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 		WHERE conversation.student_id = $1 AND conversation.status = 'active'
 		  AND conversation.assigned_curator_staff_id = $2
 		  AND wait.curator_staff_id = $2 AND wait.responded_at IS NULL
-		ON CONFLICT DO UPDATE SET recipient_staff_id = EXCLUDED.recipient_staff_id,
+		ON CONFLICT (response_wait_id, response_wait_generation, channel)
+		WHERE response_wait_id IS NOT NULL
+		DO UPDATE SET recipient_staff_id = EXCLUDED.recipient_staff_id,
 			delivery_status = 'pending', attempt_count = 0, next_attempt_at = now(),
 			locked_at = NULL, last_error_code = NULL, last_error_at = NULL, updated_at = now()
 	`, studentID, curatorStaffID); err != nil {

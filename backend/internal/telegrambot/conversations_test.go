@@ -52,6 +52,7 @@ type fakeStaffTelegramAPIForBinding struct {
 	boundTelegram int64
 	boundToken    string
 	restoreCalls  int
+	bindErr       error
 }
 
 func (f *fakeStaffTelegramAPIForBinding) FindByTelegramID(context.Context, int64) (domain.StaffTelegramAccount, error) {
@@ -62,6 +63,9 @@ func (f *fakeStaffTelegramAPIForBinding) BindTelegramAccount(_ context.Context, 
 	f.bindCalls++
 	f.boundTelegram = telegramID
 	f.boundToken = token
+	if f.bindErr != nil {
+		return domain.StaffTelegramAccount{}, f.bindErr
+	}
 	return f.account, nil
 }
 
@@ -117,8 +121,77 @@ func TestLinkedAdministratorCanRunStartWithoutCuratorRole(t *testing.T) {
 	if staffTelegram.restoreCalls != 1 {
 		t.Fatalf("для администратора должен вызываться restore уведомлений, calls=%d", staffTelegram.restoreCalls)
 	}
-	if len(api.messages) == 0 || !strings.Contains(api.messages[len(api.messages)-1].text, "администратор") {
-		t.Fatalf("бот не распознал администратора: %+v", api.messages)
+	if len(api.messages) == 0 ||
+		!strings.Contains(api.messages[len(api.messages)-1].text, "администратора") ||
+		!strings.Contains(api.messages[len(api.messages)-1].text, "эскалац") {
+		t.Fatalf("бот не сообщил администратору о привязке и эскалациях: %+v", api.messages)
+	}
+}
+
+func TestLinkedCuratorStartKeepsCuratorMessage(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	staffTelegram := &fakeStaffTelegramAPIForBinding{account: domain.StaffTelegramAccount{
+		StaffID: 79, DisplayName: "Куратор", AccountStatus: "active", IsCurator: true,
+	}}
+	bot := NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		api, students, catalog, learning, nil, nil, nil, staffTelegram,
+	)
+	user := User{ID: 987656, Username: "curator"}
+	if !bot.handleUpdate(context.Background(), Update{UpdateID: 3, Message: &Message{
+		MessageID: 7, From: &user, Chat: Chat{ID: user.ID, Type: "private"}, Text: "/start",
+	}}) {
+		t.Fatal("кураторский /start не обработан")
+	}
+	if staffTelegram.restoreCalls != 1 || len(api.messages) == 0 ||
+		!strings.Contains(api.messages[len(api.messages)-1].text, "учётной записи куратора") {
+		t.Fatalf("куратор должен получить своё сообщение и восстановление уведомлений: calls=%d messages=%+v", staffTelegram.restoreCalls, api.messages)
+	}
+}
+
+func TestLinkedAdministratorCanBindTelegramWithOneTimeCode(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	staffTelegram := &fakeStaffTelegramAPIForBinding{account: domain.StaffTelegramAccount{
+		StaffID: 80, DisplayName: "Администратор", AccountStatus: "active", IsAdministrator: true,
+	}}
+	bot := NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		api, students, catalog, learning, nil, nil, nil, staffTelegram,
+	)
+	user := User{ID: 987657, Username: "administrator"}
+	if !bot.handleUpdate(context.Background(), Update{UpdateID: 4, Message: &Message{
+		MessageID: 8, From: &user, Chat: Chat{ID: user.ID, Type: "private"},
+		Text: "/link administrator-one-time-code",
+	}}) {
+		t.Fatal("администраторский /link не обработан")
+	}
+	if staffTelegram.bindCalls != 1 || staffTelegram.boundTelegram != user.ID ||
+		staffTelegram.boundToken != "administrator-one-time-code" ||
+		len(api.messages) == 0 || !strings.Contains(api.messages[len(api.messages)-1].text, "успешно привязан") {
+		t.Fatalf("администратор не смог безопасно пройти одноразовую привязку: bind=%+v messages=%+v", staffTelegram, api.messages)
+	}
+}
+
+func TestLinkedStaffWithoutActiveRoleCannotBindTelegram(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	staffTelegram := &fakeStaffTelegramAPIForBinding{bindErr: domain.ErrInvalidState}
+	bot := NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		api, students, catalog, learning, nil, nil, nil, staffTelegram,
+	)
+	user := User{ID: 987658, Username: "inactive"}
+	if !bot.handleUpdate(context.Background(), Update{UpdateID: 5, Message: &Message{
+		MessageID: 9, From: &user, Chat: Chat{ID: user.ID, Type: "private"},
+		Text: "/link invalid-role-code",
+	}}) {
+		t.Fatal("ошибка роли не должна блокировать Telegram update")
+	}
+	if staffTelegram.bindCalls != 1 || len(api.messages) == 0 ||
+		!strings.Contains(api.messages[len(api.messages)-1].text, "активной роли") {
+		t.Fatalf("привязка без активной роли не была отклонена: %+v", api.messages)
 	}
 }
 

@@ -87,6 +87,18 @@ func TestQuietHoursMoveDeliveryAcrossMidnight(t *testing.T) {
 			timezone: "Europe/Amsterdam", start: "22:00", end: "07:00",
 			want: time.Date(2026, 3, 29, 5, 0, 0, 0, time.UTC),
 		},
+		{
+			name:     "DST autumn transition uses standard-time offset at end",
+			now:      time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC),
+			timezone: "Europe/Amsterdam", start: "22:00", end: "08:00",
+			want: time.Date(2026, 10, 25, 7, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "Tokyo local timezone",
+			now:      time.Date(2026, 11, 1, 14, 0, 0, 0, time.UTC),
+			timezone: "Asia/Tokyo", start: "22:00", end: "08:00",
+			want: time.Date(2026, 11, 1, 23, 0, 0, 0, time.UTC),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -140,8 +152,8 @@ func TestDeliveryWorkerDefersImmediateNotificationDuringQuietHours(t *testing.T)
 	now := time.Date(2026, 11, 1, 1, 30, 0, 0, time.UTC)
 	queue := &fakeConversationDeliveryQueue{authorization: domain.DeliveryAuthorization{
 		Current: true, NotificationsEnabled: true, RemindersEnabled: true,
-		QuietHoursEnabled: false, Timezone: "UTC",
-		QuietStart: "00:00", QuietEnd: "00:01",
+		QuietHoursEnabled: true, Timezone: "Europe/Amsterdam",
+		QuietStart: "22:00", QuietEnd: "08:00",
 	}, authorizationSet: true}
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -155,7 +167,7 @@ func TestDeliveryWorkerDefersImmediateNotificationDuringQuietHours(t *testing.T)
 	worker.deliver(context.Background(), domain.ConversationDelivery{
 		ID: 37, Channel: "curator_telegram", RecipientChatID: 123456, RecipientStaffID: 44,
 		ConversationID: 55, AttemptCount: 1, NotificationsEnabled: true,
-		QuietHoursEnabled: true, Timezone: "Europe/Amsterdam", QuietStart: "22:00", QuietEnd: "08:00",
+		QuietHoursEnabled: false, Timezone: "UTC", QuietStart: "00:00", QuietEnd: "00:01",
 	})
 	want := time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)
 	if calls != 0 || !queue.deferredUntil.Equal(want) {
@@ -163,30 +175,59 @@ func TestDeliveryWorkerDefersImmediateNotificationDuringQuietHours(t *testing.T)
 	}
 }
 
-func TestDeliveryWorkerDefersReminderUntilEndOfQuietHours(t *testing.T) {
+func TestDeliveryWorkerDefersBothReminderTypesUntilEndOfQuietHours(t *testing.T) {
+	for _, channel := range []string{"curator_reminder_4h", "curator_reminder_24h"} {
+		t.Run(channel, func(t *testing.T) {
+			now := time.Date(2026, 11, 1, 1, 30, 0, 0, time.UTC)
+			queue := &fakeConversationDeliveryQueue{authorization: domain.DeliveryAuthorization{
+				Current: true, NotificationsEnabled: true, RemindersEnabled: true,
+				QuietHoursEnabled: true, Timezone: "Europe/Amsterdam",
+				QuietStart: "22:00", QuietEnd: "08:00",
+			}, authorizationSet: true}
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":102}}`))
+			}))
+			defer server.Close()
+			worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+			worker.now = func() time.Time { return now }
+			worker.deliver(context.Background(), domain.ConversationDelivery{
+				ID: 32, Channel: channel, RecipientChatID: 1234, RecipientStaffID: 44,
+				ConversationID: 55, AttemptCount: 1, ReminderEnabled: true, NotificationsEnabled: true,
+				QuietHoursEnabled: false, Timezone: "UTC", QuietStart: "00:00", QuietEnd: "00:01",
+			})
+			want := time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)
+			if calls != 0 || !queue.deferredUntil.Equal(want) {
+				t.Fatalf("quiet-hours reminder should be deferred using fresh settings: calls=%d until=%s want=%s", calls, queue.deferredUntil, want)
+			}
+		})
+	}
+}
+
+func TestDeliveryWorkerDoesNotDeferWhenFreshQuietHoursAreDisabled(t *testing.T) {
 	now := time.Date(2026, 11, 1, 1, 30, 0, 0, time.UTC)
 	queue := &fakeConversationDeliveryQueue{authorization: domain.DeliveryAuthorization{
 		Current: true, NotificationsEnabled: true, RemindersEnabled: true,
-		QuietHoursEnabled: false, Timezone: "UTC",
-		QuietStart: "00:00", QuietEnd: "00:01",
+		QuietHoursEnabled: false, Timezone: "UTC", QuietStart: "22:00", QuietEnd: "08:00",
 	}, authorizationSet: true}
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":102}}`))
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":106}}`))
 	}))
 	defer server.Close()
 	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
 	worker.now = func() time.Time { return now }
 	worker.deliver(context.Background(), domain.ConversationDelivery{
-		ID: 32, Channel: "curator_reminder_4h", RecipientChatID: 1234, RecipientStaffID: 44,
-		ConversationID: 55, AttemptCount: 1, ReminderEnabled: true, NotificationsEnabled: true,
+		ID: 38, Channel: "curator_telegram", RecipientChatID: 123456, RecipientStaffID: 44,
+		ConversationID: 55, AttemptCount: 1, NotificationsEnabled: true,
 		QuietHoursEnabled: true, Timezone: "Europe/Amsterdam", QuietStart: "22:00", QuietEnd: "08:00",
 	})
-	want := time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)
-	if calls != 0 || !queue.deferredUntil.Equal(want) {
-		t.Fatalf("quiet-hours reminder should be deferred: calls=%d until=%s want=%s", calls, queue.deferredUntil, want)
+	if calls != 1 || !queue.sent || !queue.deferredUntil.IsZero() {
+		t.Fatalf("freshly disabled quiet hours must not defer: calls=%d queue=%+v", calls, queue)
 	}
 }
 
