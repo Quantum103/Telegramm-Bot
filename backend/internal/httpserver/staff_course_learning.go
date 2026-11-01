@@ -95,7 +95,11 @@ func (h handlers) staffCuratorReviewAttempt(w http.ResponseWriter, r *http.Reque
 		h.writeAPIError(w, err, "проверить ответ ученика")
 		return
 	}
-	writeJSON(w, http.StatusCreated, review)
+	status := http.StatusCreated
+	if review.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, review)
 }
 
 func (h handlers) staffCourseLearningMiddleware(next http.Handler) http.Handler {
