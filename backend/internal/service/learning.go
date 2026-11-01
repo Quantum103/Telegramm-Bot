@@ -271,6 +271,9 @@ func (s *LearningService) OpenQuestion(ctx context.Context, studentID, enrollmen
 	if err != nil {
 		return NavigationState{}, err
 	}
+	if err := s.ensureCourseRunActive(ctx, enrollment); err != nil {
+		return NavigationState{}, err
+	}
 	questions, err := s.questions.ListQuestionsForVersion(ctx, enrollment.LessonVersionID)
 	if err != nil {
 		return NavigationState{}, err
@@ -385,6 +388,9 @@ func (s *LearningService) SubmitAnswer(ctx context.Context, params domain.Answer
 	if err != nil {
 		return SubmissionResult{}, err
 	}
+	if err := s.ensureCourseRunActive(ctx, enrollment); err != nil {
+		return SubmissionResult{}, err
+	}
 	questions, err := s.questions.ListQuestionsForVersion(ctx, enrollment.LessonVersionID)
 	if err != nil {
 		return SubmissionResult{}, err
@@ -458,7 +464,31 @@ func (s *LearningService) CompleteLesson(ctx context.Context, studentID, enrollm
 	if err := s.requireActiveStudent(ctx, studentID); err != nil {
 		return domain.Enrollment{}, err
 	}
+	enrollment, err := s.enrollments.GetByIDForStudent(ctx, studentID, enrollmentID)
+	if err != nil {
+		return domain.Enrollment{}, err
+	}
+	if err := s.ensureCourseRunActive(ctx, enrollment); err != nil {
+		return domain.Enrollment{}, err
+	}
 	return s.enrollments.Complete(ctx, studentID, enrollmentID)
+}
+
+func (s *LearningService) ensureCourseRunActive(ctx context.Context, enrollment domain.Enrollment) error {
+	if enrollment.CourseEnrollmentID == nil {
+		return nil
+	}
+	if s.courseEnrollments == nil {
+		return domain.ErrInvalidState
+	}
+	course, err := s.courseEnrollments.GetForStudent(ctx, enrollment.StudentID, *enrollment.CourseEnrollmentID)
+	if err != nil {
+		return err
+	}
+	if course.Enrollment.Status != "in_progress" || course.Enrollment.Mode != enrollment.Mode {
+		return domain.ErrInvalidState
+	}
+	return nil
 }
 
 func (s *LearningService) requireActiveStudent(ctx context.Context, studentID int64) error {
