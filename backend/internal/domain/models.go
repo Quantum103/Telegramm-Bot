@@ -124,11 +124,12 @@ type LessonDetail struct {
 }
 
 type Enrollment struct {
-	ID                int64      `json:"id"`
-	StudentID         int64      `json:"student_id"`
-	LessonID          int64      `json:"lesson_id"`
-	LessonVersionID   int64      `json:"lesson_version_id"`
-	Mode              string     `json:"mode"`
+	ID                 int64      `json:"id"`
+	StudentID          int64      `json:"student_id"`
+	LessonID           int64      `json:"lesson_id"`
+	LessonVersionID    int64      `json:"lesson_version_id"`
+	CourseEnrollmentID *int64     `json:"course_enrollment_id,omitempty"`
+	Mode               string     `json:"mode"`
 	CurrentQuestionID *int64     `json:"current_question_id,omitempty"`
 	Status            string     `json:"status"`
 	StartedAt         *time.Time `json:"started_at,omitempty"`
@@ -139,10 +140,11 @@ type Enrollment struct {
 }
 
 type StartEnrollmentParams struct {
-	StudentID       int64
-	LessonID        int64
-	LessonVersionID int64
-	Mode            string
+	StudentID          int64
+	LessonID           int64
+	LessonVersionID    int64
+	CourseEnrollmentID int64
+	Mode               string
 }
 
 type Progress struct {
