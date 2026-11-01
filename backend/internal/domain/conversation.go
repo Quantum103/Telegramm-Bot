@@ -48,29 +48,29 @@ type CreateStudentConversationMessageParams struct {
 
 // ConversationDelivery — задание на доставку ответа куратора в Telegram.
 type ConversationDelivery struct {
-	ID                     int64
-	MessageID              int64
-	Channel                string
-	RecipientChatID        int64
-	RecipientStaffID       int64
-	ConversationID         int64
-	StudentDisplayName      string
+	ID                       int64
+	MessageID                int64
+	Channel                  string
+	RecipientChatID          int64
+	RecipientStaffID         int64
+	ConversationID           int64
+	StudentDisplayName       string
 	MessageSenderDisplayName string
-	BodyText                string
-	AttemptCount           int
-	PreparationErrorCode   string
-	CuratorDisplayName     string
-	WaitedFor              time.Duration
-	LastCuratorStatus      string
-	ReminderEnabled        bool
-	NotificationsEnabled   bool
-	QuietHoursEnabled      bool
-	Timezone               string
-	QuietStart             string
-	QuietEnd               string
-	DeliveryKind           string
-	ResponseWaitID         int64
-	ResponseWaitGeneration int
+	BodyText                 string
+	AttemptCount             int
+	PreparationErrorCode     string
+	CuratorDisplayName       string
+	WaitedFor                time.Duration
+	LastCuratorStatus        string
+	ReminderEnabled          bool
+	NotificationsEnabled     bool
+	QuietHoursEnabled        bool
+	Timezone                 string
+	QuietStart               string
+	QuietEnd                 string
+	DeliveryKind             string
+	ResponseWaitID           int64
+	ResponseWaitGeneration   int
 }
 
 type DeliveryAuthorization struct {

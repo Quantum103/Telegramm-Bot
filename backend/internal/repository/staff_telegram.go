@@ -538,6 +538,7 @@ func (r *StaffTelegramRepository) ListNotifications(ctx context.Context, staffID
 	}
 	return result, nil
 }
+
 var _ interface {
 	GetBindingStatus(context.Context, int64) (domain.StaffTelegramBindingStatus, error)
 	IssueLinkToken(context.Context, int64, [32]byte, time.Time) error
