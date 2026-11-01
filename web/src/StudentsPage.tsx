@@ -41,6 +41,50 @@ function latestAttempt(answer: CuratorAnswer): AnswerAttempt | undefined {
   return answer.attempts[0]
 }
 
+function attemptLabel(attempt: AnswerAttempt, mode: string, attemptCount: number): string {
+  if (mode === 'ai') {
+    if (attempt.processing_status === 'pending') return 'Проверяется ИИ'
+    if (attempt.processing_status === 'failed') return 'Ошибка проверки'
+    const results: Record<string, string> = {
+      correct: 'Верно',
+      partial: 'Частично верно',
+      incorrect: 'Неверно',
+      ambiguous: 'Неоднозначный ответ',
+      uncertain: 'Не удалось оценить',
+    }
+    return attempt.evaluation_result ? `Оценка ИИ: ${results[attempt.evaluation_result] ?? attempt.evaluation_result}` : 'Проверено ИИ'
+  }
+  if (attempt.review_decision === 'approved') return 'Принят'
+  if (attempt.review_decision === 'needs_revision') return 'Требуется исправление'
+  if (attempt.processing_status === 'failed') return 'Ошибка обработки'
+  return attemptCount > 1 ? 'Повторно отправлен' : 'Ожидает проверки'
+}
+
+function attemptClass(attempt: AnswerAttempt, mode: string): string {
+  if (mode === 'ai') {
+    if (attempt.processing_status === 'failed') return 'revision'
+    if (attempt.evaluation_result === 'correct') return 'approved'
+    if (attempt.evaluation_result === 'incorrect') return 'revision'
+    if (attempt.evaluation_result === 'partial' || attempt.evaluation_result === 'ambiguous') return 'pending'
+    return 'neutral'
+  }
+  return reviewClass(attempt.review_decision, attempt.processing_status === 'pending' ? 'pending_review' : '')
+}
+
+function answerLabel(answer: CuratorAnswer, mode: string): string {
+  const latest = latestAttempt(answer)
+  return mode === 'ai' && latest
+    ? attemptLabel(latest, mode, answer.attempts.length)
+    : reviewLabel(answer.review_decision, answer.review_status, answer.attempts.length)
+}
+
+function answerClass(answer: CuratorAnswer, mode: string): string {
+  const latest = latestAttempt(answer)
+  return mode === 'ai' && latest
+    ? attemptClass(latest, mode)
+    : reviewClass(answer.review_decision, answer.review_status)
+}
+
 export default function StudentsPage({
   staff, onSessionExpired, onOpenConversation,
 }: {
@@ -423,8 +467,8 @@ export default function StudentsPage({
                 const isBusy = answer.attempt_id !== undefined && busyAttemptID === answer.attempt_id
                 return <article className="curator-answer-card" key={answer.question_id}>
                   <div className="curator-answer-heading"><strong>Вопрос {answer.question_number}</strong>
-                    <span className={'review-state review-state--' + reviewClass(answer.review_decision, answer.review_status)}>
-                      {reviewLabel(answer.review_decision, answer.review_status, answer.attempts.length)}
+                    <span className={'review-state review-state--' + answerClass(answer, activeCourse.mode)}>
+                      {answerLabel(answer, activeCourse.mode)}
                     </span>
                   </div>
                   <p className="curator-question-text">{answer.prompt}</p>
@@ -436,12 +480,15 @@ export default function StudentsPage({
                   {answer.review_feedback && <p className="curator-review-feedback"><strong>Комментарий куратора:</strong> {answer.review_feedback}
                     {answer.reviewer_display_name ? ` · ${answer.reviewer_display_name}` : ''}{answer.reviewed_at ? ` · ${dateText(answer.reviewed_at)}` : ''}
                   </p>}
+                  {activeCourse.mode === 'ai' && latest?.explanation && <p className="curator-review-feedback"><strong>Пояснение ИИ:</strong> {latest.explanation}</p>}
+                  {activeCourse.mode === 'ai' && Boolean(latest?.missing_points.length) &&
+                    <p className="answer-processing-note">Не раскрыты темы: {latest?.missing_points.join(' · ')}</p>}
                   {answer.attempts.length > 0 && <details className="answer-history">
                     <summary>История попыток · {answer.attempts.length}</summary>
                     <div className="answer-history-list">{answer.attempts.map((attempt) => {
                       const attemptOptions = options.filter((option) => attempt.selected_option_ids.includes(option.id))
                       return <div className="answer-history-item" key={attempt.id}>
-                        <div><strong>Попытка #{attempt.id}</strong><span className={'review-state review-state--' + reviewClass(attempt.review_decision, attempt.review_decision ? attempt.review_decision : attempt.processing_status === 'pending' ? 'pending_review' : '')}>{reviewLabel(attempt.review_decision, attempt.processing_status === 'pending' && !attempt.review_decision ? 'pending_review' : attempt.processing_status, answer.attempts.length)}</span></div>
+                        <div><strong>Попытка #{attempt.id}</strong><span className={'review-state review-state--' + attemptClass(attempt, activeCourse.mode)}>{attemptLabel(attempt, activeCourse.mode, answer.attempts.length)}</span></div>
                         <p>{attempt.submitted_answer || (attemptOptions.length ? attemptOptions.map((option) => option.text).join('\n') : 'Текстовый ответ не сохранён.')}</p>
                         <time>Отправлен: {dateText(attempt.created_at)}</time>
                         {attempt.reviewed_at && <time>Проверен: {dateText(attempt.reviewed_at)}{attempt.reviewer_display_name ? ` · ${attempt.reviewer_display_name}` : ''}</time>}
