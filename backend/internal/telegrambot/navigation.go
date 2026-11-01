@@ -12,7 +12,20 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
+func (b *Bot) leaveStudentInteraction(ctx context.Context, studentID int64) {
+	if b.conversations == nil {
+		return
+	}
+	if err := b.conversations.SetStudentChatMode(ctx, studentID, false); err != nil {
+		b.logger.Warn("не удалось выключить режим общения при переходе к курсам", "student_id", studentID, "error", err)
+	}
+	if err := b.conversations.SetStudentLessonMode(ctx, studentID, false); err != nil {
+		b.logger.Warn("не удалось выключить режим прохождения при переходе к курсам", "student_id", studentID, "error", err)
+	}
+}
+
 func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int64, heading string) {
+	b.leaveStudentInteraction(ctx, studentID)
 	courses, err := b.catalog.ListCourses(ctx)
 	if err != nil {
 		b.logger.Error("не удалось загрузить каталог курсов", "student_id", studentID, "error", err)
@@ -37,6 +50,7 @@ func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int6
 }
 
 func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, messageID int64) {
+	b.leaveStudentInteraction(ctx, studentID)
 	course, err := b.catalog.GetCourse(ctx, courseID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
@@ -151,6 +165,13 @@ func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, en
 }
 
 func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64) {
+	if b.conversations != nil {
+		if err := b.conversations.SetStudentLessonMode(ctx, studentID, true); err != nil {
+			b.logger.Error("не удалось сохранить экран прохождения урока", "student_id", studentID, "error", err)
+			b.render(ctx, chatID, messageID, "Не удалось сохранить состояние прохождения. Попробуйте открыть урок ещё раз.", keyboard(button("К курсам", "courses")))
+			return
+		}
+	}
 	key := answerStateKey{studentID: studentID, enrollmentID: state.Progress.Enrollment.ID, questionID: state.Question.ID}
 	b.renderQuestionMode(ctx, chatID, studentID, messageID, state, lesson, contextCourseID, b.isChoiceEditing(key))
 }
@@ -349,7 +370,7 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 				return
 			}
 		}
-		b.showCourses(ctx, chatID, student.ID, messageID, "Режим общения выключен. Выберите курс или напишите куратору.")
+		b.showCourses(ctx, chatID, student.ID, messageID, "Режим общения выключен. Выберите курс, чтобы продолжить обучение.")
 	case callback.Data == "courses":
 		b.showCourses(ctx, chatID, student.ID, messageID, "Выберите курс для изучения Библии.")
 	case len(parts) == 2 && parts[0] == "course":
@@ -425,6 +446,11 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 		b.logger.Warn("не удалось завершить урок", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось завершить урок. Попробуйте ещё раз.", keyboard(button("Повторить завершение", fmt.Sprintf("lesson:finish:%d", enrollmentID)), button("К курсам", "courses")))
 		return
+	}
+	if b.conversations != nil {
+		if err := b.conversations.SetStudentLessonMode(ctx, studentID, false); err != nil {
+			b.logger.Warn("не удалось закрыть режим прохождения после завершения урока", "student_id", studentID, "error", err)
+		}
 	}
 	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
 	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Написать куратору", "chat:start")}}

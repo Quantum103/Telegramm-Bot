@@ -19,7 +19,7 @@ const deliveryState: Record<string, string> = {
 }
 
 const deliveryError: Record<string, string> = {
-  curator_telegram_not_linked: 'Telegram ещё не привязан к учётной записи.',
+  curator_telegram_not_linked: 'У назначенного куратора не привязан Telegram. Сообщение сохранено в диалоге; после привязки Telegram в разделе «Уведомления» доставка будет восстановлена автоматически.',
   telegram_recipient_unavailable: 'Бот не может написать в этот чат. Откройте бота и отправьте /start; проверьте, не заблокирован ли он.',
   curator_account_inactive: 'Учётная запись сотрудника отключена.',
   curator_role_inactive: 'У сотрудника больше нет активной роли куратора.',

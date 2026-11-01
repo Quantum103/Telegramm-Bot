@@ -1029,7 +1029,7 @@ func TestConversationDeliveryFailureIsVisibleToCurator(t *testing.T) {
 	}
 }
 
-func TestCuratorReplyDeliveryWaitsUntilStudentCompletesLesson(t *testing.T) {
+func TestCuratorReplyDeliveryWaitsUntilStudentLeavesLessonScreen(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -1072,26 +1072,30 @@ func TestCuratorReplyDeliveryWaitsUntilStudentCompletesLesson(t *testing.T) {
 	`, fixture.studentID, lessonID, versionID, questionID); err != nil {
 		t.Fatalf("начать прохождение: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO student_chat_modes (student_id, lesson_mode_enabled)
+		VALUES ($1, TRUE)
+		ON CONFLICT (student_id) DO UPDATE SET lesson_mode_enabled = TRUE, chat_mode_enabled = FALSE
+	`, fixture.studentID); err != nil {
+		t.Fatalf("включить экран прохождения урока: %v", err)
+	}
 
 	deliveries := NewConversationDeliveryRepository(pool)
 	deferred, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
 	if err != nil {
 		t.Fatalf("захватить ответ куратора: %v", err)
 	}
-	if deferred.Channel != "telegram" || !deferred.StudentLessonInProgress {
-		t.Fatalf("активный урок должен блокировать отправку ответа: %+v", deferred)
+	if deferred.Channel != "telegram" || !deferred.StudentInLessonMode {
+		t.Fatalf("экран вопроса должен блокировать отправку ответа: %+v", deferred)
 	}
 	if err := deliveries.DeferDelivery(ctx, deferred.ID, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("отложить ответ до завершения урока: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE lesson_enrollments SET status = 'completed', completed_at = now(), updated_at = now()
-		WHERE student_id = $1 AND id = (
-			SELECT id FROM lesson_enrollments
-			WHERE student_id = $1 AND lesson_id = $2 ORDER BY id DESC LIMIT 1
-		)
-	`, fixture.studentID, lessonID); err != nil {
-		t.Fatalf("завершить урок: %v", err)
+		UPDATE student_chat_modes SET lesson_mode_enabled = FALSE, updated_at = now()
+		WHERE student_id = $1
+	`, fixture.studentID); err != nil {
+		t.Fatalf("выйти с экрана прохождения: %v", err)
 	}
 	if _, err := pool.Exec(ctx, "UPDATE conversation_message_deliveries SET next_attempt_at = now() WHERE id = $1", deferred.ID); err != nil {
 		t.Fatalf("сделать отложенный ответ доступным: %v", err)
@@ -1100,7 +1104,7 @@ func TestCuratorReplyDeliveryWaitsUntilStudentCompletesLesson(t *testing.T) {
 	if err != nil {
 		t.Fatalf("повторно захватить ответ после завершения урока: %v", err)
 	}
-	if ready.ID != deferred.ID || ready.Channel != "telegram" || ready.StudentLessonInProgress {
-		t.Fatalf("после завершения урока ответ должен стать доступным для отправки: %+v", ready)
+	if ready.ID != deferred.ID || ready.Channel != "telegram" || ready.StudentInLessonMode {
+		t.Fatalf("после выхода с экрана ответ должен стать доступным при незавершённом уроке: %+v", ready)
 	}
 }

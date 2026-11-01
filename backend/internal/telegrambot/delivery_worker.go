@@ -106,9 +106,9 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 	if w.now != nil {
 		now = w.now
 	}
-	if delivery.Channel == "telegram" && delivery.StudentLessonInProgress {
+	if delivery.Channel == "telegram" && delivery.StudentInLessonMode {
 		if err := w.queue.DeferDelivery(ctx, delivery.ID, now().Add(time.Minute)); err != nil {
-			w.logger.Error("не удалось отложить ответ куратора до завершения урока", "delivery_id", delivery.ID, "error", err)
+			w.logger.Error("не удалось отложить ответ куратора до выхода ученика с экрана урока", "delivery_id", delivery.ID, "error", err)
 		}
 		return
 	}

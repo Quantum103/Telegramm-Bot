@@ -280,6 +280,7 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 type StudentConversationAPI interface {
 	CreateStudentMessage(context.Context, domain.CreateStudentConversationMessageParams) (domain.ConversationMessage, error)
 	SetStudentChatMode(context.Context, int64, bool) error
+	SetStudentLessonMode(context.Context, int64, bool) error
 	IsStudentChatMode(context.Context, int64) (bool, error)
 }
 
@@ -586,8 +587,8 @@ func (b *Bot) startStudentChat(ctx context.Context, chatID, messageID int64, stu
 		return
 	}
 	b.render(ctx, chatID, messageID,
-		"Режим общения с куратором включён.\n\nНапишите сообщение следующим сообщением. Оно будет сохранено и появится в диалоге вашего назначенного куратора.\n\nЧтобы вернуться к ответам на уроки, нажмите «Отмена» или отправьте /cancel.",
-		keyboard(button("Отмена", "chat:cancel")))
+		"Режим общения с куратором включён.\n\nНапишите сообщение следующим сообщением. Оно будет сохранено и появится в диалоге вашего назначенного куратора.\n\nЧтобы вернуться к прохождению курсов, нажмите кнопку ниже или отправьте /cancel.",
+		keyboard(button("Вернуться к прохождению курсов", "chat:cancel")))
 }
 
 func (b *Bot) handleCancelCommand(ctx context.Context, chatID int64, user User) {

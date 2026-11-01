@@ -64,9 +64,9 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 		       COALESCE(delivery.recipient_chat_id, 0), COALESCE(delivery.recipient_staff_id, 0),
 		       delivery.attempt_count, COALESCE(message.body_text, ''), conversation.id, student.display_name,
 		       EXISTS (
-		           SELECT 1 FROM lesson_enrollments enrollment
-		           WHERE enrollment.student_id = conversation.student_id
-		             AND enrollment.status = 'in_progress'
+		           SELECT 1 FROM student_chat_modes screen_mode
+		           WHERE screen_mode.student_id = conversation.student_id
+		             AND screen_mode.lesson_mode_enabled = TRUE
 		       ),
 		       COALESCE((
 		           SELECT sender_staff.display_name
@@ -126,7 +126,7 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 	`, deliveryID).Scan(
 		&delivery.ID, &delivery.MessageID, &delivery.Channel,
 		&delivery.RecipientChatID, &delivery.RecipientStaffID, &delivery.AttemptCount,
-		&delivery.BodyText, &delivery.ConversationID, &delivery.StudentDisplayName, &delivery.StudentLessonInProgress, &delivery.MessageSenderDisplayName,
+		&delivery.BodyText, &delivery.ConversationID, &delivery.StudentDisplayName, &delivery.StudentInLessonMode, &delivery.MessageSenderDisplayName,
 		&currentCuratorID, &currentTelegramID, &accountStatus, &hasCuratorRole, &delivery.CuratorDisplayName,
 		&adminStaffID, &adminTelegramID,
 		&waitID, &waitGeneration, &waitMessageID, &waitRespondedAt, &waitOpenedAt, &waitValid,

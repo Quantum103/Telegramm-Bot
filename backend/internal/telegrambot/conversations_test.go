@@ -10,8 +10,9 @@ import (
 )
 
 type fakeStudentConversationService struct {
-	chatMode  map[int64]bool
-	messages  []domain.CreateStudentConversationMessageParams
+	chatMode   map[int64]bool
+	lessonMode map[int64]bool
+	messages   []domain.CreateStudentConversationMessageParams
 	createErr error
 	setErr    error
 	isModeErr error
@@ -19,7 +20,7 @@ type fakeStudentConversationService struct {
 }
 
 func newFakeStudentConversationService() *fakeStudentConversationService {
-	return &fakeStudentConversationService{chatMode: make(map[int64]bool)}
+	return &fakeStudentConversationService{chatMode: make(map[int64]bool), lessonMode: make(map[int64]bool)}
 }
 
 func (f *fakeStudentConversationService) CreateStudentMessage(_ context.Context, params domain.CreateStudentConversationMessageParams) (domain.ConversationMessage, error) {
@@ -35,6 +36,20 @@ func (f *fakeStudentConversationService) SetStudentChatMode(_ context.Context, s
 		return f.setErr
 	}
 	f.chatMode[studentID] = enabled
+	if enabled {
+		f.lessonMode[studentID] = false
+	}
+	return nil
+}
+
+func (f *fakeStudentConversationService) SetStudentLessonMode(_ context.Context, studentID int64, enabled bool) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.lessonMode[studentID] = enabled
+	if enabled {
+		f.chatMode[studentID] = false
+	}
 	return nil
 }
 
@@ -318,5 +333,58 @@ func TestTemporaryConversationSaveErrorDoesNotAdvanceUpdate(t *testing.T) {
 	}
 	if len(conversations.messages) != 0 {
 		t.Fatal("сообщение не должно считаться сохранённым")
+	}
+}
+
+func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	conversations := newFakeStudentConversationService()
+	bot := NewBotWithChapterPublisherAndConversations(api, students, catalog, learning, nil, nil, conversations)
+	user := testUser()
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	student := students.byID[user.ID]
+	messageID := api.messages[0].messageID
+
+	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
+	if !conversations.lessonMode[student.ID] {
+		t.Fatal("экран вопроса должен включать режим прохождения урока")
+	}
+
+	bot.handleCallback(context.Background(), testCallback("chat:start", user, messageID))
+	last := lastEdit(t, api)
+	if !conversations.chatMode[student.ID] || conversations.lessonMode[student.ID] {
+		t.Fatalf("при переходе в чат режим урока должен выключаться: chat=%v lesson=%v",
+			conversations.chatMode[student.ID], conversations.lessonMode[student.ID])
+	}
+	foundReturnButton := false
+	for _, row := range last.markup.InlineKeyboard {
+		for _, item := range row {
+			if item.CallbackData == "chat:cancel" && item.Text == "Вернуться к прохождению курсов" {
+				foundReturnButton = true
+			}
+		}
+	}
+	if !foundReturnButton {
+		t.Fatalf("на экране чата должна быть кнопка возврата к прохождению курсов: %+v", last.markup)
+	}
+
+	bot.handleCallback(context.Background(), testCallback("chat:cancel", user, messageID))
+	if conversations.chatMode[student.ID] || conversations.lessonMode[student.ID] {
+		t.Fatalf("возврат из чата должен закрыть оба режима: chat=%v lesson=%v",
+			conversations.chatMode[student.ID], conversations.lessonMode[student.ID])
+	}
+	if !strings.Contains(lastEdit(t, api).text, "Выберите курс") {
+		t.Fatalf("после возврата должен открыться каталог курсов: %q", lastEdit(t, api).text)
+	}
+
+	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
+	if !conversations.lessonMode[student.ID] {
+		t.Fatal("повторное открытие урока должно снова включать режим прохождения")
+	}
+	bot.handleCallback(context.Background(), testCallback("courses", user, messageID))
+	if conversations.lessonMode[student.ID] {
+		t.Fatal("переход к курсам должен выключать режим прохождения даже при незавершённом enrollment")
 	}
 }

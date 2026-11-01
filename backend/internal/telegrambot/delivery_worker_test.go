@@ -585,7 +585,7 @@ func TestDeliveryWorkerIdentifiesCuratorAsMessageSender(t *testing.T) {
 	}
 }
 
-func TestDeliveryWorkerDefersCuratorReplyUntilLessonIsCompleted(t *testing.T) {
+func TestDeliveryWorkerDefersCuratorReplyUntilStudentLeavesLessonScreen(t *testing.T) {
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	queue := &fakeConversationDeliveryQueue{}
 	calls := 0
@@ -600,7 +600,7 @@ func TestDeliveryWorkerDefersCuratorReplyUntilLessonIsCompleted(t *testing.T) {
 
 	worker.deliver(context.Background(), domain.ConversationDelivery{
 		ID: 21, MessageID: 22, Channel: "telegram", RecipientChatID: 123456,
-		BodyText: "Ответ куратора", StudentLessonInProgress: true, AttemptCount: 1,
+		BodyText: "Ответ куратора", StudentInLessonMode: true, AttemptCount: 1,
 	})
 	if calls != 0 || queue.sent || !queue.deferredUntil.Equal(now.Add(time.Minute)) {
 		t.Fatalf("ответ нельзя отправлять во время урока: calls=%d sent=%v deferred=%s", calls, queue.sent, queue.deferredUntil)
@@ -609,9 +609,9 @@ func TestDeliveryWorkerDefersCuratorReplyUntilLessonIsCompleted(t *testing.T) {
 	queue.deferredUntil = time.Time{}
 	worker.deliver(context.Background(), domain.ConversationDelivery{
 		ID: 21, MessageID: 22, Channel: "telegram", RecipientChatID: 123456,
-		BodyText: "Ответ куратора", StudentLessonInProgress: false, AttemptCount: 1,
+		BodyText: "Ответ куратора", StudentInLessonMode: false, AttemptCount: 1,
 	})
 	if calls != 1 || !queue.sent {
-		t.Fatalf("после завершения урока ответ должен быть доставлен: calls=%d queue=%+v", calls, queue)
+		t.Fatalf("после выхода с экрана урока ответ должен быть доставлен: calls=%d queue=%+v", calls, queue)
 	}
 }
