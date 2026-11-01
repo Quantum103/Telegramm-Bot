@@ -10,6 +10,6 @@ var (
 	ErrNoPreviousQuestion = errors.New("предыдущего вопроса нет")
 	ErrNoNextQuestion     = errors.New("следующего вопроса нет")
 	ErrActiveCourse       = errors.New("у ученика уже есть незавершённый курс")
-	ErrNoCurator           = errors.New("для прохождения курса не назначен активный куратор")
-	ErrLegacyProgress      = errors.New("найдено старое незавершённое прохождение, которое нельзя однозначно связать с курсом")
+	ErrNoCurator          = errors.New("для прохождения курса не назначен активный куратор")
+	ErrLegacyProgress     = errors.New("найдено старое незавершённое прохождение, которое нельзя однозначно связать с курсом")
 )
