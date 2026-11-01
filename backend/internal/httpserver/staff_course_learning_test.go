@@ -228,7 +228,6 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	}
 }
 
-
 func TestStaffCourseLearningReviewQueueUsesAuthenticatedReadRole(t *testing.T) {
 	queueItem := domain.CuratorReviewQueueItem{
 		StudentID: 88, StudentName: "Ученик",

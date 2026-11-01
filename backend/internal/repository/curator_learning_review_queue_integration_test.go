@@ -69,13 +69,21 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 
 	courses := NewCourseEnrollmentRepository(pool)
 	runA, err := courses.Start(ctx, studentA.ID, courseOneID, "curator")
-	if err != nil { t.Fatalf("начать курс ученика A: %v", err) }
+	if err != nil {
+		t.Fatalf("начать курс ученика A: %v", err)
+	}
 	runB, err := courses.Start(ctx, studentB.ID, courseOneID, "curator")
-	if err != nil { t.Fatalf("начать курс ученика B: %v", err) }
+	if err != nil {
+		t.Fatalf("начать курс ученика B: %v", err)
+	}
 	runC, err := courses.Start(ctx, studentC.ID, courseTwoID, "curator")
-	if err != nil { t.Fatalf("начать курс ученика C: %v", err) }
+	if err != nil {
+		t.Fatalf("начать курс ученика C: %v", err)
+	}
 	runAI, err := courses.Start(ctx, studentAI.ID, courseOneID, "ai")
-	if err != nil { t.Fatalf("начать AI-курс: %v", err) }
+	if err != nil {
+		t.Fatalf("начать AI-курс: %v", err)
+	}
 
 	lessonA := startCuratorTestLesson(t, ctx, pool, studentA.ID, runA, lessonIDs[0], "Ответ A1")
 	var questionTwoID, questionThreeID int64
@@ -99,7 +107,7 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 	}
 
 	lessonB := startCuratorTestLesson(t, ctx, pool, studentB.ID, runB, lessonIDs[0], "Первоначальный ответ B")
-	baseTime := time.Now().UTC().Add(-24 * time.Hour)
+	baseTime := time.Now().UTC().Truncate(time.Microsecond).Add(-24 * time.Hour)
 	setCuratorQueueAttemptTime(t, ctx, pool, lessonB.answer.AttemptID, baseTime.Add(-time.Minute))
 	if _, err := NewCuratorLearningRepository(pool).ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: secondCuratorID, AttemptID: lessonB.answer.AttemptID,
@@ -132,7 +140,9 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 
 	queueRepo := NewCuratorLearningRepository(pool)
 	firstQueue, err := queueRepo.ListReviewQueue(ctx, firstCuratorID)
-	if err != nil { t.Fatalf("получить очередь первого куратора: %v", err) }
+	if err != nil {
+		t.Fatalf("получить очередь первого куратора: %v", err)
+	}
 	if len(firstQueue) != 2 {
 		t.Fatalf("первый куратор должен видеть две задачи, по одной на урок A и C: %+v", firstQueue)
 	}
@@ -205,7 +215,9 @@ func TestCuratorReviewQueueEmptyCorrectionResubmissionAndCompletion(t *testing.T
 		t.Fatalf("назначить куратора: %v", err)
 	}
 	run, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, courseID, "curator")
-	if err != nil { t.Fatalf("начать курс: %v", err) }
+	if err != nil {
+		t.Fatalf("начать курс: %v", err)
+	}
 	queueRepo := NewCuratorLearningRepository(pool)
 
 	empty, err := queueRepo.ListReviewQueue(ctx, curatorID)

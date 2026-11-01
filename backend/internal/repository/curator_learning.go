@@ -88,12 +88,6 @@ func (r *CuratorLearningRepository) ListReviewQueue(
 		JOIN staff_accounts assigned_curator
 		  ON assigned_curator.id = assignment.curator_staff_id
 		 AND assigned_curator.account_status = 'active'
-		JOIN staff_role_assignments assigned_curator_role
-		  ON assigned_curator_role.staff_id = assigned_curator.id
-		 AND assigned_curator_role.revoked_at IS NULL
-		JOIN staff_roles assigned_curator_role_definition
-		  ON assigned_curator_role_definition.id = assigned_curator_role.role_id
-		 AND assigned_curator_role_definition.role_code = 'curator'
 		JOIN course_enrollment_lessons cel
 		  ON cel.course_enrollment_id = ce.id
 		JOIN lesson_versions lesson_version
@@ -118,6 +112,15 @@ func (r *CuratorLearningRepository) ListReviewQueue(
 		WHERE actor.id = $1
 		  AND actor.account_status = 'active'
 		  AND lesson.status = 'in_progress'
+		  AND EXISTS (
+		      SELECT 1
+		      FROM staff_role_assignments assigned_curator_role
+		      JOIN staff_roles assigned_curator_role_definition
+		        ON assigned_curator_role_definition.id = assigned_curator_role.role_id
+		      WHERE assigned_curator_role.staff_id = assigned_curator.id
+		        AND assigned_curator_role.revoked_at IS NULL
+		        AND assigned_curator_role_definition.role_code = 'curator'
+		  )
 		  AND (
 		      EXISTS (
 		          SELECT 1
