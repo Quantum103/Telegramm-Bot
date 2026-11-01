@@ -49,6 +49,17 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"evaluation_result",
 				"uncertain",
 			}
+		case strings.HasPrefix(filepath.Base(upPath), "000012_"):
+			required = []string{
+				"CREATE TABLE course_enrollments",
+				"CREATE TABLE course_enrollment_lessons",
+				"CREATE TABLE answer_attempt_reviews",
+				"course_enrollments_one_active_uq",
+				"prevent_course_enrollment_mode_change",
+				"validate_course_lesson_enrollment",
+				"student_curator_assignments",
+				"lesson_enrollments",
+			}
 		}
 		for _, item := range required {
 			if !strings.Contains(string(content), item) {
