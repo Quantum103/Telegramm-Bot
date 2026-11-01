@@ -15,7 +15,7 @@ func (r *EnrollmentRepository) GetCurrentForStudent(ctx context.Context, student
 		return Enrollment{}, ErrInvalidInput
 	}
 	enrollment, err := scanEnrollment(r.pool.QueryRow(ctx, `
-		SELECT id, student_id, lesson_id, lesson_version_id, mode,
+		SELECT id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
 		       current_question_id, status, started_at, completed_at,
 		       last_activity_at, created_at, updated_at
 		FROM lesson_enrollments
@@ -39,7 +39,7 @@ func (r *EnrollmentRepository) GetByIDForStudent(ctx context.Context, studentID,
 		return Enrollment{}, ErrInvalidInput
 	}
 	enrollment, err := scanEnrollment(r.pool.QueryRow(ctx, `
-		SELECT id, student_id, lesson_id, lesson_version_id, mode,
+		SELECT id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
 		       current_question_id, status, started_at, completed_at,
 		       last_activity_at, created_at, updated_at
 		FROM lesson_enrollments
@@ -90,11 +90,11 @@ func (r *EnrollmentRepository) GetProgress(ctx context.Context, studentID, enrol
 	}
 
 	var progress domain.Progress
-	var currentID, firstID, previousID, nextID pgtype.Int8
+	var courseEnrollmentID, currentID, firstID, previousID, nextID pgtype.Int8
 	var startedAt, completedAt, lastActivityAt pgtype.Timestamptz
 	err := r.pool.QueryRow(ctx, `
 		SELECT
-			e.id, e.student_id, e.lesson_id, e.lesson_version_id, e.mode,
+			e.id, e.student_id, e.lesson_id, e.lesson_version_id, e.course_enrollment_id, e.mode,
 			e.current_question_id, e.status, e.started_at, e.completed_at,
 			e.last_activity_at, e.created_at, e.updated_at,
 			count(q.id)::INTEGER AS total_questions,
@@ -136,7 +136,7 @@ func (r *EnrollmentRepository) GetProgress(ctx context.Context, studentID, enrol
 	`, studentID, enrollmentID).Scan(
 		&progress.Enrollment.ID, &progress.Enrollment.StudentID,
 		&progress.Enrollment.LessonID, &progress.Enrollment.LessonVersionID,
-		&progress.Enrollment.Mode, &currentID, &progress.Enrollment.Status,
+		&courseEnrollmentID, &progress.Enrollment.Mode, &currentID, &progress.Enrollment.Status,
 		&startedAt, &completedAt, &lastActivityAt, &progress.Enrollment.CreatedAt,
 		&progress.Enrollment.UpdatedAt, &progress.TotalQuestions, &progress.AnsweredQuestions,
 		&firstID, &previousID, &nextID,
@@ -147,6 +147,7 @@ func (r *EnrollmentRepository) GetProgress(ctx context.Context, studentID, enrol
 		}
 		return domain.Progress{}, mapDatabaseError("получить прогресс прохождения", err)
 	}
+	setNullableInt64(&progress.Enrollment.CourseEnrollmentID, courseEnrollmentID)
 	setNullableInt64(&progress.Enrollment.CurrentQuestionID, currentID)
 	setNullableInt64(&progress.FirstQuestionID, firstID)
 	setNullableInt64(&progress.PreviousQuestionID, previousID)
@@ -181,7 +182,7 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	enrollment, err := scanEnrollment(tx.QueryRow(ctx, `
-		SELECT id, student_id, lesson_id, lesson_version_id, mode,
+		SELECT id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
 		       current_question_id, status, started_at, completed_at,
 		       last_activity_at, created_at, updated_at
 		FROM lesson_enrollments
@@ -219,6 +220,29 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	if totalQuestions == 0 || answeredQuestions != totalQuestions {
 		return Enrollment{}, ErrInvalidState
 	}
+	if enrollment.Mode == "curator" {
+		var unapprovedQuestions int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*)::INTEGER
+			FROM lesson_questions q
+			LEFT JOIN LATERAL (
+				SELECT aa.id
+				FROM answer_attempts aa
+				WHERE aa.enrollment_id = $1 AND aa.question_id = q.id
+				ORDER BY aa.created_at DESC, aa.id DESC
+				LIMIT 1
+			) latest ON TRUE
+			LEFT JOIN answer_attempt_reviews review
+			  ON review.answer_attempt_id = latest.id
+			WHERE q.lesson_version_id = $2
+			  AND (latest.id IS NULL OR review.decision IS DISTINCT FROM 'approved')
+		`, enrollmentID, enrollment.LessonVersionID).Scan(&unapprovedQuestions); err != nil {
+			return Enrollment{}, mapDatabaseError("проверить решения куратора перед завершением урока", err)
+		}
+		if unapprovedQuestions > 0 {
+			return Enrollment{}, ErrInvalidState
+		}
+	}
 
 	enrollment, err = scanEnrollment(tx.QueryRow(ctx, `
 		UPDATE lesson_enrollments
@@ -232,6 +256,31 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	`, enrollmentID))
 	if err != nil {
 		return Enrollment{}, mapDatabaseError("отметить завершение урока", err)
+	}
+	if enrollment.CourseEnrollmentID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE course_enrollments ce
+			SET status = 'completed', completed_at = now(), updated_at = now()
+			WHERE ce.id = $1
+			  AND ce.student_id = $2
+			  AND ce.status = 'in_progress'
+			  AND EXISTS (
+			      SELECT 1 FROM course_enrollment_lessons cel
+			      WHERE cel.course_enrollment_id = ce.id
+			  )
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM course_enrollment_lessons cel
+			      LEFT JOIN lesson_enrollments lesson
+			        ON lesson.course_enrollment_id = cel.course_enrollment_id
+			       AND lesson.lesson_id = cel.lesson_id
+			       AND lesson.lesson_version_id = cel.lesson_version_id
+			      WHERE cel.course_enrollment_id = ce.id
+			        AND (lesson.id IS NULL OR lesson.status <> 'completed')
+			  )
+		`, *enrollment.CourseEnrollmentID, studentID); err != nil {
+			return Enrollment{}, mapDatabaseError("зафиксировать завершение курса", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Enrollment{}, mapDatabaseError("зафиксировать завершение урока", err)
