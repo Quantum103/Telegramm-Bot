@@ -12,18 +12,18 @@ import (
 )
 
 type curatorTestLessonRun struct {
-	run         domain.CourseEnrollmentProgress
-	lesson      domain.Lesson
-	enrollment  domain.Enrollment
-	questionID  int64
-	answer      domain.SavedAnswer
+	run        domain.CourseEnrollmentProgress
+	lesson     domain.Lesson
+	enrollment domain.Enrollment
+	questionID int64
+	answer     domain.SavedAnswer
 }
 
 func createCuratorTestStudent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, label string) domain.Student {
 	t.Helper()
 	telegramID := time.Now().UnixNano()
 	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
-		TelegramID: telegramID,
+		TelegramID:  telegramID,
 		DisplayName: fmt.Sprintf("%s-%d", label, telegramID),
 	})
 	if err != nil {
@@ -49,9 +49,9 @@ func startCuratorTestLesson(
 	}
 	enrollment, err := NewEnrollmentRepository(pool).Start(ctx, domain.StartEnrollmentParams{
 		StudentID: studentID, LessonID: lesson.ID,
-		LessonVersionID: lesson.LessonVersionID,
+		LessonVersionID:    lesson.LessonVersionID,
 		CourseEnrollmentID: run.Enrollment.ID,
-		Mode: run.Enrollment.Mode,
+		Mode:               run.Enrollment.Mode,
 	})
 	if err != nil {
 		t.Fatalf("начать урок курса: %v", err)
