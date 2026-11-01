@@ -21,17 +21,17 @@ type CreatedStaffAccount struct {
 
 // StudentActiveCourse — краткая проекция текущего незавершённого запуска курса.
 type StudentActiveCourse struct {
-	CourseEnrollmentID int64  `json:"course_enrollment_id"`
-	CourseID           int64  `json:"course_id"`
-	CourseTitle        string `json:"course_title"`
-	Mode               string `json:"mode"`
-	Status             string `json:"status"`
-	TotalLessons       int    `json:"total_lessons"`
-	CompletedLessons     int `json:"completed_lessons"`
-	SubmittedAnswers     int `json:"submitted_answers"`
-	PendingReviews       int `json:"pending_reviews"`
-	NeedsRevision        int `json:"needs_revision"`
-	NeedsRevisionAnswers int `json:"needs_revision_answers"`
+	CourseEnrollmentID   int64  `json:"course_enrollment_id"`
+	CourseID             int64  `json:"course_id"`
+	CourseTitle          string `json:"course_title"`
+	Mode                 string `json:"mode"`
+	Status               string `json:"status"`
+	TotalLessons         int    `json:"total_lessons"`
+	CompletedLessons     int    `json:"completed_lessons"`
+	SubmittedAnswers     int    `json:"submitted_answers"`
+	PendingReviews       int    `json:"pending_reviews"`
+	NeedsRevision        int    `json:"needs_revision"`
+	NeedsRevisionAnswers int    `json:"needs_revision_answers"`
 }
 
 // AdminStudent содержит список учеников, активный курс и сводку прогресса без текстов ответов.

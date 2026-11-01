@@ -29,17 +29,17 @@ type CourseEnrollmentProgress struct {
 
 // CourseEnrollmentLesson содержит состояние обязательного урока в конкретном запуске курса.
 type CourseEnrollmentLesson struct {
-	LessonID          int64  `json:"lesson_id"`
-	LessonVersionID   int64  `json:"lesson_version_id"`
-	Position          int    `json:"position"`
-	Title             string `json:"title"`
-	EnrollmentID      *int64 `json:"enrollment_id,omitempty"`
-	Status            string `json:"status"`
-	TotalQuestions    int    `json:"total_questions"`
-	AnsweredQuestions    int `json:"answered_questions"`
-	PendingReviews       int `json:"pending_reviews"`
-	NeedsRevision        int `json:"needs_revision"`
-	NeedsRevisionAnswers int `json:"needs_revision_answers"`
+	LessonID             int64  `json:"lesson_id"`
+	LessonVersionID      int64  `json:"lesson_version_id"`
+	Position             int    `json:"position"`
+	Title                string `json:"title"`
+	EnrollmentID         *int64 `json:"enrollment_id,omitempty"`
+	Status               string `json:"status"`
+	TotalQuestions       int    `json:"total_questions"`
+	AnsweredQuestions    int    `json:"answered_questions"`
+	PendingReviews       int    `json:"pending_reviews"`
+	NeedsRevision        int    `json:"needs_revision"`
+	NeedsRevisionAnswers int    `json:"needs_revision_answers"`
 }
 
 // AnswerAttemptReview — неизменяемое решение куратора по конкретной отправленной попытке.

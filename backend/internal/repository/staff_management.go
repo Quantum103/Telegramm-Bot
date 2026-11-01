@@ -331,11 +331,11 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		}
 		if activeCourseEnrollmentID.Valid {
 			student.ActiveCourse = &domain.StudentActiveCourse{
-				CourseEnrollmentID: activeCourseEnrollmentID.Int64,
-				CourseID:           activeCourseID.Int64,
-				CourseTitle:        activeCourseTitle.String,
-				Mode:               activeCourseMode.String,
-				Status:             activeCourseStatus.String,
+				CourseEnrollmentID:   activeCourseEnrollmentID.Int64,
+				CourseID:             activeCourseID.Int64,
+				CourseTitle:          activeCourseTitle.String,
+				Mode:                 activeCourseMode.String,
+				Status:               activeCourseStatus.String,
 				TotalLessons:         int(activeCourseTotalLessons.Int32),
 				CompletedLessons:     int(activeCourseCompletedLessons.Int32),
 				SubmittedAnswers:     int(activeCourseSubmittedAnswers.Int32),
