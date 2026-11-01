@@ -773,6 +773,68 @@ func TestTransferMovesReminderTasksButKeepsSingleEscalation(t *testing.T) {
 	}
 }
 
+func TestConsecutiveCuratorTransfersKeepOneTaskForLastAssignee(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	message, err := NewConversationRepository(pool).CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID, TelegramMessageID: 990006,
+		BodyText: "Проверка нескольких последовательных передач",
+		FirstReminderAfter: time.Hour, SecondReminderAfter: 2 * time.Hour, EscalationAfter: 3 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("создать сообщение и ожидание ответа: %v", err)
+	}
+	var waitID int64
+	var generation int
+	if err := pool.QueryRow(ctx, "SELECT id, generation FROM conversation_response_waits WHERE conversation_id = $1", message.ConversationID).Scan(&waitID, &generation); err != nil {
+		t.Fatalf("получить исходное ожидание: %v", err)
+	}
+
+	assignments := []int64{fixture.curator2ID, fixture.curator1ID, fixture.curator2ID, fixture.curator2ID}
+	for index, curatorID := range assignments {
+		if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, curatorID); err != nil {
+			t.Fatalf("передача ученика на шаге %d куратору %d: %v", index+1, curatorID, err)
+		}
+	}
+
+	var taskCount int
+	var recipientID int64
+	var taskStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), max(recipient_staff_id), max(delivery_status)
+		FROM conversation_message_deliveries
+		WHERE response_wait_id = $1 AND response_wait_generation = $2 AND channel = 'curator_transfer'
+	`, waitID, generation).Scan(&taskCount, &recipientID, &taskStatus); err != nil {
+		t.Fatalf("проверить единственную задачу передачи: %v", err)
+	}
+	if taskCount != 1 || recipientID != fixture.curator2ID || taskStatus != "pending" {
+		t.Fatalf("после нескольких передач должна остаться одна задача последнему куратору: count=%d recipient=%d status=%s",
+			taskCount, recipientID, taskStatus)
+	}
+
+	var currentGeneration int
+	var currentCuratorID int64
+	if err := pool.QueryRow(ctx, "SELECT generation, curator_staff_id FROM conversation_response_waits WHERE id = $1", waitID).Scan(&currentGeneration, &currentCuratorID); err != nil {
+		t.Fatalf("проверить ожидание после передач: %v", err)
+	}
+	if currentGeneration != generation || currentCuratorID != fixture.curator2ID {
+		t.Fatalf("передачи не должны сбрасывать ожидание; должен остаться последний куратор: generation=%d curator=%d",
+			currentGeneration, currentCuratorID)
+	}
+	var escalationCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM conversation_message_deliveries
+		WHERE response_wait_id = $1 AND response_wait_generation = $2 AND channel = 'admin_escalation'
+	`, waitID, generation).Scan(&escalationCount); err != nil {
+		t.Fatalf("проверить единственную эскалацию: %v", err)
+	}
+	if escalationCount != 1 {
+		t.Fatalf("последовательные передачи создали дополнительные эскалации: count=%d", escalationCount)
+	}
+}
+
 func TestNotificationPreferencesDisableAndReenableReminders(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
