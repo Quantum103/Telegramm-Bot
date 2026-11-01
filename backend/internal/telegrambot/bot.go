@@ -488,6 +488,12 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 	if b.staffTelegram == nil || message.From == nil {
 		return false, true
 	}
+	// Повторная привязка проходит через новый одноразовый код из авторизованной панели.
+	fields := strings.Fields(strings.TrimSpace(message.Text))
+	if len(fields) > 0 && strings.HasPrefix(fields[0], "/") &&
+		strings.ToLower(strings.SplitN(fields[0], "@", 2)[0]) == "/link" {
+		return false, true
+	}
 	account, err := b.staffTelegram.FindByTelegramID(ctx, message.From.ID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return false, true

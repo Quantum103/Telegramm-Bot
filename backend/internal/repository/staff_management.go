@@ -472,7 +472,7 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 		JOIN conversations conversation ON conversation.id = message.conversation_id
 		WHERE delivery.message_id = message.id AND conversation.student_id = $1
 		  AND conversation.status = 'active' AND delivery.channel = 'curator_telegram'
-		  AND delivery.delivery_status IN ('pending', 'retry', 'failed')
+		  AND delivery.delivery_status IN ('pending', 'retry', 'failed', 'processing')
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("перенаправить незавершённые уведомления новому куратору", err)
 	}

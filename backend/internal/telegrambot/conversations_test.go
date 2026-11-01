@@ -45,6 +45,59 @@ func (f *fakeStudentConversationService) IsStudentChatMode(_ context.Context, st
 	return f.chatMode[studentID], nil
 }
 
+
+type fakeStaffTelegramAPIForBinding struct {
+	account       domain.StaffTelegramAccount
+	findErr       error
+	bindCalls     int
+	boundTelegram int64
+	boundToken    string
+	restoreCalls  int
+}
+
+func (f *fakeStaffTelegramAPIForBinding) FindByTelegramID(context.Context, int64) (domain.StaffTelegramAccount, error) {
+	return f.account, f.findErr
+}
+
+func (f *fakeStaffTelegramAPIForBinding) BindTelegramAccount(_ context.Context, telegramID int64, _ string, token string) (domain.StaffTelegramAccount, error) {
+	f.bindCalls++
+	f.boundTelegram = telegramID
+	f.boundToken = token
+	return f.account, nil
+}
+
+func (f *fakeStaffTelegramAPIForBinding) RestoreNotifications(context.Context, int64) error {
+	f.restoreCalls++
+	return nil
+}
+
+func TestLinkedCuratorCanUseLinkCommandForConfirmedRebinding(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	staffTelegram := &fakeStaffTelegramAPIForBinding{account: domain.StaffTelegramAccount{
+		StaffID: 77, DisplayName: "Куратор", AccountStatus: "active", IsCurator: true,
+	}}
+	bot := NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		api, students, catalog, learning, nil, nil, nil, staffTelegram,
+	)
+	user := User{ID: 987654, Username: "curator"}
+	update := Update{UpdateID: 1, Message: &Message{
+		MessageID: 5, From: &user, Chat: Chat{ID: user.ID, Type: "private"},
+		Text: "/link one-time-rebinding-token",
+	}}
+	if !bot.handleUpdate(context.Background(), update) {
+		t.Fatal("команда привязки не должна блокировать Telegram update")
+	}
+	if staffTelegram.bindCalls != 1 || staffTelegram.boundTelegram != user.ID ||
+		staffTelegram.boundToken != "one-time-rebinding-token" {
+		t.Fatalf("повторная привязка существующего куратора не дошла до проверки токена: %+v", staffTelegram)
+	}
+	if len(api.messages) == 0 || !strings.Contains(api.messages[len(api.messages)-1].text, "успешно привязан") {
+		t.Fatalf("бот не подтвердил результат привязки: %+v", api.messages)
+	}
+}
+
 func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}

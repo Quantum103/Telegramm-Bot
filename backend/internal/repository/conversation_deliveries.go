@@ -112,6 +112,38 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 	return delivery, nil
 }
 
+// IsCurrentCuratorDelivery повторно проверяет адресата прямо перед отправкой, чтобы transfer/status-change не отправлял старую задачу прежнему куратору.
+func (r *ConversationDeliveryRepository) IsCurrentCuratorDelivery(ctx context.Context, deliveryID, staffID, telegramID int64) (bool, error) {
+	if deliveryID <= 0 || staffID <= 0 || telegramID <= 0 {
+		return false, ErrInvalidInput
+	}
+	var authorized bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM conversation_message_deliveries delivery
+			JOIN conversation_messages message ON message.id = delivery.message_id
+			JOIN conversations conversation ON conversation.id = message.conversation_id
+			JOIN student_curator_assignments assignment
+			  ON assignment.student_id = conversation.student_id
+			 AND assignment.curator_staff_id = $2 AND assignment.status = 'active'
+			JOIN staff_accounts staff ON staff.id = $2
+			  AND staff.account_status = 'active' AND staff.telegram_id = $3
+			JOIN staff_role_assignments role_assignment
+			  ON role_assignment.staff_id = staff.id AND role_assignment.revoked_at IS NULL
+			JOIN staff_roles role ON role.id = role_assignment.role_id AND role.role_code = 'curator'
+			WHERE delivery.id = $1 AND delivery.channel = 'curator_telegram'
+			  AND delivery.delivery_status = 'processing'
+			  AND delivery.recipient_staff_id = $2
+			  AND conversation.assigned_curator_staff_id = $2
+		)
+	`, deliveryID, staffID, telegramID).Scan(&authorized)
+	if err != nil {
+		return false, mapDatabaseError("повторно проверить адресата Telegram-уведомления", err)
+	}
+	return authorized, nil
+}
+
 func (r *ConversationDeliveryRepository) MarkDeliverySent(ctx context.Context, deliveryID int64) error {
 	if deliveryID <= 0 {
 		return ErrInvalidInput

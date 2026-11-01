@@ -25,6 +25,7 @@ type ConversationDeliveryQueue interface {
 	MarkDeliverySent(context.Context, int64) error
 	ScheduleDeliveryRetry(context.Context, int64, string, time.Duration) error
 	MarkDeliveryFailed(context.Context, int64, string) error
+	IsCurrentCuratorDelivery(context.Context, int64, int64, int64) (bool, error)
 }
 
 // DeliveryWorker отправляет ответы куратора через уже используемый Telegram Bot API client.
@@ -97,6 +98,19 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 	}
 	var err error
 	if delivery.Channel == "curator_telegram" {
+		current, err := w.queue.IsCurrentCuratorDelivery(ctx, delivery.ID, delivery.RecipientStaffID, delivery.RecipientChatID)
+		if err != nil {
+			if ctx.Err() == nil {
+				if retryErr := w.queue.ScheduleDeliveryRetry(ctx, delivery.ID, "curator_authorization_check_failed", deliveryBackoff(delivery.AttemptCount)); retryErr != nil {
+					w.logger.Error("не удалось повторить проверку адресата Telegram-уведомления", "delivery_id", delivery.ID, "error", retryErr)
+				}
+			}
+			return
+		}
+		if !current {
+			// Передача ученика или отключение учётной записи уже изменили строку задачи; не отправляем старому адресату.
+			return
+		}
 		panelURL := w.conversationURL(delivery.ConversationID)
 		if panelURL != "" {
 			markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{{

@@ -153,6 +153,25 @@ func TestDeliveryWorkerRetriesUnknownTransportResult(t *testing.T) {
 	}
 }
 
+
+func TestCuratorNotificationMasksCommonSensitiveFragments(t *testing.T) {
+	message := domain.ConversationDelivery{
+		StudentDisplayName: "  Мария   Иванова  ",
+		BodyText: "Свяжитесь mail@example.com, сайт https://example.com/private, телефон +7 (999) 123-45-67, токен 123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi. Остальной текст нужен.",
+	}
+	got := formatCuratorNotification(message, false)
+	for _, secret := range []string{"mail@example.com", "https://example.com/private", "+7 (999) 123-45-67", "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("уведомление содержит не замаскированные чувствительные данные %q: %s", secret, got)
+		}
+	}
+	for _, masked := range []string{"[email скрыт]", "[ссылка скрыта]", "[номер скрыт]", "[токен скрыт]", "Остальной текст нужен."} {
+		if !strings.Contains(got, masked) {
+			t.Errorf("уведомление не содержит ожидаемый фрагмент %q: %s", masked, got)
+		}
+	}
+}
+
 func TestDeliveryWorkerSendsCuratorNotificationWithConversationButton(t *testing.T) {
 	var payload struct {
 		ChatID      int64  `json:"chat_id"`

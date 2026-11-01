@@ -476,6 +476,66 @@ func TestCuratorNotificationRequiresLinkedActiveCurator(t *testing.T) {
 	}
 }
 
+
+func TestProcessingCuratorNotificationIsRedirectedDuringTransfer(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	oldTelegramID, newTelegramID := fixture.telegramID+6100, fixture.telegramID+6200
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, oldTelegramID); err != nil {
+		t.Fatalf("привязать старый Telegram куратора: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator2ID, newTelegramID); err != nil {
+		t.Fatalf("привязать новый Telegram куратора: %v", err)
+	}
+	conversations := NewConversationRepository(pool)
+	message, err := conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887772, BodyText: "Передача во время обработки",
+	})
+	if err != nil {
+		t.Fatalf("создать сообщение ученика: %v", err)
+	}
+	deliveries := NewConversationDeliveryRepository(pool)
+	claimed, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить уведомление старым куратором: %v", err)
+	}
+	if claimed.MessageID != message.ID || claimed.RecipientStaffID != fixture.curator1ID || claimed.RecipientChatID != oldTelegramID {
+		t.Fatalf("неверная исходная задача: %+v", claimed)
+	}
+	valid, err := deliveries.IsCurrentCuratorDelivery(ctx, claimed.ID, claimed.RecipientStaffID, claimed.RecipientChatID)
+	if err != nil || !valid {
+		t.Fatalf("старый адресат должен быть действующим до перевода: valid=%v err=%v", valid, err)
+	}
+	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator2ID); err != nil {
+		t.Fatalf("передать ученика новому куратору: %v", err)
+	}
+	valid, err = deliveries.IsCurrentCuratorDelivery(ctx, claimed.ID, claimed.RecipientStaffID, claimed.RecipientChatID)
+	if err != nil {
+		t.Fatalf("повторно проверить старого адресата: %v", err)
+	}
+	if valid {
+		t.Fatal("после перевода уведомление больше не должно быть доступно старому куратору")
+	}
+	var status string
+	var recipientStaffID int64
+	if err := pool.QueryRow(ctx, "SELECT delivery_status, recipient_staff_id FROM conversation_message_deliveries WHERE id = $1", claimed.ID).Scan(&status, &recipientStaffID); err != nil {
+		t.Fatalf("прочитать перенаправленную задачу: %v", err)
+	}
+	if status != "pending" || recipientStaffID != fixture.curator2ID {
+		t.Fatalf("задача processing должна вернуться в очередь новому куратору: status=%s recipient=%d", status, recipientStaffID)
+	}
+	next, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить уведомление новым куратором: %v", err)
+	}
+	if next.ID != claimed.ID || next.RecipientStaffID != fixture.curator2ID || next.RecipientChatID != newTelegramID {
+		t.Fatalf("новый claim не использовал актуального куратора: %+v", next)
+	}
+}
+
 func TestStudentMessageBeforeCuratorAssignmentIsStoredAndDeliveredAfterAssignment(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
