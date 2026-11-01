@@ -97,7 +97,6 @@ func TestLinkedCuratorCanUseLinkCommandForConfirmedRebinding(t *testing.T) {
 	}
 }
 
-
 func TestLinkedAdministratorCanRunStartWithoutCuratorRole(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
@@ -112,7 +111,9 @@ func TestLinkedAdministratorCanRunStartWithoutCuratorRole(t *testing.T) {
 	update := Update{UpdateID: 2, Message: &Message{
 		MessageID: 6, From: &user, Chat: Chat{ID: user.ID, Type: "private"}, Text: "/start",
 	}}
-	if !bot.handleUpdate(context.Background(), update) { t.Fatal("администраторский /start не обработан") }
+	if !bot.handleUpdate(context.Background(), update) {
+		t.Fatal("администраторский /start не обработан")
+	}
 	if staffTelegram.restoreCalls != 1 {
 		t.Fatalf("для администратора должен вызываться restore уведомлений, calls=%d", staffTelegram.restoreCalls)
 	}

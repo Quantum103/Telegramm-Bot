@@ -100,9 +100,9 @@ func run(logger *slog.Logger) error {
 	conversationService := service.NewConversationServiceWithPolicy(
 		repository.NewConversationRepository(pool),
 		service.ResponseWaitPolicy{
-			FirstReminderAfter: cfg.CuratorReminderFirstAfter,
+			FirstReminderAfter:  cfg.CuratorReminderFirstAfter,
 			SecondReminderAfter: cfg.CuratorReminderSecondAfter,
-			EscalationAfter: cfg.CuratorEscalationAfter,
+			EscalationAfter:     cfg.CuratorEscalationAfter,
 		},
 	)
 	staffTelegramService := service.NewStaffTelegramService(repository.NewStaffTelegramRepository(pool))

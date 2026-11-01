@@ -21,9 +21,13 @@ func NewConversationDeliveryRepository(pool *pgxpool.Pool) *ConversationDelivery
 
 // ClaimDueDelivery захватывает задачу PostgreSQL-lease; после рестарта просроченный processing снова доступен.
 func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, lease time.Duration) (domain.ConversationDelivery, error) {
-	if lease <= 0 { lease = time.Minute }
+	if lease <= 0 {
+		lease = time.Minute
+	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil { return domain.ConversationDelivery{}, mapDatabaseError("начать захват задания Telegram outbox", err) }
+	if err != nil {
+		return domain.ConversationDelivery{}, mapDatabaseError("начать захват задания Telegram outbox", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var deliveryID int64
 	err = tx.QueryRow(ctx, `
@@ -33,8 +37,12 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 		ORDER BY next_attempt_at ASC, id ASC
 		FOR UPDATE SKIP LOCKED LIMIT 1
 	`, lease.Seconds()).Scan(&deliveryID)
-	if errors.Is(err, pgx.ErrNoRows) { return domain.ConversationDelivery{}, ErrNotFound }
-	if err != nil { return domain.ConversationDelivery{}, mapDatabaseError("выбрать задание Telegram outbox", err) }
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConversationDelivery{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.ConversationDelivery{}, mapDatabaseError("выбрать задание Telegram outbox", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE conversation_message_deliveries
 		SET delivery_status = 'processing', attempt_count = attempt_count + 1, locked_at = now(), updated_at = now()
@@ -113,14 +121,22 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 		&delivery.ReminderEnabled, &delivery.NotificationsEnabled, &delivery.Timezone, &delivery.QuietHoursEnabled,
 		&quietStart, &quietEnd, &lastCuratorStatus,
 	)
-	if err != nil { return domain.ConversationDelivery{}, mapDatabaseError("прочитать захваченное задание Telegram outbox", err) }
+	if err != nil {
+		return domain.ConversationDelivery{}, mapDatabaseError("прочитать захваченное задание Telegram outbox", err)
+	}
 	delivery.QuietStart, delivery.QuietEnd = quietStart, quietEnd
-	if waitID.Valid { delivery.ResponseWaitID = waitID.Int64 }
-	if waitGeneration.Valid { delivery.ResponseWaitGeneration = int(waitGeneration.Int64) }
+	if waitID.Valid {
+		delivery.ResponseWaitID = waitID.Int64
+	}
+	if waitGeneration.Valid {
+		delivery.ResponseWaitGeneration = int(waitGeneration.Int64)
+	}
 	delivery.LastCuratorStatus = lastCuratorStatus.String
 	if waitOpenedAt.Valid {
 		delivery.WaitedFor = time.Since(waitOpenedAt.Time)
-		if delivery.WaitedFor < 0 { delivery.WaitedFor = 0 }
+		if delivery.WaitedFor < 0 {
+			delivery.WaitedFor = 0
+		}
 	}
 
 	switch delivery.Channel {
@@ -129,7 +145,9 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 			if _, err := tx.Exec(ctx, "UPDATE conversation_message_deliveries SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now() WHERE id = $1", delivery.ID); err != nil {
 				return domain.ConversationDelivery{}, mapDatabaseError("отменить устаревшее напоминание", err)
 			}
-			if err := tx.Commit(ctx); err != nil { return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать отмену устаревшего напоминания", err) }
+			if err := tx.Commit(ctx); err != nil {
+				return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать отмену устаревшего напоминания", err)
+			}
 			return domain.ConversationDelivery{}, ErrNotFound
 		}
 		if currentCuratorID.Valid {
@@ -156,7 +174,9 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 			if _, err := tx.Exec(ctx, "UPDATE conversation_message_deliveries SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now() WHERE id = $1", delivery.ID); err != nil {
 				return domain.ConversationDelivery{}, mapDatabaseError("отменить отключённое напоминание", err)
 			}
-			if err := tx.Commit(ctx); err != nil { return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать отключение напоминания", err) }
+			if err := tx.Commit(ctx); err != nil {
+				return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать отключение напоминания", err)
+			}
 			return domain.ConversationDelivery{}, ErrNotFound
 		}
 	case "admin_escalation":
@@ -164,12 +184,16 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 			if _, err := tx.Exec(ctx, "UPDATE conversation_message_deliveries SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now() WHERE id = $1", delivery.ID); err != nil {
 				return domain.ConversationDelivery{}, mapDatabaseError("отменить неактуальную эскалацию", err)
 			}
-			if err := tx.Commit(ctx); err != nil { return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать отмену эскалации", err) }
+			if err := tx.Commit(ctx); err != nil {
+				return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать отмену эскалации", err)
+			}
 			return domain.ConversationDelivery{}, ErrNotFound
 		}
 		if adminStaffID.Valid {
 			delivery.RecipientStaffID = adminStaffID.Int64
-			if adminTelegramID.Valid { delivery.RecipientChatID = adminTelegramID.Int64 }
+			if adminTelegramID.Valid {
+				delivery.RecipientChatID = adminTelegramID.Int64
+			}
 			if _, err := tx.Exec(ctx, "UPDATE conversation_message_deliveries SET recipient_staff_id = $2, updated_at = now() WHERE id = $1", delivery.ID, delivery.RecipientStaffID); err != nil {
 				return domain.ConversationDelivery{}, mapDatabaseError("обновить адресата эскалации", err)
 			}
@@ -181,7 +205,9 @@ func (r *ConversationDeliveryRepository) ClaimDueDelivery(ctx context.Context, l
 		}
 	}
 	delivery.DeliveryKind = delivery.Channel
-	if err := tx.Commit(ctx); err != nil { return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать захват задания Telegram outbox", err) }
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ConversationDelivery{}, mapDatabaseError("зафиксировать захват задания Telegram outbox", err)
+	}
 	return delivery, nil
 }
 
@@ -240,7 +266,9 @@ func (r *ConversationDeliveryRepository) CheckCuratorDelivery(ctx context.Contex
 		&result.QuietHoursEnabled, &result.Timezone, &result.QuietStart, &result.QuietEnd,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) { return domain.DeliveryAuthorization{}, ErrNotFound }
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.DeliveryAuthorization{}, ErrNotFound
+		}
 		return domain.DeliveryAuthorization{}, mapDatabaseError("повторно проверить адресата Telegram-уведомления", err)
 	}
 	return result, nil
@@ -276,31 +304,43 @@ func (r *ConversationDeliveryRepository) IsCurrentAdminEscalation(ctx context.Co
 			  AND delivery.recipient_staff_id = $2
 		)
 	`, deliveryID, staffID, telegramID).Scan(&current)
-	if err != nil { return false, mapDatabaseError("повторно проверить адресата административной эскалации", err) }
+	if err != nil {
+		return false, mapDatabaseError("повторно проверить адресата административной эскалации", err)
+	}
 	return current, nil
 }
 
 func (r *ConversationDeliveryRepository) DeferDelivery(ctx context.Context, deliveryID int64, nextAttemptAt time.Time) error {
-	if deliveryID <= 0 || nextAttemptAt.IsZero() { return ErrInvalidInput }
+	if deliveryID <= 0 || nextAttemptAt.IsZero() {
+		return ErrInvalidInput
+	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE conversation_message_deliveries
 		SET delivery_status = 'pending', attempt_count = GREATEST(0, attempt_count - 1),
 		    next_attempt_at = $2, locked_at = NULL, updated_at = now()
 		WHERE id = $1 AND delivery_status = 'processing'
 	`, deliveryID, nextAttemptAt)
-	if err != nil { return mapDatabaseError("перенести Telegram-доставку на разрешённое время", err) }
-	if tag.RowsAffected() == 0 { return ErrInvalidState }
+	if err != nil {
+		return mapDatabaseError("перенести Telegram-доставку на разрешённое время", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
 	return nil
 }
 
 func (r *ConversationDeliveryRepository) MarkDeliveryCancelled(ctx context.Context, deliveryID int64) error {
-	if deliveryID <= 0 { return ErrInvalidInput }
+	if deliveryID <= 0 {
+		return ErrInvalidInput
+	}
 	_, err := r.pool.Exec(ctx, `
 		UPDATE conversation_message_deliveries
 		SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now()
 		WHERE id = $1 AND delivery_status IN ('pending', 'processing', 'retry')
 	`, deliveryID)
-	if err != nil { return mapDatabaseError("отменить неактуальную Telegram-доставку", err) }
+	if err != nil {
+		return mapDatabaseError("отменить неактуальную Telegram-доставку", err)
+	}
 	return nil
 }
 

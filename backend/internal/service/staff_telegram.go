@@ -86,21 +86,32 @@ func (s *StaffTelegramService) RestoreNotifications(ctx context.Context, staffID
 	return s.store.RestoreNotifications(ctx, staffID)
 }
 
-
 func (s *StaffTelegramService) GetNotificationPreferences(ctx context.Context, staffID int64) (domain.StaffNotificationPreferences, error) {
-	if staffID <= 0 { return domain.StaffNotificationPreferences{}, domain.ErrInvalidInput }
+	if staffID <= 0 {
+		return domain.StaffNotificationPreferences{}, domain.ErrInvalidInput
+	}
 	return s.store.GetNotificationPreferences(ctx, staffID)
 }
 
 func (s *StaffTelegramService) UpdateNotificationPreferences(ctx context.Context, staffID int64, prefs domain.StaffNotificationPreferences) error {
-	if staffID <= 0 { return domain.ErrInvalidInput }
+	if staffID <= 0 {
+		return domain.ErrInvalidInput
+	}
 	prefs.Timezone = strings.TrimSpace(prefs.Timezone)
-	if len(prefs.Timezone) == 0 || len(prefs.Timezone) > 128 { return domain.ErrInvalidInput }
-	if _, err := time.LoadLocation(prefs.Timezone); err != nil { return domain.ErrInvalidInput }
+	if len(prefs.Timezone) == 0 || len(prefs.Timezone) > 128 {
+		return domain.ErrInvalidInput
+	}
+	if _, err := time.LoadLocation(prefs.Timezone); err != nil {
+		return domain.ErrInvalidInput
+	}
 	start, err := time.Parse("15:04", prefs.QuietStart)
-	if err != nil { return domain.ErrInvalidInput }
+	if err != nil {
+		return domain.ErrInvalidInput
+	}
 	end, err := time.Parse("15:04", prefs.QuietEnd)
-	if err != nil || start.Equal(end) { return domain.ErrInvalidInput }
+	if err != nil || start.Equal(end) {
+		return domain.ErrInvalidInput
+	}
 	return s.store.UpdateNotificationPreferences(ctx, staffID, prefs)
 }
 

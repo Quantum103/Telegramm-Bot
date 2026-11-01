@@ -59,7 +59,10 @@ func (h handlers) staffTelegramPreferences(w http.ResponseWriter, r *http.Reques
 	switch r.Method {
 	case http.MethodGet:
 		prefs, err := h.staffTelegram.GetNotificationPreferences(r.Context(), identity.StaffID)
-		if err != nil { h.writeAPIError(w, err, "получить настройки уведомлений"); return }
+		if err != nil {
+			h.writeAPIError(w, err, "получить настройки уведомлений")
+			return
+		}
 		writeJSON(w, http.StatusOK, prefs)
 	case http.MethodPut:
 		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -69,10 +72,12 @@ func (h handlers) staffTelegramPreferences(w http.ResponseWriter, r *http.Reques
 		}
 		var prefs domain.StaffNotificationPreferences
 		if err := decodeJSONBodyWithLimit(w, r, &prefs, maxStaffAdminBodyBytes); err != nil {
-			writeInvalidAdminRequest(w, err); return
+			writeInvalidAdminRequest(w, err)
+			return
 		}
 		if err := h.staffTelegram.UpdateNotificationPreferences(r.Context(), identity.StaffID, prefs); err != nil {
-			h.writeAPIError(w, err, "сохранить настройки уведомлений"); return
+			h.writeAPIError(w, err, "сохранить настройки уведомлений")
+			return
 		}
 		writeJSON(w, http.StatusOK, prefs)
 	default:

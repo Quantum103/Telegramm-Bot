@@ -103,7 +103,9 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 	}
 
 	now := time.Now
-	if w.now != nil { now = w.now }
+	if w.now != nil {
+		now = w.now
+	}
 	var bodyText string
 	var markup *InlineKeyboardMarkup
 	switch delivery.Channel {
@@ -210,7 +212,9 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 		}
 		return
 	}
-	if ctx.Err() != nil { return }
+	if ctx.Err() != nil {
+		return
+	}
 	errorCode, permanent, retryAfter := classifyDeliveryError(err)
 	if permanent {
 		if markErr := w.queue.MarkDeliveryFailed(ctx, delivery.ID, errorCode); markErr != nil {
@@ -226,7 +230,9 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 		}
 		return
 	}
-	if retryAfter <= 0 { retryAfter = deliveryBackoff(delivery.AttemptCount) }
+	if retryAfter <= 0 {
+		retryAfter = deliveryBackoff(delivery.AttemptCount)
+	}
 	if markErr := w.queue.ScheduleDeliveryRetry(ctx, delivery.ID, errorCode, retryAfter); markErr != nil {
 		w.logger.Error("не удалось запланировать повтор Telegram-доставки", "delivery_id", delivery.ID, "error", markErr)
 	}
@@ -234,14 +240,22 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 
 func nextAllowedNotificationTime(now time.Time, timezone, quietStart, quietEnd string) (time.Time, error) {
 	location, err := time.LoadLocation(strings.TrimSpace(timezone))
-	if err != nil { return time.Time{}, err }
+	if err != nil {
+		return time.Time{}, err
+	}
 	start, err := time.Parse("15:04", quietStart)
-	if err != nil { return time.Time{}, err }
+	if err != nil {
+		return time.Time{}, err
+	}
 	end, err := time.Parse("15:04", quietEnd)
-	if err != nil { return time.Time{}, err }
+	if err != nil {
+		return time.Time{}, err
+	}
 	startMinute := start.Hour()*60 + start.Minute()
 	endMinute := end.Hour()*60 + end.Minute()
-	if startMinute == endMinute { return now, nil }
+	if startMinute == endMinute {
+		return now, nil
+	}
 	localNow := now.In(location)
 	currentMinute := localNow.Hour()*60 + localNow.Minute()
 	inQuiet := false
@@ -252,7 +266,9 @@ func nextAllowedNotificationTime(now time.Time, timezone, quietStart, quietEnd s
 		inQuiet = currentMinute >= startMinute || currentMinute < endMinute
 		nextDay = currentMinute >= startMinute
 	}
-	if !inQuiet { return now, nil }
+	if !inQuiet {
+		return now, nil
+	}
 	year, month, day := localNow.Date()
 	if nextDay {
 		date := time.Date(year, month, day, 12, 0, 0, 0, location).AddDate(0, 0, 1)
@@ -264,7 +280,9 @@ func nextAllowedNotificationTime(now time.Time, timezone, quietStart, quietEnd s
 
 func formatCuratorTransfer(delivery domain.ConversationDelivery) string {
 	name := strings.TrimSpace(delivery.StudentDisplayName)
-	if name == "" { name = "Ученик" }
+	if name == "" {
+		name = "Ученик"
+	}
 	return "Вам передан диалог с учеником " + name + " (№" +
 		strconv.FormatInt(delivery.ConversationID, 10) +
 		"). Последнее сообщение ещё ожидает ответа. Откройте диалог в веб-панели и продолжите общение."
@@ -272,9 +290,13 @@ func formatCuratorTransfer(delivery domain.ConversationDelivery) string {
 
 func formatCuratorReminder(delivery domain.ConversationDelivery) string {
 	kind := "Первое напоминание"
-	if delivery.Channel == "curator_reminder_24h" { kind = "Повторное напоминание" }
+	if delivery.Channel == "curator_reminder_24h" {
+		kind = "Повторное напоминание"
+	}
 	name := strings.TrimSpace(delivery.StudentDisplayName)
-	if name == "" { name = "Ученик" }
+	if name == "" {
+		name = "Ученик"
+	}
 	snippet := safeNotificationSnippet(delivery.BodyText)
 	return kind + ": ученик " + name + " ожидает ответа в диалоге №" +
 		strconv.FormatInt(delivery.ConversationID, 10) + ".\n\nПоследнее сообщение: «" + snippet +
@@ -283,15 +305,23 @@ func formatCuratorReminder(delivery domain.ConversationDelivery) string {
 
 func formatAdminEscalation(delivery domain.ConversationDelivery) string {
 	name := strings.TrimSpace(delivery.StudentDisplayName)
-	if name == "" { name = "Ученик" }
+	if name == "" {
+		name = "Ученик"
+	}
 	curator := strings.TrimSpace(delivery.CuratorDisplayName)
-	if curator == "" { curator = "не назначен" }
+	if curator == "" {
+		curator = "не назначен"
+	}
 	waitDuration := delivery.WaitedFor.Round(time.Minute)
-	if waitDuration < 0 { waitDuration = 0 }
+	if waitDuration < 0 {
+		waitDuration = 0
+	}
 	waited := strconv.FormatInt(int64(waitDuration/time.Hour), 10) + " ч " +
 		strconv.FormatInt(int64((waitDuration%time.Hour)/time.Minute), 10) + " мин"
 	status := delivery.LastCuratorStatus
-	if status == "" { status = "уведомление не отправлялось или статус неизвестен" }
+	if status == "" {
+		status = "уведомление не отправлялось или статус неизвестен"
+	}
 	return "Эскалация: ученик ожидает ответа более установленного срока.\n\nДиалог: №" +
 		strconv.FormatInt(delivery.ConversationID, 10) + "\nУченик: " + name +
 		"\nОтветственный куратор: " + curator + "\nВремя ожидания: " + waited +
@@ -306,8 +336,12 @@ func safeNotificationSnippet(value string) string {
 	snippet = notificationURLPattern.ReplaceAllString(snippet, "[ссылка скрыта]")
 	snippet = notificationPhonePattern.ReplaceAllString(snippet, "[номер скрыт]")
 	runes := []rune(snippet)
-	if len(runes) > 160 { return string(runes[:160]) + "…" }
-	if snippet == "" { return "Новое сообщение" }
+	if len(runes) > 160 {
+		return string(runes[:160]) + "…"
+	}
+	if snippet == "" {
+		return "Новое сообщение"
+	}
 	return snippet
 }
 

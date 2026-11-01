@@ -79,4 +79,3 @@ func TestAdministratorCanLinkTelegramForEscalations(t *testing.T) {
 		t.Fatalf("статус Telegram администратора должен быть linked: %+v err=%v", status, err)
 	}
 }
-

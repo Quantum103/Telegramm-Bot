@@ -10,7 +10,7 @@ import (
 
 type notificationPreferencesStoreStub struct {
 	updated bool
-	prefs domain.StaffNotificationPreferences
+	prefs   domain.StaffNotificationPreferences
 }
 
 func (s *notificationPreferencesStoreStub) GetBindingStatus(context.Context, int64) (domain.StaffTelegramBindingStatus, error) {
@@ -25,7 +25,9 @@ func (s *notificationPreferencesStoreStub) BindTelegramAccount(context.Context, 
 func (s *notificationPreferencesStoreStub) FindByTelegramID(context.Context, int64) (domain.StaffTelegramAccount, error) {
 	return domain.StaffTelegramAccount{}, nil
 }
-func (s *notificationPreferencesStoreStub) RestoreNotifications(context.Context, int64) error { return nil }
+func (s *notificationPreferencesStoreStub) RestoreNotifications(context.Context, int64) error {
+	return nil
+}
 func (s *notificationPreferencesStoreStub) ListNotifications(context.Context, int64, int) ([]domain.CuratorNotification, error) {
 	return nil, nil
 }
@@ -59,7 +61,9 @@ func TestUpdateNotificationPreferencesValidatesTimeZoneAndQuietWindow(t *testing
 	if err := service.UpdateNotificationPreferences(context.Background(), 42, invalid); err != domain.ErrInvalidInput {
 		t.Fatalf("unknown time zone should be rejected, got %v", err)
 	}
-	if store.updated { t.Fatal("invalid time zone must not be persisted") }
+	if store.updated {
+		t.Fatal("invalid time zone must not be persisted")
+	}
 
 	store.updated = false
 	invalid = valid
@@ -68,5 +72,7 @@ func TestUpdateNotificationPreferencesValidatesTimeZoneAndQuietWindow(t *testing
 	if err := service.UpdateNotificationPreferences(context.Background(), 42, invalid); err != domain.ErrInvalidInput {
 		t.Fatalf("equal quiet-hour bounds should be rejected to match database constraints, got %v", err)
 	}
-	if store.updated { t.Fatal("equal quiet-hour bounds must not be persisted") }
+	if store.updated {
+		t.Fatal("equal quiet-hour bounds must not be persisted")
+	}
 }

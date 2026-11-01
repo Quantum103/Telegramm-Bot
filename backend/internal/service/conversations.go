@@ -34,9 +34,9 @@ type ResponseWaitPolicy struct {
 
 func DefaultResponseWaitPolicy() ResponseWaitPolicy {
 	return ResponseWaitPolicy{
-		FirstReminderAfter: 4 * time.Hour,
+		FirstReminderAfter:  4 * time.Hour,
 		SecondReminderAfter: 24 * time.Hour,
-		EscalationAfter: 48 * time.Hour,
+		EscalationAfter:     48 * time.Hour,
 	}
 }
 

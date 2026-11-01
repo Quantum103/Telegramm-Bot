@@ -260,16 +260,23 @@ func (r *StaffTelegramRepository) RestoreNotifications(ctx context.Context, staf
 		return ErrInvalidInput
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil { return mapDatabaseError("начать восстановление Telegram-уведомлений", err) }
+	if err != nil {
+		return mapDatabaseError("начать восстановление Telegram-уведомлений", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := restoreStaffNotificationsTx(ctx, tx, staffID); err != nil { return err }
-	if err := tx.Commit(ctx); err != nil { return mapDatabaseError("зафиксировать восстановление Telegram-уведомлений", err) }
+	if err := restoreStaffNotificationsTx(ctx, tx, staffID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать восстановление Telegram-уведомлений", err)
+	}
 	return nil
 }
 
-
 func (r *StaffTelegramRepository) GetNotificationPreferences(ctx context.Context, staffID int64) (domain.StaffNotificationPreferences, error) {
-	if staffID <= 0 { return domain.StaffNotificationPreferences{}, ErrInvalidInput }
+	if staffID <= 0 {
+		return domain.StaffNotificationPreferences{}, ErrInvalidInput
+	}
 	var allowed bool
 	if err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -279,8 +286,12 @@ func (r *StaffTelegramRepository) GetNotificationPreferences(ctx context.Context
 			WHERE staff.id = $1 AND staff.account_status = 'active'
 			  AND role.role_code IN ('curator', 'administrator')
 		)
-	`, staffID).Scan(&allowed); err != nil { return domain.StaffNotificationPreferences{}, mapDatabaseError("проверить доступ к настройкам уведомлений", err) }
-	if !allowed { return domain.StaffNotificationPreferences{}, ErrInvalidState }
+	`, staffID).Scan(&allowed); err != nil {
+		return domain.StaffNotificationPreferences{}, mapDatabaseError("проверить доступ к настройкам уведомлений", err)
+	}
+	if !allowed {
+		return domain.StaffNotificationPreferences{}, ErrInvalidState
+	}
 	if _, err := r.pool.Exec(ctx, "INSERT INTO staff_notification_preferences (staff_id) VALUES ($1) ON CONFLICT (staff_id) DO NOTHING", staffID); err != nil {
 		return domain.StaffNotificationPreferences{}, mapDatabaseError("создать настройки уведомлений по умолчанию", err)
 	}
@@ -297,9 +308,13 @@ func (r *StaffTelegramRepository) GetNotificationPreferences(ctx context.Context
 }
 
 func (r *StaffTelegramRepository) UpdateNotificationPreferences(ctx context.Context, staffID int64, prefs domain.StaffNotificationPreferences) error {
-	if staffID <= 0 { return ErrInvalidInput }
+	if staffID <= 0 {
+		return ErrInvalidInput
+	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil { return mapDatabaseError("начать изменение настроек уведомлений", err) }
+	if err != nil {
+		return mapDatabaseError("начать изменение настроек уведомлений", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var allowed bool
 	if err := tx.QueryRow(ctx, `
@@ -310,8 +325,12 @@ func (r *StaffTelegramRepository) UpdateNotificationPreferences(ctx context.Cont
 			WHERE staff.id = $1 AND staff.account_status = 'active'
 			  AND role.role_code IN ('curator', 'administrator')
 		)
-	`, staffID).Scan(&allowed); err != nil { return mapDatabaseError("проверить право менять настройки уведомлений", err) }
-	if !allowed { return ErrInvalidState }
+	`, staffID).Scan(&allowed); err != nil {
+		return mapDatabaseError("проверить право менять настройки уведомлений", err)
+	}
+	if !allowed {
+		return ErrInvalidState
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO staff_notification_preferences
 			(staff_id, reminders_enabled, notifications_enabled, timezone, quiet_hours_enabled, quiet_start, quiet_end, updated_at)
@@ -362,7 +381,9 @@ func (r *StaffTelegramRepository) UpdateNotificationPreferences(ctx context.Cont
 			SET delivery_status = 'cancelled', locked_at = NULL, updated_at = now()
 			WHERE channel IN ('curator_reminder_4h', 'curator_reminder_24h')
 			  AND recipient_staff_id = $1 AND delivery_status IN ('pending', 'retry', 'processing')
-		`, staffID); err != nil { return mapDatabaseError("отключить напоминания куратора", err) }
+		`, staffID); err != nil {
+			return mapDatabaseError("отключить напоминания куратора", err)
+		}
 	} else {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO conversation_message_deliveries
@@ -382,9 +403,13 @@ func (r *StaffTelegramRepository) UpdateNotificationPreferences(ctx context.Cont
 				next_attempt_at = EXCLUDED.next_attempt_at, locked_at = NULL,
 				last_error_code = NULL, last_error_at = NULL, updated_at = now()
 			WHERE conversation_message_deliveries.delivery_status = 'cancelled'
-		`, staffID); err != nil { return mapDatabaseError("восстановить активные напоминания куратора", err) }
+		`, staffID); err != nil {
+			return mapDatabaseError("восстановить активные напоминания куратора", err)
+		}
 	}
-	if err := tx.Commit(ctx); err != nil { return mapDatabaseError("зафиксировать настройки уведомлений", err) }
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать настройки уведомлений", err)
+	}
 	return nil
 }
 

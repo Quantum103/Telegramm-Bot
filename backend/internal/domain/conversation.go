@@ -37,38 +37,38 @@ type ConversationSummary struct {
 
 // Параметры сообщения ученика заполняются доверенным Telegram-обработчиком.
 type CreateStudentConversationMessageParams struct {
-	StudentID         int64
-	TelegramChatID    int64
-	TelegramMessageID int64
-	BodyText              string
-	FirstReminderAfter    time.Duration
-	SecondReminderAfter   time.Duration
-	EscalationAfter       time.Duration
+	StudentID           int64
+	TelegramChatID      int64
+	TelegramMessageID   int64
+	BodyText            string
+	FirstReminderAfter  time.Duration
+	SecondReminderAfter time.Duration
+	EscalationAfter     time.Duration
 }
 
 // ConversationDelivery — задание на доставку ответа куратора в Telegram.
 type ConversationDelivery struct {
-	ID                   int64
-	MessageID            int64
-	Channel              string
-	RecipientChatID      int64
-	RecipientStaffID     int64
-	ConversationID       int64
-	StudentDisplayName   string
-	BodyText             string
-	AttemptCount         int
-	PreparationErrorCode string
-	CuratorDisplayName   string
-	WaitedFor            time.Duration
-	LastCuratorStatus    string
-	ReminderEnabled      bool
-	NotificationsEnabled bool
-	QuietHoursEnabled    bool
-	Timezone             string
-	QuietStart           string
-	QuietEnd             string
-	DeliveryKind         string
-	ResponseWaitID       int64
+	ID                     int64
+	MessageID              int64
+	Channel                string
+	RecipientChatID        int64
+	RecipientStaffID       int64
+	ConversationID         int64
+	StudentDisplayName     string
+	BodyText               string
+	AttemptCount           int
+	PreparationErrorCode   string
+	CuratorDisplayName     string
+	WaitedFor              time.Duration
+	LastCuratorStatus      string
+	ReminderEnabled        bool
+	NotificationsEnabled   bool
+	QuietHoursEnabled      bool
+	Timezone               string
+	QuietStart             string
+	QuietEnd               string
+	DeliveryKind           string
+	ResponseWaitID         int64
 	ResponseWaitGeneration int
 }
 
