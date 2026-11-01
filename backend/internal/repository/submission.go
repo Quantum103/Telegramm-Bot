@@ -58,7 +58,8 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	if enrollmentStatus == "cancelled" {
 		return SavedAnswer{}, ErrInvalidState
 	}
-	if courseEnrollmentID.Valid && (!courseStatus.Valid || courseStatus.String != "in_progress") {
+	if courseEnrollmentID.Valid &&
+		(enrollmentStatus != "in_progress" || !courseStatus.Valid || courseStatus.String != "in_progress") {
 		return SavedAnswer{}, ErrInvalidState
 	}
 
