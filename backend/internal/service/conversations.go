@@ -108,7 +108,6 @@ func (s *ConversationService) UnreadCountForStudent(ctx context.Context, student
 	return s.store.UnreadCountForStudent(ctx, studentID)
 }
 
-
 func (s *ConversationService) SetStudentChatMode(ctx context.Context, studentID int64, enabled bool) error {
 	if studentID <= 0 {
 		return domain.ErrInvalidInput

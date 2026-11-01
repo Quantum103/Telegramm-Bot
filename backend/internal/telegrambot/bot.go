@@ -251,7 +251,7 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 		Result      json.RawMessage `json:"result"`
 		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
-		Parameters struct {
+		Parameters  struct {
 			RetryAfter int `json:"retry_after"`
 		} `json:"parameters"`
 	}

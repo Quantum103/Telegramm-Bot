@@ -43,7 +43,6 @@ type CreateStudentConversationMessageParams struct {
 	BodyText          string
 }
 
-
 // ConversationDelivery — задание на доставку ответа куратора в Telegram.
 type ConversationDelivery struct {
 	ID              int64

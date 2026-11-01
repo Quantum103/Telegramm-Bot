@@ -86,7 +86,7 @@ func (r *ConversationDeliveryRepository) ScheduleDeliveryRetry(ctx context.Conte
 	if delay < time.Second {
 		delay = time.Second
 	}
-	if delay > 24*time.Hour {
+	if delay > 24 * time.Hour {
 		delay = 24*time.Hour
 	}
 	tag, err := r.pool.Exec(ctx, `
