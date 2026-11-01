@@ -113,13 +113,47 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 
 	var progress domain.Progress
 	if courseStarter, ok := b.learning.(interface {
-		StartLessonInCourse(context.Context, int64, int64, int64, string) (domain.Progress, error)
+		StartCourse(context.Context, int64, int64, string) (domain.CourseEnrollmentProgress, error)
+		StartLessonForCourse(context.Context, int64, int64, int64, int64) (domain.Progress, error)
 	}); ok {
-		progress, err = courseStarter.StartLessonInCourse(ctx, studentID, courseID, detail.Lesson.ID, "ai")
+		courseRun, startErr := courseStarter.StartCourse(ctx, studentID, courseID, "ai")
+		if errors.Is(startErr, domain.ErrActiveCourse) {
+			active := courseRun.Enrollment
+			message := fmt.Sprintf(
+				"У вас уже начат курс «%s».\n\nПрогресс: %d из %d уроков завершено.\n\nСначала продолжите текущий курс. После его завершения можно будет начать следующий.",
+				truncate(active.CourseTitle, 180),
+				courseRun.CompletedLessons,
+				courseRun.TotalLessons,
+			)
+			b.render(ctx, chatID, messageID, message, keyboard(
+				button("Продолжить текущий курс", fmt.Sprintf("course:%d", active.CourseID)),
+				button("К курсам", "courses"),
+			))
+			return
+		}
+		if startErr != nil {
+			err = startErr
+		} else {
+			progress, err = courseStarter.StartLessonForCourse(
+				ctx, studentID, courseRun.Enrollment.ID, courseID, detail.Lesson.ID,
+			)
+		}
 	} else {
 		progress, err = b.learning.StartLesson(ctx, studentID, detail.Lesson.ID, "ai")
 	}
 	if err != nil {
+		if errors.Is(err, domain.ErrNoCurator) {
+			b.render(ctx, chatID, messageID, "Для прохождения с куратором сначала должен быть назначен активный куратор. Обратитесь к администратору платформы.", keyboard(
+				button("К курсам", "courses"),
+			))
+			return
+		}
+		if errors.Is(err, domain.ErrLegacyProgress) {
+			b.render(ctx, chatID, messageID, "У вас найдено старое незавершённое прохождение, которое нельзя безопасно связать с курсом автоматически. Обратитесь к администратору, чтобы сохранить и восстановить ваш прогресс.", keyboard(
+				button("К курсам", "courses"),
+			))
+			return
+		}
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidState) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Не удалось начать этот урок: он мог стать недоступен. Вернитесь к списку уроков.", keyboard(button("К урокам", fmt.Sprintf("lessons:%d", courseID))))
 			return
