@@ -130,7 +130,7 @@ type Enrollment struct {
 	LessonVersionID    int64      `json:"lesson_version_id"`
 	CourseEnrollmentID *int64     `json:"course_enrollment_id,omitempty"`
 	Mode               string     `json:"mode"`
-	CurrentQuestionID *int64     `json:"current_question_id,omitempty"`
+	CurrentQuestionID  *int64     `json:"current_question_id,omitempty"`
 	Status            string     `json:"status"`
 	StartedAt         *time.Time `json:"started_at,omitempty"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
