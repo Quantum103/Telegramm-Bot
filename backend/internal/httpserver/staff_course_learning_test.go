@@ -50,6 +50,7 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	const csrfToken = "csrf-course-learning-test-token-123456"
 	identity := domain.StaffSessionIdentity{
 		StaffID: 42, DisplayName: "Staff", Email: "staff@example.test",
+		Roles: []string{"administrator"},
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -68,13 +69,8 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 		fakePinger{}, testLogger(), nil, authAPI, nil, nil, nil, nil, learning, newStaffLoginLimiter(), true,
 	)
 
-	makeRequest := func(roles []string, method, path, body string, withCSRF bool) *httptest.ResponseRecorder {
+	makeAdminRequest := func(method, path, body string, withCSRF bool) *httptest.ResponseRecorder {
 		t.Helper()
-		current := identity
-		current.Roles = append([]string(nil), roles...)
-		api := &fakeStaffAuthAPI{authIdentity: current}
-		// The request uses the identity currently exposed by this per-request
-		// authentication fake; all service actor IDs still come from that session.
 		request := httptest.NewRequest(method, "https://staff.example.test"+path, strings.NewReader(body))
 		if method == http.MethodPost {
 			request.Header.Set("Content-Type", "application/json")
@@ -85,15 +81,13 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 			request.AddCookie(&http.Cookie{Name: staffCSRFCookieName, Value: csrfToken})
 			request.Header.Set("X-CSRF-Token", csrfToken)
 		}
-		_ = api
-		// The handler's middleware uses the auth service attached at creation.
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		return recorder
 	}
 
 	// This handler is tied to the administrator identity above.
-	adminCourse := makeRequest([]string{"administrator"}, http.MethodGet,
+	adminCourse := makeAdminRequest( http.MethodGet,
 		"/api/v1/staff/course-learning/students/88/courses/77/lessons", "", false)
 	if adminCourse.Code != http.StatusOK || learning.listCourseCalls != 1 ||
 		learning.lastStaffID != identity.StaffID || learning.lastStudentID != 88 || learning.lastRunID != 77 {
@@ -114,15 +108,6 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	if adminReview.Code != http.StatusForbidden || learning.reviewCalls != 0 {
 		t.Fatalf("administrator must not submit curator review: status=%d calls=%d body=%s",
 			adminReview.Code, learning.reviewCalls, adminReview.Body.String())
-	}
-
-	curatorReview := makeRequest([]string{"curator"}, http.MethodPost,
-		"/api/v1/staff/course-learning/attempts/2/review", `{"decision":"approved","feedback":"Принято."}`, true)
-	// The bound handler still authenticates the configured admin identity, so
-	// this call must remain forbidden; the next dedicated handler validates curator writes.
-	if curatorReview.Code != http.StatusForbidden || learning.reviewCalls != 0 {
-		t.Fatalf("administrator session unexpectedly acquired curator write permission: status=%d calls=%d",
-			curatorReview.Code, learning.reviewCalls)
 	}
 
 	curatorIdentity := identity
