@@ -168,6 +168,21 @@ export type CuratorReviewResult = {
   replayed?: boolean
 }
 
+export type CuratorReviewQueueItem = {
+  student_id: number
+  student_name: string
+  course_id: number
+  course_title: string
+  course_enrollment_id: number
+  lesson_id: number
+  lesson_title: string
+  first_submitted_at: string
+  pending_answers: number
+  reviewed_answers: number
+  total_questions: number
+  lesson_status: string
+}
+
 export type StaffSession = {
   staff: StaffIdentity
   expires_at: string
@@ -475,6 +490,17 @@ export async function listAdminStudents(signal?: AbortSignal): Promise<AdminStud
 
 type CuratorCourseAccessResponse = CuratorCourseAccess
 type CuratorAnswersResponse = { answers: CuratorAnswer[] }
+type CuratorReviewQueueResponse = { items: CuratorReviewQueueItem[] }
+
+export async function listCuratorReviewQueue(signal?: AbortSignal): Promise<CuratorReviewQueueItem[]> {
+  const body = await getJSON<CuratorReviewQueueResponse>(
+    '/api/v1/staff/course-learning/review-queue', signal,
+  )
+  if (!body || !Array.isArray(body.items)) {
+    throw new Error('Сервер вернул некорректную очередь проверок.')
+  }
+  return body.items
+}
 
 export async function listCuratorCourseLessons(
   studentID: number, courseEnrollmentID: number, signal?: AbortSignal,
