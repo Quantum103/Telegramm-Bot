@@ -63,6 +63,9 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"lesson_enrollments",
 				"count(DISTINCT le.lesson_id)",
 				"all_lessons_completed THEN 'completed'",
+				"safe_legacy_students AS",
+				"HAVING count(DISTINCT le.mode) > 1",
+				"HAVING count(*) > 1",
 			}
 		}
 		for _, item := range required {
