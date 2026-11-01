@@ -97,3 +97,28 @@ func (h handlers) staffCuratorReviewAttempt(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusCreated, review)
 }
+
+func (h handlers) staffCourseLearningMiddleware(next http.Handler) http.Handler {
+	roleChecked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity := staffIdentityFromRequest(r)
+		if identity.StaffID <= 0 {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+		isCurator := staffHasRole(identity, "curator")
+		isAdministrator := staffHasRole(identity, "administrator")
+		if !isCurator && !isAdministrator {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+			return
+		}
+		// Administrators may inspect all learning progress. Only a curator
+		// may submit a review decision; repository authorization independently
+		// verifies the current student assignment.
+		if isUnsafeMethod(r.Method) && !isCurator {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return h.staffSessionMiddleware(roleChecked)
+}
