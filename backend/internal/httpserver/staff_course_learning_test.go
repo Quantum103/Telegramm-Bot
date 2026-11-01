@@ -122,7 +122,7 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	const csrfToken = "csrf-course-learning-test-token-123456"
 	identity := domain.StaffSessionIdentity{
 		StaffID: 42, DisplayName: "Staff", Email: "staff@example.test",
-		Roles: []string{"administrator"},
+		Roles:         []string{"administrator"},
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
