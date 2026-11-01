@@ -620,6 +620,11 @@ export default function StudentsPage({
           const expanded = expandedLessonIDs.includes(lesson.lesson_id)
           const answers = answersByLesson[lesson.lesson_id] ?? []
           const questionOptions = lessonDetailsByLesson[lesson.lesson_id]?.questions ?? []
+          const acceptedAnswers = answers.filter((answer) => answer.review_status === 'approved' || answer.review_decision === 'approved').length
+          const revisionAnswers = answers.filter((answer) => answer.review_status === 'needs_revision' || answer.review_decision === 'needs_revision').length
+          const pendingAnswers = answers.filter((answer) =>
+            answer.review_status === 'pending_review' && answer.processing_status === 'pending').length
+          const allAnswersAccepted = lesson.status === 'completed' && acceptedAnswers >= lesson.total_questions
           return <article className="student-lesson-card" key={lesson.lesson_id}>
             <button className="student-lesson-toggle" type="button" aria-expanded={expanded} onClick={() => toggleLesson(lesson)}>
               <span className="student-lesson-number">{lesson.position}</span>
@@ -631,10 +636,32 @@ export default function StudentsPage({
               )}>{lessonLabel(lesson)}</span>
               <span className="student-lesson-chevron" aria-hidden="true">{expanded ? '−' : '+'}</span>
             </button>
+            {isCurator && activeCourse.mode === 'curator' && lesson.pending_reviews > 0 && <div className="student-lesson-review-action">
+              <button className="primary-button" type="button"
+                onClick={() => {
+                  setExpandedLessonIDs((current) => current.includes(lesson.lesson_id) ? current : [...current, lesson.lesson_id])
+                  void loadLessonAnswers(lesson, true)
+                }}>Проверить урок · {lesson.pending_reviews}</button>
+            </div>}
             {expanded && <div className="student-lesson-content">
               {answersLoading[lesson.lesson_id] && <p className="catalog-message" role="status">Загружаем ответы и историю попыток…</p>}
               {answersErrors[lesson.lesson_id] && <div className="catalog-error" role="alert"><span>{answersErrors[lesson.lesson_id]}</span>
                 <button className="secondary-button" type="button" onClick={() => void loadLessonAnswers(lesson, true)}>Повторить</button></div>}
+              {!answersLoading[lesson.lesson_id] && answersLoaded[lesson.lesson_id] && <div className="review-lesson-summary">
+                <div className="review-lesson-summary-heading">
+                  <div><p className="eyebrow">ПРОВЕРКА УРОКА</p><strong>{acceptedAnswers} из {lesson.total_questions} ответов принято</strong></div>
+                  <span className={'review-state review-state--' + (allAnswersAccepted ? 'approved' : pendingAnswers > 0 ? 'pending' : revisionAnswers > 0 ? 'revision' : 'neutral')}>
+                    {allAnswersAccepted ? 'Завершён' : lessonLabel(lesson)}
+                  </span>
+                </div>
+                <div className="review-lesson-summary-stats">
+                  <span>Всего вопросов: <strong>{lesson.total_questions}</strong></span>
+                  <span>Ожидает проверки: <strong>{pendingAnswers}</strong></span>
+                  <span>Принято: <strong>{acceptedAnswers}</strong></span>
+                  <span>Требует исправления: <strong>{revisionAnswers}</strong></span>
+                </div>
+                {allAnswersAccepted && <p className="review-lesson-complete" role="status">Все ответы приняты. Урок завершён.</p>}
+              </div>}
               {!answersLoading[lesson.lesson_id] && answersLoaded[lesson.lesson_id] && answers.map((answer) => {
                 const latest = latestAttempt(answer)
                 const options = questionOptions.find((question) => question.id === answer.question_id)?.options ?? []
@@ -658,6 +685,12 @@ export default function StudentsPage({
                   {answer.review_feedback && <p className="curator-review-feedback"><strong>Комментарий куратора:</strong> {answer.review_feedback}
                     {answer.reviewer_display_name ? ` · ${answer.reviewer_display_name}` : ''}{answer.reviewed_at ? ` · ${dateText(answer.reviewed_at)}` : ''}
                   </p>}
+                  {!answer.review_feedback && answer.attempts.slice(1).find((attempt) => attempt.review_feedback)?.review_feedback &&
+                    <p className="curator-review-feedback"><strong>Предыдущее замечание куратора:</strong> {answer.attempts.slice(1).find((attempt) => attempt.review_feedback)?.review_feedback}</p>}
+                  {selectedOptions.length > 0 && <div className="curator-selected-options">
+                    <span>Выбранные варианты</span>
+                    <p>{selectedOptions.map((option) => option.text).join('\n')}</p>
+                  </div>}
                   {activeCourse.mode === 'ai' && latest?.explanation && <p className="curator-review-feedback"><strong>Пояснение ИИ:</strong> {latest.explanation}</p>}
                   {activeCourse.mode === 'ai' && Boolean(latest?.missing_points.length) &&
                     <p className="answer-processing-note">Не раскрыты темы: {latest?.missing_points.join(' · ')}</p>}
