@@ -95,6 +95,7 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
   return <section className="section-page communications-page">
     <div className="welcome-row"><div><p className="eyebrow">СВЯЗЬ С TELEGRAM</p><h1>Уведомления</h1>
       <p className="page-subtitle">Привяжите личный Telegram-аккаунт и отслеживайте состояние уведомлений о новых сообщениях учеников.</p>
+      <p className="telegram-help-note">Уведомления для: {staff.display_name}</p>
     </div><button className="secondary-button" type="button" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Обновить</button></div>
     {error && <p className="auth-inline-error" role="alert">{error}</p>}
     {notice && <p className="management-notice" role="status">{notice}</p>}

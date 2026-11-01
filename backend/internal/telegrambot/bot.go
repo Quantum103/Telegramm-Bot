@@ -322,7 +322,9 @@ func NewBotWithChapterPublisherAndConversations(api TelegramAPI, students Studen
 
 // NewBotWithChapterPublisherAndConversationsAndStaffTelegram adds verified curator account binding.
 func NewBotWithChapterPublisherAndConversationsAndStaffTelegram(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher, conversations StudentConversationAPI, staffTelegram StaffTelegramBotAPI) *Bot {
-	if logger == nil { logger = slog.Default() }
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
 		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
@@ -485,9 +487,13 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 }
 
 func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (bool, bool) {
-	if b.staffTelegram == nil || message.From == nil { return false, true }
+	if b.staffTelegram == nil || message.From == nil {
+		return false, true
+	}
 	account, err := b.staffTelegram.FindByTelegramID(ctx, message.From.ID)
-	if errors.Is(err, domain.ErrNotFound) { return false, true }
+	if errors.Is(err, domain.ErrNotFound) {
+		return false, true
+	}
 	if err != nil {
 		b.logger.Error("не удалось проверить Telegram-привязку сотрудника", "telegram_user_id", message.From.ID, "error", err)
 		b.send(ctx, message.Chat.ID, "Не удалось проверить учётную запись. Повторите сообщение позже.")
@@ -503,7 +509,9 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 	}
 	fields := strings.Fields(strings.TrimSpace(message.Text))
 	command := ""
-	if len(fields) > 0 && strings.HasPrefix(fields[0], "/") { command = strings.ToLower(strings.SplitN(fields[0], "@", 2)[0]) }
+	if len(fields) > 0 && strings.HasPrefix(fields[0], "/") {
+		command = strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
+	}
 	if command == "/start" {
 		if err := b.staffTelegram.RestoreNotifications(ctx, account.StaffID); err != nil {
 			b.logger.Error("не удалось восстановить уведомления куратора", "staff_id", account.StaffID, "error", err)
@@ -518,24 +526,31 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 }
 
 func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user User, fields []string) {
-	if b.staffTelegram == nil { b.send(ctx, chatID, "Привязка Telegram сотрудника пока недоступна."); return }
+	if b.staffTelegram == nil {
+		b.send(ctx, chatID, "Привязка Telegram сотрудника пока недоступна.")
+		return
+	}
 	if chatID != user.ID || len(fields) != 2 {
 		b.send(ctx, chatID, "Для привязки откройте личный чат с ботом и отправьте команду /link КОД из веб-панели.")
 		return
 	}
 	account, err := b.staffTelegram.BindTelegramAccount(ctx, user.ID, user.Username, fields[1])
 	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
-		b.send(ctx, chatID, "Код привязки недействителен или истёк. Создайте новый код в веб-панели."); return
+		b.send(ctx, chatID, "Код привязки недействителен или истёк. Создайте новый код в веб-панели.")
+		return
 	}
 	if errors.Is(err, domain.ErrInvalidState) {
-		b.send(ctx, chatID, "Привязка недоступна: учётная запись отключена или у неё больше нет роли куратора."); return
+		b.send(ctx, chatID, "Привязка недоступна: учётная запись отключена или у неё больше нет роли куратора.")
+		return
 	}
 	if errors.Is(err, domain.ErrConflict) {
-		b.send(ctx, chatID, "Этот Telegram-аккаунт уже привязан к другой учётной записи."); return
+		b.send(ctx, chatID, "Этот Telegram-аккаунт уже привязан к другой учётной записи.")
+		return
 	}
 	if err != nil {
 		b.logger.Error("не удалось привязать Telegram к учётной записи", "telegram_user_id", user.ID, "error", err)
-		b.send(ctx, chatID, "Не удалось завершить привязку из-за временной ошибки. Создайте новый код позже."); return
+		b.send(ctx, chatID, "Не удалось завершить привязку из-за временной ошибки. Создайте новый код позже.")
+		return
 	}
 	b.send(ctx, chatID, "Telegram успешно привязан к учётной записи «"+account.DisplayName+"». Уведомления о новых сообщениях будут приходить сюда. Отвечайте ученикам в веб-панели.")
 }

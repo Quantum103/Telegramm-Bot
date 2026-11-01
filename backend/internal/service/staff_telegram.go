@@ -32,14 +32,20 @@ func NewStaffTelegramService(store StaffTelegramStore) *StaffTelegramService {
 }
 
 func (s *StaffTelegramService) GetBindingStatus(ctx context.Context, staffID int64) (domain.StaffTelegramBindingStatus, error) {
-	if staffID <= 0 { return domain.StaffTelegramBindingStatus{}, domain.ErrInvalidInput }
+	if staffID <= 0 {
+		return domain.StaffTelegramBindingStatus{}, domain.ErrInvalidInput
+	}
 	return s.store.GetBindingStatus(ctx, staffID)
 }
 
 func (s *StaffTelegramService) IssueLinkToken(ctx context.Context, staffID int64) (domain.StaffTelegramLinkToken, error) {
-	if staffID <= 0 { return domain.StaffTelegramLinkToken{}, domain.ErrInvalidInput }
+	if staffID <= 0 {
+		return domain.StaffTelegramLinkToken{}, domain.ErrInvalidInput
+	}
 	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil { return domain.StaffTelegramLinkToken{}, errors.New("не удалось создать код Telegram-привязки") }
+	if _, err := rand.Read(raw); err != nil {
+		return domain.StaffTelegramLinkToken{}, errors.New("не удалось создать код Telegram-привязки")
+	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	expiresAt := s.now().Add(staffTelegramLinkTTL)
 	if err := s.store.IssueLinkToken(ctx, staffID, auth.HashToken(token), expiresAt); err != nil {
@@ -49,26 +55,36 @@ func (s *StaffTelegramService) IssueLinkToken(ctx context.Context, staffID int64
 }
 
 func (s *StaffTelegramService) BindTelegramAccount(ctx context.Context, telegramID int64, username, token string) (domain.StaffTelegramAccount, error) {
-	if telegramID <= 0 || len(token) != base64.RawURLEncoding.EncodedLen(32) { return domain.StaffTelegramAccount{}, domain.ErrInvalidInput }
+	if telegramID <= 0 || len(token) != base64.RawURLEncoding.EncodedLen(32) {
+		return domain.StaffTelegramAccount{}, domain.ErrInvalidInput
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != token {
 		return domain.StaffTelegramAccount{}, domain.ErrInvalidInput
 	}
-	if len(username) > 64 { username = username[:64] }
+	if len(username) > 64 {
+		username = username[:64]
+	}
 	return s.store.BindTelegramAccount(ctx, telegramID, username, auth.HashToken(token))
 }
 
 func (s *StaffTelegramService) FindByTelegramID(ctx context.Context, telegramID int64) (domain.StaffTelegramAccount, error) {
-	if telegramID <= 0 { return domain.StaffTelegramAccount{}, domain.ErrInvalidInput }
+	if telegramID <= 0 {
+		return domain.StaffTelegramAccount{}, domain.ErrInvalidInput
+	}
 	return s.store.FindByTelegramID(ctx, telegramID)
 }
 
 func (s *StaffTelegramService) RestoreNotifications(ctx context.Context, staffID int64) error {
-	if staffID <= 0 { return domain.ErrInvalidInput }
+	if staffID <= 0 {
+		return domain.ErrInvalidInput
+	}
 	return s.store.RestoreNotifications(ctx, staffID)
 }
 
 func (s *StaffTelegramService) ListNotifications(ctx context.Context, staffID int64) ([]domain.CuratorNotification, error) {
-	if staffID <= 0 { return nil, domain.ErrInvalidInput }
+	if staffID <= 0 {
+		return nil, domain.ErrInvalidInput
+	}
 	return s.store.ListNotifications(ctx, staffID, 50)
 }

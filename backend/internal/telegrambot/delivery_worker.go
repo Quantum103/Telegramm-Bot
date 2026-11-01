@@ -29,8 +29,8 @@ type ConversationDeliveryQueue interface {
 
 // DeliveryWorker отправляет ответы куратора через уже используемый Telegram Bot API client.
 type DeliveryWorker struct {
-	queue  ConversationDeliveryQueue
-	api    TelegramAPI
+	queue    ConversationDeliveryQueue
+	api      TelegramAPI
 	logger   *slog.Logger
 	panelURL string
 }
@@ -160,7 +160,7 @@ func (w *DeliveryWorker) conversationURL(conversationID int64) string {
 
 var (
 	notificationEmailPattern = regexp.MustCompile(`(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`)
-	notificationURLPattern = regexp.MustCompile(`(?i)https?://[^\s]+`)
+	notificationURLPattern   = regexp.MustCompile(`(?i)https?://[^\s]+`)
 	notificationPhonePattern = regexp.MustCompile(`(?:\+|00)[0-9][0-9 ()-]{7,}[0-9]`)
 	notificationTokenPattern = regexp.MustCompile(`[0-9]{5,}:[A-Za-z0-9_-]{20,}`)
 )

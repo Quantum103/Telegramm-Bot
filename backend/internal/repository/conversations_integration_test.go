@@ -340,12 +340,16 @@ func TestCuratorNotificationClaimIsConcurrentAndLeaseRecovers(t *testing.T) {
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 887767, BodyText: "Проверка конкурентного захвата",
 	})
-	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	if err != nil {
+		t.Fatalf("создать сообщение ученика: %v", err)
+	}
 	// Повтор того же update не должен создавать вторую задачу.
 	if _, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 887767, BodyText: "Проверка конкурентного захвата",
-	}); err != nil { t.Fatalf("повторить update: %v", err) }
+	}); err != nil {
+		t.Fatalf("повторить update: %v", err)
+	}
 	var count int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM conversation_message_deliveries WHERE message_id = $1 AND channel = 'curator_telegram'", message.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("ожидалась одна задача после повторного update: count=%d err=%v", count, err)
@@ -362,8 +366,13 @@ func TestCuratorNotificationClaimIsConcurrentAndLeaseRecovers(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			item, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
-			if errors.Is(err, ErrNotFound) { return }
-			if err != nil { failures <- err; return }
+			if errors.Is(err, ErrNotFound) {
+				return
+			}
+			if err != nil {
+				failures <- err
+				return
+			}
 			mu.Lock()
 			claimed++
 			claimedID = item.ID
@@ -372,7 +381,9 @@ func TestCuratorNotificationClaimIsConcurrentAndLeaseRecovers(t *testing.T) {
 	}
 	wait.Wait()
 	close(failures)
-	for err := range failures { t.Errorf("параллельный claim: %v", err) }
+	for err := range failures {
+		t.Errorf("параллельный claim: %v", err)
+	}
 	if claimed != 1 || claimedID == 0 {
 		t.Fatalf("задачу должен захватить ровно один worker: claimed=%d id=%d", claimed, claimedID)
 	}
@@ -380,7 +391,9 @@ func TestCuratorNotificationClaimIsConcurrentAndLeaseRecovers(t *testing.T) {
 		t.Fatalf("имитировать просроченный lease: %v", err)
 	}
 	recovered, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
-	if err != nil { t.Fatalf("восстановить просроченную задачу: %v", err) }
+	if err != nil {
+		t.Fatalf("восстановить просроченную задачу: %v", err)
+	}
 	if recovered.ID != claimedID || recovered.AttemptCount != 2 {
 		t.Fatalf("просроченная задача не была восстановлена: %+v", recovered)
 	}
@@ -400,12 +413,16 @@ func TestCuratorNotificationFollowsNewAssignment(t *testing.T) {
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 887768, BodyText: "Сообщение перед переводом",
 	})
-	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	if err != nil {
+		t.Fatalf("создать сообщение ученика: %v", err)
+	}
 	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator2ID); err != nil {
 		t.Fatalf("передать ученика новому куратору: %v", err)
 	}
 	delivery, err := NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
-	if err != nil { t.Fatalf("захватить перенаправленное уведомление: %v", err) }
+	if err != nil {
+		t.Fatalf("захватить перенаправленное уведомление: %v", err)
+	}
 	if delivery.MessageID != message.ID || delivery.RecipientStaffID != fixture.curator2ID || delivery.RecipientChatID != newCuratorTelegramID {
 		t.Fatalf("уведомление не перенаправлено текущему куратору: %+v", delivery)
 	}
@@ -421,9 +438,13 @@ func TestCuratorNotificationRequiresLinkedActiveCurator(t *testing.T) {
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 887769, BodyText: "Уведомление без привязки",
 	})
-	if err != nil { t.Fatalf("создать сообщение ученика: %v", err) }
+	if err != nil {
+		t.Fatalf("создать сообщение ученика: %v", err)
+	}
 	delivery, err := NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
-	if err != nil { t.Fatalf("захватить задачу без привязки: %v", err) }
+	if err != nil {
+		t.Fatalf("захватить задачу без привязки: %v", err)
+	}
 	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_telegram_not_linked" {
 		t.Fatalf("неверное состояние при отсутствии Telegram-привязки: %+v", delivery)
 	}
@@ -435,9 +456,13 @@ func TestCuratorNotificationRequiresLinkedActiveCurator(t *testing.T) {
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 887770, BodyText: "Уведомление отключённому куратору",
 	})
-	if err != nil { t.Fatalf("создать второе сообщение ученика: %v", err) }
+	if err != nil {
+		t.Fatalf("создать второе сообщение ученика: %v", err)
+	}
 	delivery, err = NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
-	if err != nil { t.Fatalf("захватить задачу отключённого куратора: %v", err) }
+	if err != nil {
+		t.Fatalf("захватить задачу отключённого куратора: %v", err)
+	}
 	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_account_inactive" {
 		t.Fatalf("отключённый сотрудник не был отклонён: %+v", delivery)
 	}
