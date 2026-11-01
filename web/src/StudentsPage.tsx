@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   assignStudentCurator, endStudentCuratorAssignment, getCourseLessonDetail,
   listAdminStudents, listCuratorCourseLessons, listCuratorLessonAnswers, listStaffAccounts,
@@ -225,7 +225,7 @@ export default function StudentsPage({
     }
   }
 
-  function openChat(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer) {
+  function openChat(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer, selectedOptionText = '') {
     if (!isCurator) return
     const conversation = conversations.find((item) => item.student_id === student.id)
     if (!conversation) {
@@ -237,7 +237,7 @@ export default function StudentsPage({
       '',
       `Курс: ${student.active_course?.course_title ?? 'не указан'}`,
       ...(lesson ? [`Урок: ${lesson.title}`] : []),
-      ...(answer ? [`Вопрос: ${answer.prompt}`, `Ответ ученика: ${answer.submitted_answer || 'выбран вариант ответа'}`] : []),
+      ...(answer ? [`Вопрос: ${answer.prompt}`, `Ответ ученика: ${answer.submitted_answer || selectedOptionText || 'выбран вариант ответа'}`] : []),
       ...(answer?.review_feedback ? [`Предыдущее замечание: ${answer.review_feedback}`] : []),
       '',
       'Давайте обсудим это в чате.',
@@ -285,12 +285,12 @@ export default function StudentsPage({
     }
   }
 
-  function chatButton(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer) {
+  function chatButton(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer, selectedOptionText = '') {
     if (!isCurator) return null
     const hasConversation = conversations.some((item) => item.student_id === student.id)
     return <button className="text-button" type="button" disabled={!hasConversation}
       title={hasConversation ? 'Открыть существующий диалог с учеником' : 'У ученика пока нет активного диалога'}
-      onClick={() => openChat(student, lesson, answer)}>Написать ученику</button>
+      onClick={() => openChat(student, lesson, answer, selectedOptionText)}>Написать ученику</button>
   }
 
   return <section className="section-page section-page--students">
@@ -421,7 +421,7 @@ export default function StudentsPage({
                     })}</div>
                   </details>}
                   <div className="curator-answer-actions">
-                    {chatButton(selectedStudent, lesson, answer)}
+                    {chatButton(selectedStudent, lesson, answer, selectedOptions.map((option) => option.text).join(', '))}
                     {canReview && <>
                       <button className="primary-button" type="button" disabled={busyAttemptID !== null}
                         onClick={() => void submitReview(lesson, answer, 'approved')}>{isBusy ? 'Сохраняем…' : 'Принять ответ'}</button>
