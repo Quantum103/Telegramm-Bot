@@ -206,6 +206,10 @@ func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, en
 }
 
 func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64) {
+	b.renderQuestionWithNotice(ctx, chatID, studentID, messageID, state, lesson, contextCourseID, "")
+}
+
+func (b *Bot) renderQuestionWithNotice(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64, notice string) {
 	if b.conversations != nil {
 		if err := b.conversations.SetStudentLessonMode(ctx, studentID, true); err != nil {
 			b.logger.Error("не удалось сохранить экран прохождения урока", "student_id", studentID, "error", err)
@@ -214,10 +218,10 @@ func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID i
 		}
 	}
 	key := answerStateKey{studentID: studentID, enrollmentID: state.Progress.Enrollment.ID, questionID: state.Question.ID}
-	b.renderQuestionMode(ctx, chatID, studentID, messageID, state, lesson, contextCourseID, b.isChoiceEditing(key))
+	b.renderQuestionMode(ctx, chatID, studentID, messageID, state, lesson, contextCourseID, b.isChoiceEditing(key), notice)
 }
 
-func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64, choiceEditing bool) {
+func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64, choiceEditing bool, notice string) {
 	if lesson == nil {
 		detail, err := b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID)
 		if err == nil {
@@ -248,6 +252,9 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	}
 
 	message := newTelegramHTMLBuilder(3800)
+	if strings.TrimSpace(notice) != "" {
+		message.text(notice + "\n\n")
+	}
 	message.text(fmt.Sprintf("📚 %s\n🟣 ВОПРОС %d / %d\n\n", truncate(lessonTitle, 180), number, total))
 	message.raw("<b>ВОПРОС</b>\n")
 	message.raw("<blockquote>")
@@ -401,6 +408,17 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 
 	parts := strings.Split(callback.Data, ":")
 	switch {
+	case callback.Data == "home:refresh":
+		b.showStudentHome(ctx, chatID, student.ID, messageID, "")
+	case callback.Data == "course:continue":
+		b.continueCurrentCourse(ctx, chatID, student.ID, messageID)
+	case len(parts) == 4 && parts[0] == "course" && parts[1] == "start":
+		courseID, ok := parsePositiveID(parts[3])
+		if !ok || (parts[2] != "ai" && parts[2] != "curator") {
+			b.showStaleCallback(ctx, chatID, student.ID, messageID)
+			return
+		}
+		b.startCourseWithMode(ctx, chatID, student.ID, courseID, messageID, parts[2])
 	case callback.Data == "chat:start":
 		b.startStudentChat(ctx, chatID, messageID, student)
 	case callback.Data == "chat:cancel":
@@ -420,7 +438,7 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
 			return
 		}
-		b.showLessons(ctx, chatID, student.ID, courseID, messageID)
+		b.selectCourse(ctx, chatID, student.ID, courseID, messageID)
 	case len(parts) == 2 && parts[0] == "lessons":
 		courseID, ok := parsePositiveID(parts[1])
 		if !ok {
@@ -442,7 +460,7 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
 			return
 		}
-		b.openLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
+		b.openCourseLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
 	case len(parts) > 0 && (parts[0] == "e" || parts[0] == "p" || parts[0] == "t" || parts[0] == "s" || parts[0] == "pick-edit" || parts[0] == "pick" || parts[0] == "multi-toggle" || parts[0] == "multi-submit"):
 		b.handleAnswerCallback(ctx, updateID, chatID, student.ID, messageID, parts)
 	case (len(parts) == 4 || len(parts) == 5) && parts[0] == "nav" && (parts[1] == "prev" || parts[1] == "next"):
