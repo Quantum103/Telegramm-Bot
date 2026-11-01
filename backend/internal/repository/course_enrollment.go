@@ -36,9 +36,9 @@ func (r *CourseEnrollmentRepository) Start(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var studentStatus string
-	if err := tx.QueryRow(ctx, \`
+	if err := tx.QueryRow(ctx, `
 		SELECT account_status FROM students WHERE id = $1 FOR UPDATE
-	\`, studentID).Scan(&studentStatus); err != nil {
+	`, studentID).Scan(&studentStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.CourseEnrollmentProgress{}, ErrNotFound
 		}
@@ -48,13 +48,13 @@ func (r *CourseEnrollmentRepository) Start(
 		return domain.CourseEnrollmentProgress{}, ErrInvalidState
 	}
 
-	active, activeErr := scanCourseEnrollment(tx.QueryRow(ctx, courseEnrollmentSelect+\`
+	active, activeErr := scanCourseEnrollment(tx.QueryRow(ctx, courseEnrollmentSelect+`
 		WHERE ce.student_id = $1
 		  AND ce.status IN ('in_progress', 'awaiting_curator')
 		ORDER BY ce.updated_at DESC, ce.id DESC
 		LIMIT 1
 		FOR UPDATE OF ce
-	\`, studentID))
+	`, studentID))
 	if activeErr == nil {
 		progress, progressErr := r.getProgress(ctx, tx, studentID, active.ID)
 		if progressErr != nil {
@@ -75,12 +75,12 @@ func (r *CourseEnrollmentRepository) Start(
 		return domain.CourseEnrollmentProgress{}, activeErr
 	}
 
-	paused, pausedErr := scanCourseEnrollment(tx.QueryRow(ctx, courseEnrollmentSelect+\`
+	paused, pausedErr := scanCourseEnrollment(tx.QueryRow(ctx, courseEnrollmentSelect+`
 		WHERE ce.student_id = $1 AND ce.status = 'paused'
 		ORDER BY ce.updated_at DESC, ce.id DESC
 		LIMIT 1
 		FOR UPDATE OF ce
-	\`, studentID))
+	`, studentID))
 	if pausedErr == nil {
 		if paused.CourseID != courseID {
 			progress, progressErr := r.getProgress(ctx, tx, studentID, paused.ID)
@@ -99,14 +99,14 @@ func (r *CourseEnrollmentRepository) Start(
 				return domain.CourseEnrollmentProgress{}, err
 			}
 		}
-		if _, err := tx.Exec(ctx, \`
+		if _, err := tx.Exec(ctx, `
 			UPDATE course_enrollments
 			SET status = 'in_progress',
 			    curator_staff_id = NULLIF($2, 0),
 			    started_at = COALESCE(started_at, now()),
 			    updated_at = now()
 			WHERE id = $1
-		\`, paused.ID, curatorID); err != nil {
+		`, paused.ID, curatorID); err != nil {
 			return domain.CourseEnrollmentProgress{}, mapDatabaseError("возобновить приостановленный курс", err)
 		}
 		progress, progressErr := r.getProgress(ctx, tx, studentID, paused.ID)
@@ -123,14 +123,14 @@ func (r *CourseEnrollmentRepository) Start(
 	}
 
 	var hasUnmappedLegacy bool
-	if err := tx.QueryRow(ctx, \`
+	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM lesson_enrollments
 			WHERE student_id = $1
 			  AND course_enrollment_id IS NULL
 			  AND status IN ('not_started', 'in_progress', 'paused')
 		)
-	\`, studentID).Scan(&hasUnmappedLegacy); err != nil {
+	`, studentID).Scan(&hasUnmappedLegacy); err != nil {
 		return domain.CourseEnrollmentProgress{}, mapDatabaseError("проверить старый незавершённый прогресс", err)
 	}
 	if hasUnmappedLegacy {
@@ -138,7 +138,7 @@ func (r *CourseEnrollmentRepository) Start(
 	}
 
 	var lessonCount int
-	if err := tx.QueryRow(ctx, \`
+	if err := tx.QueryRow(ctx, `
 		SELECT count(lv.id)::INTEGER
 		FROM courses c
 		LEFT JOIN course_lessons cl ON cl.course_id = c.id
@@ -150,7 +150,7 @@ func (r *CourseEnrollmentRepository) Start(
 		) lv ON TRUE
 		WHERE c.id = $1 AND c.status = 'published'
 		GROUP BY c.id
-	\`, courseID).Scan(&lessonCount); err != nil {
+	`, courseID).Scan(&lessonCount); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.CourseEnrollmentProgress{}, ErrNotFound
 		}
@@ -169,27 +169,27 @@ func (r *CourseEnrollmentRepository) Start(
 	}
 
 	var runNumber int
-	if err := tx.QueryRow(ctx, \`
+	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(max(run_number), 0) + 1
 		FROM course_enrollments
 		WHERE student_id = $1 AND course_id = $2
-	\`, studentID, courseID).Scan(&runNumber); err != nil {
+	`, studentID, courseID).Scan(&runNumber); err != nil {
 		return domain.CourseEnrollmentProgress{}, mapDatabaseError("определить номер запуска курса", err)
 	}
 
 	var enrollmentID int64
-	if err := tx.QueryRow(ctx, \`
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO course_enrollments (
 			student_id, course_id, run_number, mode, curator_staff_id,
 			status, started_at
 		)
 		VALUES ($1, $2, $3, $4, NULLIF($5, 0), 'in_progress', now())
 		RETURNING id
-	\`, studentID, courseID, runNumber, mode, curatorID).Scan(&enrollmentID); err != nil {
+	`, studentID, courseID, runNumber, mode, curatorID).Scan(&enrollmentID); err != nil {
 		return domain.CourseEnrollmentProgress{}, mapDatabaseError("создать прохождение курса", err)
 	}
 
-	tag, err := tx.Exec(ctx, \`
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO course_enrollment_lessons (
 			course_enrollment_id, lesson_id, lesson_version_id, position
 		)
@@ -202,7 +202,7 @@ func (r *CourseEnrollmentRepository) Start(
 			LIMIT 1
 		) lv ON TRUE
 		WHERE cl.course_id = $2
-	\`, enrollmentID, courseID)
+	`, enrollmentID, courseID)
 	if err != nil {
 		return domain.CourseEnrollmentProgress{}, mapDatabaseError("зафиксировать обязательные уроки курса", err)
 	}
@@ -252,7 +252,7 @@ func (r *CourseEnrollmentRepository) getProgress(
 	var progress domain.CourseEnrollmentProgress
 	var curatorID pgtype.Int8
 	var startedAt, completedAt pgtype.Timestamptz
-	err := q.QueryRow(ctx, \`
+	err := q.QueryRow(ctx, `
 		SELECT ce.id, ce.student_id, ce.course_id, c.title, ce.run_number,
 		       ce.mode, ce.curator_staff_id, ce.status, ce.started_at,
 		       ce.completed_at, ce.created_at, ce.updated_at,
@@ -271,7 +271,7 @@ func (r *CourseEnrollmentRepository) getProgress(
 		GROUP BY ce.id, c.title
 		ORDER BY ce.updated_at DESC, ce.id DESC
 		LIMIT 1
-	\`, studentID, courseEnrollmentID).Scan(
+	`, studentID, courseEnrollmentID).Scan(
 		&progress.Enrollment.ID,
 		&progress.Enrollment.StudentID,
 		&progress.Enrollment.CourseID,
@@ -361,7 +361,7 @@ func (r *CourseEnrollmentRepository) RefreshCompletion(
 	if studentID <= 0 || courseEnrollmentID <= 0 {
 		return ErrInvalidInput
 	}
-	_, err := r.pool.Exec(ctx, \`
+	_, err := r.pool.Exec(ctx, `
 		UPDATE course_enrollments ce
 		SET status = 'completed', completed_at = now(), updated_at = now()
 		WHERE ce.id = $2
@@ -381,7 +381,7 @@ func (r *CourseEnrollmentRepository) RefreshCompletion(
 		      SELECT 1 FROM course_enrollment_lessons cel
 		      WHERE cel.course_enrollment_id = ce.id
 		  )
-	\`, studentID, courseEnrollmentID)
+	`, studentID, courseEnrollmentID)
 	if err != nil {
 		return mapDatabaseError("проверить завершение курса", err)
 	}
@@ -390,7 +390,7 @@ func (r *CourseEnrollmentRepository) RefreshCompletion(
 
 func currentActiveCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (int64, error) {
 	var curatorID int64
-	err := tx.QueryRow(ctx, \`
+	err := tx.QueryRow(ctx, `
 		SELECT assignment.curator_staff_id
 		FROM student_curator_assignments assignment
 		JOIN staff_accounts curator ON curator.id = assignment.curator_staff_id
@@ -404,7 +404,7 @@ func currentActiveCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (in
 		ORDER BY assignment.assigned_at DESC, assignment.id DESC
 		LIMIT 1
 		FOR UPDATE OF assignment, curator
-	\`, studentID).Scan(&curatorID)
+	`, studentID).Scan(&curatorID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, domain.ErrNoCurator
 	}
@@ -414,13 +414,13 @@ func currentActiveCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (in
 	return curatorID, nil
 }
 
-const courseEnrollmentSelect = \`
+const courseEnrollmentSelect = `
 	SELECT ce.id, ce.student_id, ce.course_id, c.title, ce.run_number,
 	       ce.mode, ce.curator_staff_id, ce.status, ce.started_at,
 	       ce.completed_at, ce.created_at, ce.updated_at
 	FROM course_enrollments ce
 	JOIN courses c ON c.id = ce.course_id
-\`
+`
 
 func scanCourseEnrollment(row pgx.Row) (domain.CourseEnrollment, error) {
 	var enrollment domain.CourseEnrollment
