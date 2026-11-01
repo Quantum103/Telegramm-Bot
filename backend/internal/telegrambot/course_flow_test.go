@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -263,7 +264,7 @@ func TestStartRestoresSavedCourseAndQuestionAfterBotRestart(t *testing.T) {
 	messageID := api.messages[0].messageID
 	firstBot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	firstBot.handleCallback(context.Background(), testCallback("course:start:ai:10", user, messageID))
-	firstBot.handleCallback(context.Background(), testCallback("nav:next:801:1001:10", user, messageID))
+	firstBot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 	if !strings.Contains(lastEdit(t, api).text, "ВОПРОС 2 / 2") {
 		t.Fatal("test setup did not advance to the second question")
 	}
