@@ -57,8 +57,8 @@ func (s *CuratorLearningService) ReviewAttempt(
 	}
 	return s.store.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: curatorStaffID,
-		AttemptID: attemptID,
-		Decision: decision,
-		Feedback: feedback,
+		AttemptID:      attemptID,
+		Decision:       decision,
+		Feedback:       feedback,
 	})
 }
