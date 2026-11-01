@@ -169,8 +169,12 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 	revisedB := submitCuratorQueueAnswer(t, ctx, pool, studentB.ID, lessonB.enrollment.ID, lessonB.questionID, "Исправленный ответ B")
 	setCuratorQueueAttemptTime(t, ctx, pool, revisedB.AttemptID, baseTime)
 
-	lessonC := startCuratorTestLesson(t, ctx, pool, studentC.ID, runC, courseTwoLessons[0], "Ответ C")
-	setCuratorQueueAttemptTime(t, ctx, pool, lessonC.answer.AttemptID, baseTime.Add(3*time.Hour))
+	lessonC := startCuratorTestLesson(t, ctx, pool, studentC.ID, runC, courseTwoLessons[0], "Устаревшая попытка C")
+	setCuratorQueueAttemptTime(t, ctx, pool, lessonC.answer.AttemptID, baseTime.Add(2*time.Hour))
+	currentAttemptC := submitCuratorQueueAnswer(
+		t, ctx, pool, studentC.ID, lessonC.enrollment.ID, lessonC.questionID, "Актуальная попытка C",
+	)
+	setCuratorQueueAttemptTime(t, ctx, pool, currentAttemptC.AttemptID, baseTime.Add(3*time.Hour))
 
 	// Завершённый урок не должен оставаться в очереди, даже если он входит
 	// в тот же активный запуск курса, что и другой ожидающий проверки урок.
