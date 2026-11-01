@@ -1048,11 +1048,11 @@ func TestCuratorReplyDeliveryWaitsUntilStudentCompletesLesson(t *testing.T) {
 		t.Fatalf("создать урок: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO lesson_versions (lesson_id, version_number, title, status, published_at)
-		VALUES ($1, 1, 'Урок для отложенного ответа', 'published', now())
+		INSERT INTO lesson_versions (lesson_id, version_number, title, status)
+		VALUES ($1, 1, 'Урок для отложенного ответа', 'draft')
 		RETURNING id
 	`, lessonID).Scan(&versionID); err != nil {
-		t.Fatalf("создать опубликованную версию урока: %v", err)
+		t.Fatalf("создать черновик версии урока: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO lesson_questions (lesson_version_id, question_number, prompt, expected_answer)
@@ -1060,6 +1060,9 @@ func TestCuratorReplyDeliveryWaitsUntilStudentCompletesLesson(t *testing.T) {
 		RETURNING id
 	`, versionID).Scan(&questionID); err != nil {
 		t.Fatalf("создать вопрос: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE lesson_versions SET status = 'published', published_at = now() WHERE id = $1", versionID); err != nil {
+		t.Fatalf("опубликовать версию урока: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO lesson_enrollments (

@@ -577,9 +577,10 @@ func TestDeliveryWorkerIdentifiesCuratorAsMessageSender(t *testing.T) {
 	if payload.ChatID != 123456 || payload.Text != "Сообщение от куратора — Анна Иванова:\n\nДобрый день! Чем могу помочь?" {
 		t.Fatalf("ученик должен видеть явного автора сообщения: %+v", payload)
 	}
-	if len(payload.ReplyMarkup.InlineKeyboard) != 2 ||
+	if len(payload.ReplyMarkup.InlineKeyboard) != 1 ||
+		len(payload.ReplyMarkup.InlineKeyboard[0]) != 2 ||
 		payload.ReplyMarkup.InlineKeyboard[0][0].CallbackData != "courses" ||
-		payload.ReplyMarkup.InlineKeyboard[1][0].CallbackData != "chat:start" {
+		payload.ReplyMarkup.InlineKeyboard[0][1].CallbackData != "chat:start" {
 		t.Fatalf("после ответа куратора ученик должен получить кнопки навигации: %+v", payload.ReplyMarkup)
 	}
 }
