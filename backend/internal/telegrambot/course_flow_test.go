@@ -15,20 +15,20 @@ import (
 type fakeCourseLearning struct {
 	*fakeLearning
 
-	courseMu        sync.Mutex
-	runsByStudent   map[int64]domain.CourseEnrollmentProgress
-	lessonsByRun    map[int64][]domain.CourseEnrollmentLesson
-	nextRunID       int64
+	courseMu         sync.Mutex
+	runsByStudent    map[int64]domain.CourseEnrollmentProgress
+	lessonsByRun     map[int64][]domain.CourseEnrollmentLesson
+	nextRunID        int64
 	startCourseCalls int
 	curatorAvailable bool
 }
 
 func newFakeCourseLearning(catalog *fakeCatalog) *fakeCourseLearning {
 	return &fakeCourseLearning{
-		fakeLearning:    newFakeLearning(catalog),
-		runsByStudent:   make(map[int64]domain.CourseEnrollmentProgress),
-		lessonsByRun:    make(map[int64][]domain.CourseEnrollmentLesson),
-		nextRunID:      800,
+		fakeLearning:     newFakeLearning(catalog),
+		runsByStudent:    make(map[int64]domain.CourseEnrollmentProgress),
+		lessonsByRun:     make(map[int64][]domain.CourseEnrollmentLesson),
+		nextRunID:        800,
 		curatorAvailable: true,
 	}
 }
