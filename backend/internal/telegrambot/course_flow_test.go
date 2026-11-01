@@ -222,6 +222,33 @@ func TestCourseModeChoiceStartsAICourseAndFirstLesson(t *testing.T) {
 	}
 }
 
+func TestCuratorModeSelectionConfirmsAndOpensFirstLesson(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, _ := fixture()
+	learning := newFakeCourseLearning(catalog)
+	bot := newCourseTestBot(api, students, catalog, learning)
+	user := testUser()
+
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("course:start:curator:10", user, messageID))
+
+	firstQuestion := lastEdit(t, api)
+	if !strings.Contains(firstQuestion.text, "Вы будете проходить этот курс с куратором") ||
+		!strings.Contains(firstQuestion.text, "ВОПРОС 1 / 2") {
+		t.Fatalf("curator selection was not confirmed before the first lesson: %q", firstQuestion.text)
+	}
+	active, err := learning.ActiveCourse(context.Background(), students.byID[user.ID].ID)
+	if err != nil || active.Enrollment.Mode != "curator" || active.Enrollment.CourseID != 10 {
+		t.Fatalf("curator mode was not stored in backend: run=%+v err=%v", active, err)
+	}
+	if learning.nextRunID != 801 {
+		t.Fatalf("curator choice should create exactly one course run: nextRunID=%d", learning.nextRunID)
+	}
+}
+
 func TestCuratorModeFailureDoesNotCreateRunOrSwitchToAI(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
