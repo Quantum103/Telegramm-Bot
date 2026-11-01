@@ -56,7 +56,7 @@ type ConversationDelivery struct {
 	ConversationID           int64
 	StudentDisplayName       string
 	MessageSenderDisplayName string
-	StudentLessonInProgress   bool
+	StudentLessonInProgress  bool
 	BodyText                 string
 	AttemptCount             int
 	PreparationErrorCode     string

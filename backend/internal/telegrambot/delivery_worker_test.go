@@ -546,11 +546,11 @@ func (f workerRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) 
 
 func TestDeliveryWorkerIdentifiesCuratorAsMessageSender(t *testing.T) {
 	var payload struct {
-		ChatID int64  `json:"chat_id"`
-		Text   string `json:"text"`
+		ChatID      int64  `json:"chat_id"`
+		Text        string `json:"text"`
 		ReplyMarkup struct {
 			InlineKeyboard [][]struct {
-				Text string `json:"text"`
+				Text         string `json:"text"`
 				CallbackData string `json:"callback_data"`
 			} `json:"inline_keyboard"`
 		} `json:"reply_markup"`
