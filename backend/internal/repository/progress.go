@@ -72,6 +72,11 @@ func (r *EnrollmentRepository) SetCurrentQuestion(ctx context.Context, studentID
 		      FROM lesson_questions q
 		      WHERE q.id = $3 AND q.lesson_version_id = e.lesson_version_id
 		  )
+		  AND (e.course_enrollment_id IS NULL OR EXISTS (
+		      SELECT 1 FROM course_enrollments ce
+		      WHERE ce.id = e.course_enrollment_id
+		        AND ce.status = 'in_progress'
+		  ))
 	`, studentID, enrollmentID, questionID)
 	if err != nil {
 		return mapDatabaseError("сохранить позицию прохождения", err)
