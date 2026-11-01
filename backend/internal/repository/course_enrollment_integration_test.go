@@ -333,6 +333,17 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("одобрить последнюю попытку: %v", err)
 		}
+		automaticProgress, err := courses.GetForStudent(ctx, student.ID, run.Enrollment.ID)
+		if err != nil {
+			t.Fatalf("получить прогресс после автоматического завершения урока: %v", err)
+		}
+		if index == 0 && (automaticProgress.Enrollment.Status != "in_progress" || automaticProgress.CompletedLessons != 1) {
+			t.Fatalf("курс должен продолжаться после первого завершённого урока: %+v", automaticProgress)
+		}
+		if index == len(lessonIDs)-1 &&
+			(automaticProgress.Enrollment.Status != "completed" || automaticProgress.CompletedLessons != len(lessonIDs) || !automaticProgress.IsComplete) {
+			t.Fatalf("последний одобренный ответ должен автоматически завершить курс: %+v", automaticProgress)
+		}
 		if _, err := enrollments.Complete(ctx, student.ID, enrollment.ID); err != nil {
 			t.Fatalf("завершить урок после решения куратора: %v", err)
 		}

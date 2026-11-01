@@ -427,8 +427,24 @@ func (r *CourseEnrollmentRepository) ListLessons(
 		        ) latest ON TRUE
 		        LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
+		          AND ce.mode = 'curator'
 		          AND latest.processing_status = 'pending'
 		          AND review.id IS NULL),
+		       (SELECT CASE WHEN EXISTS (
+		            SELECT 1
+		            FROM lesson_questions q
+		            JOIN LATERAL (
+		                SELECT aa.id
+		                FROM answer_attempts aa
+		                WHERE aa.enrollment_id = le.id AND aa.question_id = q.id
+		                ORDER BY aa.created_at DESC, aa.id DESC
+		                LIMIT 1
+		            ) latest ON TRUE
+		            JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
+		            WHERE q.lesson_version_id = cel.lesson_version_id
+		              AND ce.mode = 'curator'
+		              AND review.decision = 'needs_revision'
+		        ) THEN 1 ELSE 0 END),
 		       (SELECT count(*)::INTEGER
 		        FROM lesson_questions q
 		        JOIN LATERAL (
@@ -440,6 +456,7 @@ func (r *CourseEnrollmentRepository) ListLessons(
 		        ) latest ON TRUE
 		        JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
+		          AND ce.mode = 'curator'
 		          AND review.decision = 'needs_revision')
 		FROM course_enrollments ce
 		JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
@@ -462,7 +479,7 @@ func (r *CourseEnrollmentRepository) ListLessons(
 		if err := rows.Scan(
 			&lesson.LessonID, &lesson.LessonVersionID, &lesson.Position, &lesson.Title,
 			&enrollmentID, &lesson.Status, &lesson.TotalQuestions, &lesson.AnsweredQuestions,
-			&lesson.PendingReviews, &lesson.NeedsRevision,
+			&lesson.PendingReviews, &lesson.NeedsRevision, &lesson.NeedsRevisionAnswers,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать обязательный урок курса", err)
 		}

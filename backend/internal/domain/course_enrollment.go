@@ -36,9 +36,10 @@ type CourseEnrollmentLesson struct {
 	EnrollmentID      *int64 `json:"enrollment_id,omitempty"`
 	Status            string `json:"status"`
 	TotalQuestions    int    `json:"total_questions"`
-	AnsweredQuestions int    `json:"answered_questions"`
-	PendingReviews    int    `json:"pending_reviews"`
-	NeedsRevision     int    `json:"needs_revision"`
+	AnsweredQuestions    int `json:"answered_questions"`
+	PendingReviews       int `json:"pending_reviews"`
+	NeedsRevision        int `json:"needs_revision"`
+	NeedsRevisionAnswers int `json:"needs_revision_answers"`
 }
 
 // AnswerAttemptReview — неизменяемое решение куратора по конкретной отправленной попытке.

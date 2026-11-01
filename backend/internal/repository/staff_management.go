@@ -193,7 +193,8 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		       active_course.id, active_course.course_id, active_course.course_title,
 		       active_course.mode, active_course.status,
 		       active_course.total_lessons, active_course.completed_lessons,
-		       active_course.pending_reviews, active_course.needs_revision
+		       active_course.submitted_answers, active_course.pending_reviews,
+		       active_course.needs_revision, active_course.needs_revision_answers
 		FROM students AS student
 		LEFT JOIN LATERAL (
 			SELECT assignment.curator_staff_id, curator.display_name AS curator_display_name
@@ -212,14 +213,18 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		) AS progress ON TRUE
 		LEFT JOIN LATERAL (
 			SELECT ce.id, ce.course_id, course.title AS course_title, ce.mode, ce.status,
-			       count(cel.lesson_id)::INTEGER AS total_lessons,
-			       count(cel.lesson_id) FILTER (WHERE lesson.status = 'completed')::INTEGER AS completed_lessons,
+			       count(DISTINCT cel.lesson_id)::INTEGER AS total_lessons,
+			       count(DISTINCT cel.lesson_id) FILTER (WHERE lesson.status = 'completed')::INTEGER AS completed_lessons,
+			       count(DISTINCT submitted_answer.id)::INTEGER AS submitted_answers,
 			       CASE WHEN ce.mode = 'curator'
 			            THEN COALESCE(review_totals.pending_reviews, 0)
 			            ELSE 0 END::INTEGER AS pending_reviews,
 			       CASE WHEN ce.mode = 'curator'
 			            THEN COALESCE(review_totals.needs_revision, 0)
-			            ELSE 0 END::INTEGER AS needs_revision
+			            ELSE 0 END::INTEGER AS needs_revision,
+			       CASE WHEN ce.mode = 'curator'
+			            THEN COALESCE(review_totals.needs_revision_answers, 0)
+			            ELSE 0 END::INTEGER AS needs_revision_answers
 			FROM course_enrollments ce
 			JOIN courses course ON course.id = ce.course_id
 			LEFT JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
@@ -227,14 +232,22 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			  ON lesson.course_enrollment_id = ce.id
 			 AND lesson.lesson_id = cel.lesson_id
 			 AND lesson.lesson_version_id = cel.lesson_version_id
+			LEFT JOIN student_answers submitted_answer
+			  ON submitted_answer.enrollment_id = lesson.id
+			 AND submitted_answer.lesson_version_id = cel.lesson_version_id
 			LEFT JOIN LATERAL (
 				SELECT
 					count(*) FILTER (
-						WHERE latest_attempt.id IS NOT NULL AND review.id IS NULL
+						WHERE latest_attempt.id IS NOT NULL
+						  AND latest_attempt.processing_status = 'pending'
+						  AND review.id IS NULL
 					)::INTEGER AS pending_reviews,
 					count(DISTINCT review_lesson.lesson_id) FILTER (
 						WHERE review.decision = 'needs_revision'
-					)::INTEGER AS needs_revision
+					)::INTEGER AS needs_revision,
+					count(*) FILTER (
+						WHERE review.decision = 'needs_revision'
+					)::INTEGER AS needs_revision_answers
 				FROM course_enrollment_lessons review_lesson
 				JOIN lesson_questions question
 				  ON question.lesson_version_id = review_lesson.lesson_version_id
@@ -243,7 +256,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 				 AND review_enrollment.lesson_id = review_lesson.lesson_id
 				 AND review_enrollment.lesson_version_id = review_lesson.lesson_version_id
 				LEFT JOIN LATERAL (
-					SELECT attempt.id
+					SELECT attempt.id, attempt.processing_status
 					FROM answer_attempts attempt
 					WHERE attempt.enrollment_id = review_enrollment.id
 					  AND attempt.question_id = question.id
@@ -256,7 +269,8 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			) AS review_totals ON TRUE
 			WHERE ce.student_id = student.id
 			  AND ce.status IN ('in_progress', 'awaiting_curator', 'paused')
-			GROUP BY ce.id, course.title, review_totals.pending_reviews, review_totals.needs_revision
+			GROUP BY ce.id, course.title, review_totals.pending_reviews,
+			         review_totals.needs_revision, review_totals.needs_revision_answers
 			ORDER BY ce.updated_at DESC, ce.id DESC
 			LIMIT 1
 		) AS active_course ON TRUE
@@ -276,7 +290,8 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		var lastActiveAt, lastLearningAt pgtype.Timestamptz
 		var curatorID, activeCourseEnrollmentID, activeCourseID pgtype.Int8
 		var activeCourseTotalLessons, activeCourseCompletedLessons pgtype.Int4
-		var activeCoursePendingReviews, activeCourseNeedsRevision pgtype.Int4
+		var activeCourseSubmittedAnswers, activeCoursePendingReviews pgtype.Int4
+		var activeCourseNeedsRevision, activeCourseNeedsRevisionAnswers pgtype.Int4
 		if err := rows.Scan(
 			&student.ID, &student.TelegramID, &student.DisplayName, &username,
 			&preferredName, &student.AccountStatus, &student.RegisteredAt, &lastActiveAt,
@@ -285,7 +300,8 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			&activeCourseEnrollmentID, &activeCourseID, &activeCourseTitle,
 			&activeCourseMode, &activeCourseStatus,
 			&activeCourseTotalLessons, &activeCourseCompletedLessons,
-			&activeCoursePendingReviews, &activeCourseNeedsRevision,
+			&activeCourseSubmittedAnswers, &activeCoursePendingReviews,
+			&activeCourseNeedsRevision, &activeCourseNeedsRevisionAnswers,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать ученика с прогрессом", err)
 		}
@@ -320,10 +336,12 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 				CourseTitle:        activeCourseTitle.String,
 				Mode:               activeCourseMode.String,
 				Status:             activeCourseStatus.String,
-				TotalLessons:       int(activeCourseTotalLessons.Int32),
-				CompletedLessons:   int(activeCourseCompletedLessons.Int32),
-				PendingReviews:     int(activeCoursePendingReviews.Int32),
-				NeedsRevision:      int(activeCourseNeedsRevision.Int32),
+				TotalLessons:         int(activeCourseTotalLessons.Int32),
+				CompletedLessons:     int(activeCourseCompletedLessons.Int32),
+				SubmittedAnswers:     int(activeCourseSubmittedAnswers.Int32),
+				PendingReviews:       int(activeCoursePendingReviews.Int32),
+				NeedsRevision:        int(activeCourseNeedsRevision.Int32),
+				NeedsRevisionAnswers: int(activeCourseNeedsRevisionAnswers.Int32),
 			}
 		}
 		students = append(students, student)

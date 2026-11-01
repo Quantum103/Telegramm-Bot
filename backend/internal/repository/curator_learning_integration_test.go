@@ -272,7 +272,8 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 	afterRevisionStudents, err := staff.ListStudentsForStaff(ctx, currentCuratorID)
 	if err != nil || len(afterRevisionStudents) != 1 || afterRevisionStudents[0].ActiveCourse == nil ||
 		afterRevisionStudents[0].ActiveCourse.PendingReviews != 0 ||
-		afterRevisionStudents[0].ActiveCourse.NeedsRevision != 1 {
+		afterRevisionStudents[0].ActiveCourse.NeedsRevision != 1 ||
+		afterRevisionStudents[0].ActiveCourse.NeedsRevisionAnswers != 1 {
 		t.Fatalf("сводка должна учитывать урок с запросом исправления: students=%+v err=%v", afterRevisionStudents, err)
 	}
 
@@ -308,7 +309,8 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 	afterResubmissionStudents, err := staff.ListStudentsForStaff(ctx, currentCuratorID)
 	if err != nil || len(afterResubmissionStudents) != 1 || afterResubmissionStudents[0].ActiveCourse == nil ||
 		afterResubmissionStudents[0].ActiveCourse.PendingReviews != 1 ||
-		afterResubmissionStudents[0].ActiveCourse.NeedsRevision != 0 {
+		afterResubmissionStudents[0].ActiveCourse.NeedsRevision != 0 ||
+		afterResubmissionStudents[0].ActiveCourse.NeedsRevisionAnswers != 0 {
 		t.Fatalf("после повторной отправки счётчики урока некорректны: students=%+v err=%v", afterResubmissionStudents, err)
 	}
 
@@ -328,6 +330,19 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 	if err != nil || approved.Decision != "approved" {
 		t.Fatalf("не удалось принять исправленный ответ: review=%+v err=%v", approved, err)
 	}
+	var automaticLessonStatus, automaticCourseStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT lesson.status, course.status
+		FROM lesson_enrollments lesson
+		JOIN course_enrollments course ON course.id = lesson.course_enrollment_id
+		WHERE lesson.id = $1
+	`, lessonRun.enrollment.ID).Scan(&automaticLessonStatus, &automaticCourseStatus); err != nil {
+		t.Fatalf("проверить автоматические статусы после последнего принятого ответа: %v", err)
+	}
+	if automaticLessonStatus != "completed" || automaticCourseStatus != "completed" {
+		t.Fatalf("последнее принятое исправление должно автоматически завершить урок и курс: lesson=%s course=%s",
+			automaticLessonStatus, automaticCourseStatus)
+	}
 	completed, err := NewEnrollmentRepository(pool).Complete(ctx, student.ID, lessonRun.enrollment.ID)
 	if err != nil || completed.Status != "completed" {
 		t.Fatalf("одобренный урок нельзя завершить: enrollment=%+v err=%v", completed, err)
@@ -345,6 +360,95 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 		finalAnswers[0].Attempts[1].ReviewerStaffID == nil ||
 		*finalAnswers[0].Attempts[1].ReviewerStaffID != currentCuratorID {
 		t.Fatalf("финальная история ответов некорректна: answers=%+v err=%v", finalAnswers, err)
+	}
+}
+
+func TestCuratorRejectsSupersededAttemptsAndFailedAttemptsAreNotPending(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	student := createCuratorTestStudent(t, ctx, pool, "curator-stale-attempt")
+	adminID := createStaffForCourseTest(t, ctx, pool, "administrator")
+	curatorID := createStaffForCourseTest(t, ctx, pool, "curator")
+	courseID, lessonIDs, _ := createCourseForEnrollmentTest(
+		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Курс устаревших попыток", 1,
+	)
+	staff := NewStaffManagementRepository(pool)
+	if err := staff.AssignStudentCurator(ctx, adminID, student.ID, curatorID); err != nil {
+		t.Fatalf("назначить куратора: %v", err)
+	}
+	run, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, courseID, "curator")
+	if err != nil {
+		t.Fatalf("начать курс: %v", err)
+	}
+	lesson := startCuratorTestLesson(t, ctx, pool, student.ID, run, lessonIDs[0], "Первая попытка")
+	answers := NewAnswerRepository(pool)
+	second, err := answers.Submit(ctx, AnswerSubmission{
+		StudentID: student.ID, EnrollmentID: lesson.enrollment.ID,
+		QuestionID: lesson.questionID, AnswerText: "Вторая попытка",
+	})
+	if err != nil {
+		t.Fatalf("создать более новую попытку: %v", err)
+	}
+	curator := NewCuratorLearningRepository(pool)
+	if _, err := curator.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		CuratorStaffID: curatorID, AttemptID: lesson.answer.AttemptID,
+		Decision: "approved", Feedback: "",
+	}); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("устаревшую попытку нельзя принимать после новой отправки: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE answer_attempts
+		SET processing_status = 'failed', completed_at = now(), error_code = 'test_processing_failure'
+		WHERE id = $1
+	`, second.AttemptID); err != nil {
+		t.Fatalf("смоделировать ошибку обработки последней попытки: %v", err)
+	}
+	lessonAnswers, err := curator.ListLessonAnswers(
+		ctx, curatorID, student.ID, run.Enrollment.ID, lessonIDs[0],
+	)
+	if err != nil || len(lessonAnswers) != 1 ||
+		lessonAnswers[0].ProcessingStatus != "failed" ||
+		lessonAnswers[0].ReviewStatus != "failed" {
+		t.Fatalf("ошибка обработки должна иметь отдельный статус: answers=%+v err=%v", lessonAnswers, err)
+	}
+	students, err := staff.ListStudentsForStaff(ctx, curatorID)
+	if err != nil || len(students) != 1 || students[0].ActiveCourse == nil ||
+		students[0].ActiveCourse.PendingReviews != 0 ||
+		students[0].ActiveCourse.SubmittedAnswers != 1 {
+		t.Fatalf("failed-попытка не должна считаться ожидающей проверки: students=%+v err=%v", students, err)
+	}
+	access, err := curator.ListCourseLessons(ctx, curatorID, student.ID, run.Enrollment.ID)
+	if err != nil || len(access.Lessons) != 1 ||
+		access.Lessons[0].PendingReviews != 0 {
+		t.Fatalf("ошибка обработки не должна учитываться в очереди проверки: lessons=%+v err=%v", access.Lessons, err)
+	}
+
+	third, err := answers.Submit(ctx, AnswerSubmission{
+		StudentID: student.ID, EnrollmentID: lesson.enrollment.ID,
+		QuestionID: lesson.questionID, AnswerText: "Ответ после ошибки обработки",
+	})
+	if err != nil {
+		t.Fatalf("ученик должен иметь возможность отправить новую попытку после ошибки: %v", err)
+	}
+	students, err = staff.ListStudentsForStaff(ctx, curatorID)
+	if err != nil || len(students) != 1 || students[0].ActiveCourse == nil ||
+		students[0].ActiveCourse.PendingReviews != 1 {
+		t.Fatalf("новая попытка должна снова попасть в очередь проверки: students=%+v err=%v", students, err)
+	}
+	review, err := curator.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		CuratorStaffID: curatorID, AttemptID: third.AttemptID,
+		Decision: "approved", Feedback: "",
+	})
+	if err != nil || review.Decision != "approved" {
+		t.Fatalf("последнюю повторную попытку нельзя принять: review=%+v err=%v", review, err)
+	}
+	progress, err := NewCourseEnrollmentRepository(pool).GetForStudent(ctx, student.ID, run.Enrollment.ID)
+	if err != nil || progress.Enrollment.Status != "completed" ||
+		progress.CompletedLessons != 1 || !progress.IsComplete {
+		t.Fatalf("после принятия новой последней попытки курс должен автоматически завершиться: progress=%+v err=%v", progress, err)
 	}
 }
 

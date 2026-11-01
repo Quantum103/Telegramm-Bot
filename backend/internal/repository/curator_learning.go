@@ -117,7 +117,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		       (SELECT count(*)::INTEGER
 		        FROM lesson_questions q
 		        JOIN LATERAL (
-		            SELECT aa.id
+		            SELECT aa.id, aa.processing_status
 		            FROM answer_attempts aa
 		            WHERE aa.enrollment_id = le.id AND aa.question_id = q.id
 		            ORDER BY aa.created_at DESC, aa.id DESC
@@ -125,7 +125,24 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		        ) latest ON TRUE
 		        LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
+		          AND ce.mode = 'curator'
+		          AND latest.processing_status = 'pending'
 		          AND review.id IS NULL),
+		       (SELECT CASE WHEN EXISTS (
+		            SELECT 1
+		            FROM lesson_questions q
+		            JOIN LATERAL (
+		                SELECT aa.id
+		                FROM answer_attempts aa
+		                WHERE aa.enrollment_id = le.id AND aa.question_id = q.id
+		                ORDER BY aa.created_at DESC, aa.id DESC
+		                LIMIT 1
+		            ) latest ON TRUE
+		            JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
+		            WHERE q.lesson_version_id = cel.lesson_version_id
+		              AND ce.mode = 'curator'
+		              AND review.decision = 'needs_revision'
+		        ) THEN 1 ELSE 0 END),
 		       (SELECT count(*)::INTEGER
 		        FROM lesson_questions q
 		        JOIN LATERAL (
@@ -137,6 +154,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		        ) latest ON TRUE
 		        JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
+		          AND ce.mode = 'curator'
 		          AND review.decision = 'needs_revision')
 		FROM course_enrollment_lessons cel
 		JOIN lesson_versions lv
@@ -159,7 +177,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		if err := rows.Scan(
 			&item.LessonID, &item.LessonVersionID, &item.Position, &item.Title,
 			&enrollmentID, &item.Status, &item.TotalQuestions, &item.AnsweredQuestions,
-			&item.PendingReviews, &item.NeedsRevision,
+			&item.PendingReviews, &item.NeedsRevision, &item.NeedsRevisionAnswers,
 		); err != nil {
 			return domain.CuratorCourseAccess{}, mapDatabaseError("прочитать урок закреплённого курса", err)
 		}
@@ -332,7 +350,16 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 		if attemptID.Valid {
 			value := attemptID.Int64
 			answer.AttemptID = &value
-			answer.ReviewStatus = "pending_review"
+			switch answer.ProcessingStatus {
+			case "pending":
+				answer.ReviewStatus = "pending_review"
+			case "running":
+				answer.ReviewStatus = "processing"
+			case "failed":
+				answer.ReviewStatus = "failed"
+			default:
+				answer.ReviewStatus = "unreviewed"
+			}
 		} else {
 			answer.ReviewStatus = "not_submitted"
 		}
@@ -417,10 +444,10 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		return domain.AnswerAttemptReview{}, mapDatabaseError("заблокировать ученика перед проверкой ответа", err)
 	}
 
-	var enrollmentID, questionID, courseEnrollmentID int64
+	var enrollmentID, questionID, courseEnrollmentID, lessonVersionID int64
 	var enrollmentStatus, courseStatus, mode, processingStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT le.id, aa.question_id, ce.id,
+		SELECT le.id, aa.question_id, ce.id, le.lesson_version_id,
 		       le.status, ce.status, ce.mode, aa.processing_status
 		FROM answer_attempts aa
 		JOIN lesson_enrollments le
@@ -429,7 +456,7 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		WHERE aa.id = $1
 		FOR UPDATE OF aa, le, ce
 	`, params.AttemptID).Scan(
-		&enrollmentID, &questionID, &courseEnrollmentID,
+		&enrollmentID, &questionID, &courseEnrollmentID, &lessonVersionID,
 		&enrollmentStatus, &courseStatus, &mode, &processingStatus,
 	)
 	if err != nil {
@@ -530,8 +557,115 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	`, params.CuratorStaffID, params.AttemptID, params.Decision, studentID); err != nil {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("записать аудит проверки ответа куратором", err)
 	}
+	if params.Decision == "approved" {
+		if err := completeCuratorLessonAndCourseTx(
+			ctx, tx, params.CuratorStaffID, studentID, courseEnrollmentID, enrollmentID, lessonVersionID,
+		); err != nil {
+			return domain.AnswerAttemptReview{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("зафиксировать решение куратора", err)
 	}
 	return review, nil
+}
+
+
+// completeCuratorLessonAndCourseTx completes a lesson only after every question
+// has a saved answer and its latest attempt has been approved. Both transitions
+// share the transaction that records the curator's decision.
+func completeCuratorLessonAndCourseTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	curatorStaffID, studentID, courseEnrollmentID, enrollmentID, lessonVersionID int64,
+) error {
+	var totalQuestions, unapprovedQuestions int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)::INTEGER,
+		       count(*) FILTER (
+		           WHERE sa.id IS NULL
+		              OR latest.id IS NULL
+		              OR review.decision IS DISTINCT FROM 'approved'
+		       )::INTEGER
+		FROM lesson_questions q
+		LEFT JOIN student_answers sa
+		  ON sa.enrollment_id = $1
+		 AND sa.lesson_version_id = $2
+		 AND sa.question_id = q.id
+		LEFT JOIN LATERAL (
+			SELECT aa.id
+			FROM answer_attempts aa
+			WHERE aa.enrollment_id = $1 AND aa.question_id = q.id
+			ORDER BY aa.created_at DESC, aa.id DESC
+			LIMIT 1
+		) latest ON TRUE
+		LEFT JOIN answer_attempt_reviews review
+		  ON review.answer_attempt_id = latest.id
+		WHERE q.lesson_version_id = $2
+	`, enrollmentID, lessonVersionID).Scan(&totalQuestions, &unapprovedQuestions); err != nil {
+		return mapDatabaseError("проверить все ответы перед автоматическим завершением урока", err)
+	}
+	if totalQuestions == 0 || unapprovedQuestions > 0 {
+		return nil
+	}
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE lesson_enrollments
+		SET status = 'completed',
+		    completed_at = now(),
+		    started_at = COALESCE(started_at, now()),
+		    last_activity_at = now(),
+		    updated_at = now()
+		WHERE id = $1 AND student_id = $2
+		  AND course_enrollment_id = $3
+		  AND status = 'in_progress'
+	`, enrollmentID, studentID, courseEnrollmentID)
+	if err != nil {
+		return mapDatabaseError("автоматически завершить проверенный урок", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+		VALUES ($1, 'lesson.completed_after_curator_review', 'lesson_enrollment', $2,
+		        jsonb_build_object('course_enrollment_id', $3::bigint))
+	`, curatorStaffID, enrollmentID, courseEnrollmentID); err != nil {
+		return mapDatabaseError("записать аудит автоматического завершения урока", err)
+	}
+
+	courseTag, err := tx.Exec(ctx, `
+		UPDATE course_enrollments ce
+		SET status = 'completed', completed_at = now(), updated_at = now()
+		WHERE ce.id = $1
+		  AND ce.student_id = $2
+		  AND ce.status = 'in_progress'
+		  AND EXISTS (
+		      SELECT 1 FROM course_enrollment_lessons cel
+		      WHERE cel.course_enrollment_id = ce.id
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM course_enrollment_lessons cel
+		      LEFT JOIN lesson_enrollments lesson
+		        ON lesson.course_enrollment_id = cel.course_enrollment_id
+		       AND lesson.lesson_id = cel.lesson_id
+		       AND lesson.lesson_version_id = cel.lesson_version_id
+		      WHERE cel.course_enrollment_id = ce.id
+		        AND (lesson.id IS NULL OR lesson.status <> 'completed')
+		  )
+	`, courseEnrollmentID, studentID)
+	if err != nil {
+		return mapDatabaseError("автоматически завершить курс после последнего урока", err)
+	}
+	if courseTag.RowsAffected() > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+			VALUES ($1, 'course.completed_after_curator_review', 'course_enrollment', $2,
+			        jsonb_build_object('completed_by_lesson_enrollment_id', $3::bigint))
+		`, curatorStaffID, courseEnrollmentID, enrollmentID); err != nil {
+			return mapDatabaseError("записать аудит автоматического завершения курса", err)
+		}
+	}
+	return nil
 }
