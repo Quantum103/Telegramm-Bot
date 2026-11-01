@@ -90,12 +90,15 @@ func run(logger *slog.Logger) error {
 	contentRepository := repository.NewContentRepository(pool)
 	catalogService := service.NewCatalogService(catalogRepository, contentRepository)
 	authoringService := service.NewAuthoringService(catalogRepository)
+	courseEnrollmentRepository := repository.NewCourseEnrollmentRepository(pool)
+	curatorLearningService := service.NewCuratorLearningService(repository.NewCuratorLearningRepository(pool))
 	learningService := service.NewLearningService(
 		studentService,
 		catalogRepository,
 		contentRepository,
 		repository.NewEnrollmentRepository(pool),
 		repository.NewAnswerRepository(pool),
+		courseEnrollmentRepository,
 	)
 	conversationService := service.NewConversationServiceWithPolicy(
 		repository.NewConversationRepository(pool),
@@ -109,12 +112,12 @@ func run(logger *slog.Logger) error {
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegram(
+		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearning(
 			pool, logger, catalogService,
 			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
 			authoringService,
 			service.NewStaffManagementService(repository.NewStaffManagementRepository(pool)),
-			conversationService, staffTelegramService, loginLimiter, true,
+			conversationService, staffTelegramService, curatorLearningService, loginLimiter, true,
 		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
