@@ -46,6 +46,78 @@ func (f *fakeCuratorLearningAPI) ReviewAttempt(_ context.Context, staffID, attem
 	return f.review, nil
 }
 
+type fakeCourseLearningStaffManagement struct {
+	students   []domain.AdminStudent
+	listCalls  int
+	actorStaff int64
+}
+
+func (f *fakeCourseLearningStaffManagement) ListStaffAccounts(context.Context, int64) ([]domain.StaffAccountSummary, error) {
+	return []domain.StaffAccountSummary{}, nil
+}
+func (f *fakeCourseLearningStaffManagement) CreateStaffAccount(context.Context, int64, string, string, string) (domain.CreatedStaffAccount, error) {
+	return domain.CreatedStaffAccount{}, nil
+}
+func (f *fakeCourseLearningStaffManagement) ListStudents(_ context.Context, actorID int64) ([]domain.AdminStudent, error) {
+	f.listCalls++
+	f.actorStaff = actorID
+	return f.students, nil
+}
+func (f *fakeCourseLearningStaffManagement) AssignCurator(context.Context, int64, int64, int64) error {
+	return nil
+}
+func (f *fakeCourseLearningStaffManagement) EndCuratorAssignment(context.Context, int64, int64) error {
+	return nil
+}
+func (f *fakeCourseLearningStaffManagement) SetAccountStatus(context.Context, int64, int64, string) error {
+	return nil
+}
+func (f *fakeCourseLearningStaffManagement) ResetPassword(context.Context, int64, int64) (string, error) {
+	return "", nil
+}
+
+func TestStaffCourseLearningStudentListIncludesActiveCourse(t *testing.T) {
+	const csrfToken = "csrf-course-learning-students-test-token"
+	identity := domain.StaffSessionIdentity{
+		StaffID: 51, DisplayName: "Admin", Email: "admin@example.test",
+		Roles: []string{"administrator"},
+		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	management := &fakeCourseLearningStaffManagement{
+		students: []domain.AdminStudent{{
+			ID: 88, DisplayName: "Ученик",
+			ActiveCourse: &domain.StudentActiveCourse{
+				CourseEnrollmentID: 77, CourseID: 10, CourseTitle: "Курс",
+				Mode: "curator", Status: "in_progress", TotalLessons: 4, CompletedLessons: 1,
+			},
+		}},
+	}
+	learning := &fakeCuratorLearningAPI{}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearning(
+		fakePinger{}, testLogger(), nil, authAPI, nil, management, nil, nil, learning, newStaffLoginLimiter(), true,
+	)
+	request := httptest.NewRequest(http.MethodGet, "https://staff.example.test/api/v1/staff/course-learning/students", nil)
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: "valid-session-token"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || management.listCalls != 1 || management.actorStaff != identity.StaffID {
+		t.Fatalf("course-learning student list status/calls/actor = %d/%d/%d; body=%s",
+			recorder.Code, management.listCalls, management.actorStaff, recorder.Body.String())
+	}
+	for _, expected := range []string{
+		"\"active_course\"",
+		"\"course_enrollment_id\":77",
+		"\"course_title\":\"Курс\"",
+		"\"mode\":\"curator\"",
+		"\"completed_lessons\":1",
+	} {
+		if !strings.Contains(recorder.Body.String(), expected) {
+			t.Fatalf("student list response is missing %q: %s", expected, recorder.Body.String())
+		}
+	}
+}
+
 func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	const csrfToken = "csrf-course-learning-test-token-123456"
 	identity := domain.StaffSessionIdentity{
