@@ -41,14 +41,24 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	var enrollmentStatus string
 	var courseEnrollmentID pgtype.Int8
 	var courseStatus pgtype.Text
+	var courseLessonMatches bool
 	if err := tx.QueryRow(ctx, `
-		SELECT le.lesson_version_id, le.status, le.course_enrollment_id, ce.status
+		SELECT le.lesson_version_id, le.status, le.course_enrollment_id, ce.status,
+		       CASE WHEN le.course_enrollment_id IS NULL THEN TRUE
+		            ELSE EXISTS (
+		                SELECT 1
+		                FROM course_enrollment_lessons cel
+		                WHERE cel.course_enrollment_id = le.course_enrollment_id
+		                  AND cel.lesson_id = le.lesson_id
+		                  AND cel.lesson_version_id = le.lesson_version_id
+		            )
+		       END
 		FROM lesson_enrollments le
 		LEFT JOIN course_enrollments ce ON ce.id = le.course_enrollment_id
 		WHERE le.id = $1 AND le.student_id = $2
 		FOR UPDATE OF le
 	`, params.EnrollmentID, params.StudentID).Scan(
-		&lessonVersionID, &enrollmentStatus, &courseEnrollmentID, &courseStatus,
+		&lessonVersionID, &enrollmentStatus, &courseEnrollmentID, &courseStatus, &courseLessonMatches,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SavedAnswer{}, ErrNotFound
@@ -59,7 +69,8 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 		return SavedAnswer{}, ErrInvalidState
 	}
 	if courseEnrollmentID.Valid &&
-		(enrollmentStatus != "in_progress" || !courseStatus.Valid || courseStatus.String != "in_progress") {
+		(enrollmentStatus != "in_progress" || !courseStatus.Valid ||
+			courseStatus.String != "in_progress" || !courseLessonMatches) {
 		return SavedAnswer{}, ErrInvalidState
 	}
 
