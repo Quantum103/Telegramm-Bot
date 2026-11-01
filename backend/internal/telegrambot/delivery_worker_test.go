@@ -19,6 +19,7 @@ type fakeConversationDeliveryQueue struct {
 	retry      bool
 	errorCode  string
 	retryDelay time.Duration
+	stale      bool
 }
 
 func (f *fakeConversationDeliveryQueue) ClaimDueDelivery(context.Context, time.Duration) (domain.ConversationDelivery, error) {
@@ -35,6 +36,9 @@ func (f *fakeConversationDeliveryQueue) ScheduleDeliveryRetry(_ context.Context,
 func (f *fakeConversationDeliveryQueue) MarkDeliveryFailed(_ context.Context, _ int64, code string) error {
 	f.failed, f.errorCode = true, code
 	return nil
+}
+func (f *fakeConversationDeliveryQueue) IsCurrentCuratorDelivery(context.Context, int64, int64, int64) (bool, error) {
+	return !f.stale, nil
 }
 
 func TestDeliveryWorkerUsesTelegramAPIAndMarksSuccessfulDelivery(t *testing.T) {
