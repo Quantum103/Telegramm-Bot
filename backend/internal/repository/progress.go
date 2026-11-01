@@ -250,7 +250,7 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 		    started_at = COALESCE(started_at, now()),
 		    last_activity_at = now(), updated_at = now()
 		WHERE id = $1
-		RETURNING id, student_id, lesson_id, lesson_version_id, mode,
+		RETURNING id, student_id, lesson_id, lesson_version_id, course_enrollment_id, mode,
 		          current_question_id, status, started_at, completed_at,
 		          last_activity_at, created_at, updated_at
 	`, enrollmentID))
