@@ -37,16 +37,16 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var lessonVersionID int64
+	var lessonID, lessonVersionID int64
 	var enrollmentStatus string
 	var courseEnrollmentID pgtype.Int8
 	if err := tx.QueryRow(ctx, `
-		SELECT lesson_version_id, status, course_enrollment_id
+		SELECT lesson_id, lesson_version_id, status, course_enrollment_id
 		FROM lesson_enrollments
 		WHERE id = $1 AND student_id = $2
 		FOR UPDATE
 	`, params.EnrollmentID, params.StudentID).Scan(
-		&lessonVersionID, &enrollmentStatus, &courseEnrollmentID,
+		&lessonID, &lessonVersionID, &enrollmentStatus, &courseEnrollmentID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SavedAnswer{}, ErrNotFound
@@ -67,16 +67,14 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 			       EXISTS (
 			           SELECT 1
 			           FROM course_enrollment_lessons cel
-			           JOIN lesson_enrollments lesson
-			             ON lesson.id = $3
 			           WHERE cel.course_enrollment_id = ce.id
-			             AND cel.lesson_id = lesson.lesson_id
-			             AND cel.lesson_version_id = lesson.lesson_version_id
+			             AND cel.lesson_id = $3
+			             AND cel.lesson_version_id = $4
 			       )
 			FROM course_enrollments ce
 			WHERE ce.id = $1 AND ce.student_id = $2
 			FOR UPDATE
-		`, courseEnrollmentID.Int64, params.StudentID, params.EnrollmentID).Scan(
+		`, courseEnrollmentID.Int64, params.StudentID, lessonID, lessonVersionID).Scan(
 			&courseStatus, &courseLessonMatches,
 		); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
