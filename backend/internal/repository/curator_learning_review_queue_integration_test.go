@@ -11,6 +11,66 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func createCuratorQueueCourseTest(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	suffix, title string,
+	questionsPerLesson []int,
+) (int64, []int64, []int64) {
+	t.Helper()
+	var courseID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO courses (slug, title, status, published_at)
+		VALUES ($1, $2, 'published', now())
+		RETURNING id
+	`, "curator-queue-"+suffix, title).Scan(&courseID); err != nil {
+		t.Fatalf("создать курс для очереди: %v", err)
+	}
+
+	lessonIDs := make([]int64, 0, len(questionsPerLesson))
+	versionIDs := make([]int64, 0, len(questionsPerLesson))
+	for lessonIndex, questionCount := range questionsPerLesson {
+		var lessonID, versionID int64
+		if err := pool.QueryRow(ctx, "INSERT INTO lessons DEFAULT VALUES RETURNING id").Scan(&lessonID); err != nil {
+			t.Fatalf("создать урок очереди: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO course_lessons (course_id, lesson_id, position)
+			VALUES ($1, $2, $3)
+		`, courseID, lessonID, lessonIndex+1); err != nil {
+			t.Fatalf("добавить урок очереди в курс: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO lesson_versions (lesson_id, version_number, title, status)
+			VALUES ($1, 1, $2, 'draft')
+			RETURNING id
+		`, lessonID, fmt.Sprintf("%s · урок %d", title, lessonIndex+1)).Scan(&versionID); err != nil {
+			t.Fatalf("создать версию урока очереди: %v", err)
+		}
+		for questionNumber := 1; questionNumber <= questionCount; questionNumber++ {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO lesson_questions (
+					lesson_version_id, question_number, prompt, expected_answer, answer_type
+				)
+				VALUES ($1, $2, $3, 'Ожидаемый ответ', 'text')
+			`, versionID, questionNumber, fmt.Sprintf("Вопрос %d", questionNumber)); err != nil {
+				t.Fatalf("создать вопрос %d урока очереди: %v", questionNumber, err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE lesson_versions
+			SET status = 'published', published_at = now()
+			WHERE id = $1
+		`, versionID); err != nil {
+			t.Fatalf("опубликовать версию урока очереди: %v", err)
+		}
+		lessonIDs = append(lessonIDs, lessonID)
+		versionIDs = append(versionIDs, versionID)
+	}
+	return courseID, lessonIDs, versionIDs
+}
+
 func setCuratorQueueAttemptTime(t *testing.T, ctx context.Context, pool *pgxpool.Pool, attemptID int64, createdAt time.Time) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, "UPDATE answer_attempts SET created_at = $2 WHERE id = $1", attemptID, createdAt); err != nil {
@@ -52,21 +112,12 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 		}
 	}
 
-	courseOneID, lessonIDs, versionIDs := createCourseForEnrollmentTest(
-		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Курс очереди", 2,
+	courseOneID, lessonIDs, versionIDs := createCuratorQueueCourseTest(
+		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Курс очереди", []int{3, 1},
 	)
 	courseTwoID, courseTwoLessons, _ := createCourseForEnrollmentTest(
 		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Другой курс очереди", 1,
 	)
-	for number := 2; number <= 3; number++ {
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO lesson_questions (lesson_version_id, question_number, prompt, expected_answer, answer_type)
-			VALUES ($1, $2, $3, 'Ожидаемый ответ', 'text')
-		`, versionIDs[0], number, fmt.Sprintf("Вопрос %d", number)); err != nil {
-			t.Fatalf("добавить вопрос %d: %v", number, err)
-		}
-	}
-
 	courses := NewCourseEnrollmentRepository(pool)
 	runA, err := courses.Start(ctx, studentA.ID, courseOneID, "curator")
 	if err != nil {
