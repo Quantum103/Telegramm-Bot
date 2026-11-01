@@ -44,6 +44,18 @@ export type CreatedStaffAccount = {
   temporary_password: string
 }
 
+export type StudentActiveCourse = {
+  course_enrollment_id: number
+  course_id: number
+  course_title: string
+  mode: 'curator' | 'ai' | string
+  status: string
+  total_lessons: number
+  completed_lessons: number
+  pending_reviews: number
+  needs_revision: number
+}
+
 export type AdminStudent = {
   id: number
   telegram_id: number
@@ -59,6 +71,91 @@ export type AdminStudent = {
   in_progress_enrollments: number
   completed_enrollments: number
   last_learning_activity_at?: string
+  active_course?: StudentActiveCourse
+}
+
+export type CourseEnrollmentLesson = {
+  lesson_id: number
+  lesson_version_id: number
+  position: number
+  title: string
+  enrollment_id?: number
+  status: string
+  total_questions: number
+  answered_questions: number
+  pending_reviews: number
+  needs_revision: number
+}
+
+export type CourseEnrollment = {
+  id: number
+  student_id: number
+  course_id: number
+  course_title: string
+  run_number: number
+  mode: string
+  curator_staff_id?: number
+  status: string
+  started_at?: string
+  completed_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export type CuratorCourseAccess = {
+  enrollment: CourseEnrollment
+  lessons: CourseEnrollmentLesson[]
+}
+
+export type AnswerAttempt = {
+  id: number
+  answer_id: number
+  submitted_answer: string
+  selected_option_ids: number[]
+  processing_status: string
+  evaluation_result?: string
+  explanation?: string
+  missing_points: string[]
+  provider?: string
+  model?: string
+  duration_ms?: number
+  error_code?: string
+  review_decision?: 'approved' | 'needs_revision' | string
+  review_feedback?: string
+  reviewed_at?: string
+  reviewer_staff_id?: number
+  reviewer_display_name?: string
+  created_at: string
+  completed_at?: string
+}
+
+export type CuratorAnswer = {
+  question_id: number
+  question_number: number
+  prompt: string
+  answer_type: string
+  attempt_id?: number
+  submitted_answer: string
+  selected_option_ids: number[]
+  processing_status: string
+  review_decision?: 'approved' | 'needs_revision' | string
+  review_feedback?: string
+  review_status: string
+  reviewed_at?: string
+  reviewer_staff_id?: number
+  reviewer_display_name?: string
+  submitted_at?: string
+  attempts: AnswerAttempt[]
+}
+
+export type CuratorReviewResult = {
+  id: number
+  answer_attempt_id: number
+  curator_staff_id: number
+  decision: 'approved' | 'needs_revision'
+  feedback: string
+  reviewed_at: string
+  replayed?: boolean
 }
 
 export type StaffSession = {
@@ -344,13 +441,60 @@ export async function createStaffAccount(displayName: string, email: string, rol
 }
 
 export async function listAdminStudents(signal?: AbortSignal): Promise<AdminStudent[]> {
-  const response = await fetch('/api/v1/staff/admin/students', {
+  const response = await fetch('/api/v1/staff/course-learning/students', {
     method: 'GET', headers: { Accept: 'application/json' },
     cache: 'no-store', credentials: 'same-origin', signal,
   })
   const body = await readJSONResponse<AdminStudentsResponse>(response)
   if (!body || !Array.isArray(body.students)) throw new Error('Сервер вернул некорректный список учеников.')
   return body.students
+}
+
+type CuratorCourseAccessResponse = CuratorCourseAccess
+type CuratorAnswersResponse = { answers: CuratorAnswer[] }
+
+export async function listCuratorCourseLessons(
+  studentID: number, courseEnrollmentID: number, signal?: AbortSignal,
+): Promise<CuratorCourseAccess> {
+  if (!Number.isSafeInteger(studentID) || studentID <= 0 ||
+      !Number.isSafeInteger(courseEnrollmentID) || courseEnrollmentID <= 0) {
+    throw new Error('Некорректный идентификатор ученика или прохождения курса.')
+  }
+  const body = await getJSON<CuratorCourseAccessResponse>(
+    `/api/v1/staff/course-learning/students/${studentID}/courses/${courseEnrollmentID}/lessons`, signal,
+  )
+  if (!body || !body.enrollment || !Array.isArray(body.lessons)) {
+    throw new Error('Сервер вернул некорректный прогресс курса ученика.')
+  }
+  return body
+}
+
+export async function listCuratorLessonAnswers(
+  studentID: number, courseEnrollmentID: number, lessonID: number, signal?: AbortSignal,
+): Promise<CuratorAnswer[]> {
+  if (![studentID, courseEnrollmentID, lessonID].every((id) => Number.isSafeInteger(id) && id > 0)) {
+    throw new Error('Некорректный идентификатор ученика, курса или урока.')
+  }
+  const body = await getJSON<CuratorAnswersResponse>(
+    `/api/v1/staff/course-learning/students/${studentID}/courses/${courseEnrollmentID}/lessons/${lessonID}/answers`, signal,
+  )
+  if (!body || !Array.isArray(body.answers)) throw new Error('Сервер вернул некорректные ответы ученика.')
+  return body.answers
+}
+
+export async function reviewCuratorAnswerAttempt(
+  attemptID: number, decision: 'approved' | 'needs_revision', feedback = '',
+): Promise<CuratorReviewResult> {
+  if (!Number.isSafeInteger(attemptID) || attemptID <= 0) throw new Error('Некорректный идентификатор ответа.')
+  if (decision === 'needs_revision' && !feedback.trim()) throw new Error('Укажите объяснение для ученика.')
+  if (feedback.length > 4000) throw new Error('Объяснение не должно превышать 4000 символов.')
+  const response = await fetch(`/api/v1/staff/course-learning/attempts/${attemptID}/review`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ decision, feedback: feedback.trim() }),
+  })
+  return readJSONResponse<CuratorReviewResult>(response)
 }
 
 export async function assignStudentCurator(studentID: number, curatorStaffID: number): Promise<void> {
