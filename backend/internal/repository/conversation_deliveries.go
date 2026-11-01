@@ -327,10 +327,21 @@ func (r *ConversationDeliveryRepository) DeferDelivery(ctx context.Context, deli
 		return ErrInvalidInput
 	}
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE conversation_message_deliveries
+		UPDATE conversation_message_deliveries delivery
 		SET delivery_status = 'pending', attempt_count = GREATEST(0, attempt_count - 1),
-		    next_attempt_at = $2, locked_at = NULL, updated_at = now()
-		WHERE id = $1 AND delivery_status = 'processing'
+		    next_attempt_at = CASE
+		        WHEN delivery.channel = 'telegram' AND NOT EXISTS (
+		            SELECT 1
+		            FROM conversation_messages message
+		            JOIN conversations conversation ON conversation.id = message.conversation_id
+		            JOIN student_chat_modes screen_mode ON screen_mode.student_id = conversation.student_id
+		            WHERE message.id = delivery.message_id
+		              AND screen_mode.lesson_mode_enabled = TRUE
+		        ) THEN now()
+		        ELSE $2
+		    END,
+		    locked_at = NULL, updated_at = now()
+		WHERE delivery.id = $1 AND delivery.delivery_status = 'processing'
 	`, deliveryID, nextAttemptAt)
 	if err != nil {
 		return mapDatabaseError("перенести Telegram-доставку на разрешённое время", err)

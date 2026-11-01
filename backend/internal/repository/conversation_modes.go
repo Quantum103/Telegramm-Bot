@@ -29,6 +29,9 @@ func (r *ConversationRepository) SetStudentChatMode(ctx context.Context, student
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if enabled {
+		return r.wakeStudentCuratorReplies(ctx, studentID)
+	}
 	return nil
 }
 
@@ -56,6 +59,27 @@ func (r *ConversationRepository) SetStudentLessonMode(ctx context.Context, stude
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if !enabled {
+		return r.wakeStudentCuratorReplies(ctx, studentID)
+	}
+	return nil
+}
+
+func (r *ConversationRepository) wakeStudentCuratorReplies(ctx context.Context, studentID int64) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries delivery
+		SET next_attempt_at = now(), updated_at = now()
+		FROM conversation_messages message
+		JOIN conversations conversation ON conversation.id = message.conversation_id
+		WHERE delivery.message_id = message.id
+		  AND conversation.student_id = $1
+		  AND delivery.channel = 'telegram'
+		  AND delivery.delivery_status = 'pending'
+		  AND delivery.next_attempt_at > now()
+	`, studentID)
+	if err != nil {
+		return mapDatabaseError("ускорить доставку ответа куратора после выхода ученика с экрана урока", err)
 	}
 	return nil
 }

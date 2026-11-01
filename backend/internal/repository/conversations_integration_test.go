@@ -1091,14 +1091,8 @@ func TestCuratorReplyDeliveryWaitsUntilStudentLeavesLessonScreen(t *testing.T) {
 	if err := deliveries.DeferDelivery(ctx, deferred.ID, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("отложить ответ до завершения урока: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE student_chat_modes SET lesson_mode_enabled = FALSE, updated_at = now()
-		WHERE student_id = $1
-	`, fixture.studentID); err != nil {
-		t.Fatalf("выйти с экрана прохождения: %v", err)
-	}
-	if _, err := pool.Exec(ctx, "UPDATE conversation_message_deliveries SET next_attempt_at = now() WHERE id = $1", deferred.ID); err != nil {
-		t.Fatalf("сделать отложенный ответ доступным: %v", err)
+	if err := conversations.SetStudentLessonMode(ctx, fixture.studentID, false); err != nil {
+		t.Fatalf("выйти с экрана прохождения и ускорить доставку ответа: %v", err)
 	}
 	ready, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
 	if err != nil {
