@@ -1076,6 +1076,11 @@ func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
 	progress.AnsweredQuestions = progress.TotalQuestions
 	learning.progress[701] = progress
 	learning.mu.Unlock()
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
+	last = lastEdit(t, api)
+	if !hasButtonPrefix(last.markup, "lesson:finish:") {
+		t.Fatalf("после сохранения всех ответов должна появиться кнопка завершения: %+v", last.markup)
+	}
 	bot.handleCallback(context.Background(), testCallback("lesson:finish:701", user, messageID))
 
 	last = lastEdit(t, api)
