@@ -662,7 +662,7 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User) {
 	if strings.TrimSpace(name) == "" {
 		name = displayName(user)
 	}
-	b.showCourses(ctx, chatID, student.ID, 0, "Привет, "+name+"! Выберите курс для изучения Библии.")
+	b.showStudentHome(ctx, chatID, student.ID, 0, "Привет, "+name+"!")
 }
 
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
