@@ -436,40 +436,6 @@ func (r *CourseEnrollmentRepository) ListLessons(
 	return lessons, nil
 }
 
-func (r *CourseEnrollmentRepository) RefreshCompletion(
-	ctx context.Context,
-	studentID, courseEnrollmentID int64,
-) error {
-	if studentID <= 0 || courseEnrollmentID <= 0 {
-		return ErrInvalidInput
-	}
-	_, err := r.pool.Exec(ctx, `
-		UPDATE course_enrollments ce
-		SET status = 'completed', completed_at = now(), updated_at = now()
-		WHERE ce.id = $2
-		  AND ce.student_id = $1
-		  AND ce.status = 'in_progress'
-		  AND NOT EXISTS (
-		      SELECT 1
-		      FROM course_enrollment_lessons cel
-		      LEFT JOIN lesson_enrollments le
-		        ON le.course_enrollment_id = cel.course_enrollment_id
-		       AND le.lesson_id = cel.lesson_id
-		       AND le.lesson_version_id = cel.lesson_version_id
-		      WHERE cel.course_enrollment_id = ce.id
-		        AND (le.id IS NULL OR le.status <> 'completed')
-		  )
-		  AND EXISTS (
-		      SELECT 1 FROM course_enrollment_lessons cel
-		      WHERE cel.course_enrollment_id = ce.id
-		  )
-	`, studentID, courseEnrollmentID)
-	if err != nil {
-		return mapDatabaseError("проверить завершение курса", err)
-	}
-	return nil
-}
-
 func currentActiveCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (int64, error) {
 	var curatorID int64
 	err := tx.QueryRow(ctx, `
