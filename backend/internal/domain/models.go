@@ -215,6 +215,9 @@ type AnswerAttempt struct {
 	Model            *string    `json:"model,omitempty"`
 	DurationMS       *int32     `json:"duration_ms,omitempty"`
 	ErrorCode        *string    `json:"error_code,omitempty"`
+	ReviewDecision   *string    `json:"review_decision,omitempty"`
+	ReviewFeedback   *string    `json:"review_feedback,omitempty"`
+	ReviewedAt       *time.Time `json:"reviewed_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 }
