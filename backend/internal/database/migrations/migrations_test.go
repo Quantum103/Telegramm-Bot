@@ -61,6 +61,8 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"validate_course_lesson_enrollment",
 				"student_curator_assignments",
 				"lesson_enrollments",
+				"count(DISTINCT le.lesson_id)",
+				"all_lessons_completed THEN 'completed'",
 			}
 		}
 		for _, item := range required {
