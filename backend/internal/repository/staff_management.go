@@ -333,6 +333,16 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	}
 	if previousCuratorID.Valid && previousCuratorID.Int64 == curatorStaffID {
 		if _, err := tx.Exec(ctx, `
+			UPDATE course_enrollments
+			SET curator_staff_id = $2,
+			    status = CASE WHEN status = 'awaiting_curator' THEN 'in_progress' ELSE status END,
+			    updated_at = now()
+			WHERE student_id = $1 AND mode = 'curator'
+			  AND status IN ('in_progress', 'awaiting_curator')
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("синхронизировать куратора активного курса", err)
+		}
+		if _, err := tx.Exec(ctx, `
 			UPDATE conversations SET assigned_curator_staff_id = $2, updated_at = now()
 			WHERE student_id = $1 AND status = 'active'
 		`, studentID, curatorStaffID); err != nil {
@@ -406,6 +416,16 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 		WHERE student_id = $1 AND status = 'active'
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("обновить назначение куратора в активных диалогах", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE course_enrollments
+		SET curator_staff_id = $2,
+		    status = CASE WHEN status = 'awaiting_curator' THEN 'in_progress' ELSE status END,
+		    updated_at = now()
+		WHERE student_id = $1 AND mode = 'curator'
+		  AND status IN ('in_progress', 'awaiting_curator')
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("передать активный курс новому куратору", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -581,6 +601,13 @@ func (r *StaffManagementRepository) EndStudentCuratorAssignment(ctx context.Cont
 		WHERE student_id = $1 AND status = 'active'
 	`, studentID); err != nil {
 		return mapDatabaseError("снять куратора с активных диалогов", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE course_enrollments
+		SET curator_staff_id = NULL, status = 'awaiting_curator', updated_at = now()
+		WHERE student_id = $1 AND mode = 'curator' AND status = 'in_progress'
+	`, studentID); err != nil {
+		return mapDatabaseError("приостановить курс без назначенного куратора", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
