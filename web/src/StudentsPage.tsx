@@ -157,6 +157,58 @@ export default function StudentsPage({
     return () => controller.abort()
   }, [isAdmin, isCurator, revision, onSessionExpired])
 
+  useEffect(() => {
+    if (!isCurator) {
+      setReviewQueue([])
+      setReviewQueueLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    let active = true
+    let inFlight = false
+    let firstLoad = true
+
+    const refreshQueue = async () => {
+      if (inFlight || controller.signal.aborted) return
+      inFlight = true
+      if (firstLoad) setReviewQueueLoading(true)
+      try {
+        const items = await listCuratorReviewQueue(controller.signal)
+        if (!active) return
+        setReviewQueue(items)
+        setReviewQueueError('')
+      } catch (reason: unknown) {
+        if (!active || controller.signal.aborted) return
+        const message = messageOf(reason, 'Не удалось загрузить очередь проверок.')
+        setReviewQueueError(message)
+        if (message.includes('Сессия завершена')) onSessionExpired()
+      } finally {
+        inFlight = false
+        firstLoad = false
+        if (active) setReviewQueueLoading(false)
+      }
+    }
+
+    void refreshQueue()
+    const intervalID = window.setInterval(() => void refreshQueue(), 12_000)
+    return () => {
+      active = false
+      controller.abort()
+      window.clearInterval(intervalID)
+    }
+  }, [isCurator, reviewQueueRevision, onSessionExpired])
+
+  function openReviewQueueItem(item: CuratorReviewQueueItem) {
+    setError('')
+    setNotice('')
+    setPendingLessonOpen({
+      studentID: item.student_id,
+      courseEnrollmentID: item.course_enrollment_id,
+      lessonID: item.lesson_id,
+    })
+    setSelectedStudentID(item.student_id)
+  }
+
   const sortedStudents = useMemo(
     () => [...students].sort((a, b) => (a.preferred_name || a.display_name).localeCompare(b.preferred_name || b.display_name, 'ru')),
     [students],
@@ -272,6 +324,36 @@ export default function StudentsPage({
       }
     }
   }
+
+  useEffect(() => {
+    if (!pendingLessonOpen || loading) return
+    const targetStudent = students.find((student) => student.id === pendingLessonOpen.studentID)
+    if (!targetStudent) {
+      setError('Не удалось найти ученика из очереди. Обновите список учеников.')
+      setPendingLessonOpen(null)
+      return
+    }
+    if (!targetStudent.active_course ||
+        targetStudent.active_course.course_enrollment_id !== pendingLessonOpen.courseEnrollmentID) {
+      setError('Запуск курса уже изменился. Обновите очередь и выберите актуальное задание.')
+      setPendingLessonOpen(null)
+      return
+    }
+    if (selectedStudentID !== pendingLessonOpen.studentID || courseLoading ||
+        !courseAccess || courseAccess.enrollment.id !== pendingLessonOpen.courseEnrollmentID ||
+        courseAccess.enrollment.student_id !== pendingLessonOpen.studentID) return
+
+    const lesson = courseAccess.lessons.find((item) => item.lesson_id === pendingLessonOpen.lessonID)
+    if (!lesson) {
+      setError('Урок из очереди не найден в текущем запуске курса.')
+      setPendingLessonOpen(null)
+      return
+    }
+    setExpandedLessonIDs((current) => current.includes(lesson.lesson_id)
+      ? current : [...current, lesson.lesson_id])
+    void loadLessonAnswers(lesson, true)
+    setPendingLessonOpen(null)
+  }, [pendingLessonOpen, loading, students, selectedStudentID, courseLoading, courseAccess])
 
   function toggleLesson(lesson: CourseEnrollmentLesson) {
     const isExpanded = expandedLessonIDs.includes(lesson.lesson_id)
