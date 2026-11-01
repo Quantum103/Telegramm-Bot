@@ -349,8 +349,8 @@ func TestRedeliveredModeCallbackReusesTheSameCourseRun(t *testing.T) {
 	if learning.nextRunID != 801 {
 		t.Fatalf("duplicate Telegram update created another course run: nextRunID=%d", learning.nextRunID)
 	}
-	if learning.startCalls != 1 {
-		t.Fatalf("duplicate callback created another lesson enrollment, calls=%d", learning.startCalls)
+	if learning.nextEnrollmentID != 701 || len(learning.progress) != 1 {
+		t.Fatalf("duplicate callback created another lesson enrollment: next_id=%d progress_records=%d", learning.nextEnrollmentID, len(learning.progress))
 	}
 	if learning.startCourseCalls != 2 {
 		t.Fatalf("both deliveries should be confirmed by backend idempotency, StartCourse calls=%d", learning.startCourseCalls)
