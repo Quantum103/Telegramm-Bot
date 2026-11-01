@@ -208,6 +208,12 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	if enrollment.Status == "cancelled" {
 		return Enrollment{}, ErrInvalidState
 	}
+	if enrollment.Status == "completed" {
+		if err := tx.Commit(ctx); err != nil {
+			return Enrollment{}, mapDatabaseError("завершить повторный запрос", err)
+		}
+		return enrollment, nil
+	}
 	if enrollment.CourseEnrollmentID != nil {
 		var courseStatus string
 		if err := tx.QueryRow(ctx, `
@@ -222,12 +228,6 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 		if courseStatus != "in_progress" {
 			return Enrollment{}, ErrInvalidState
 		}
-	}
-	if enrollment.Status == "completed" {
-		if err := tx.Commit(ctx); err != nil {
-			return Enrollment{}, mapDatabaseError("завершить повторный запрос", err)
-		}
-		return enrollment, nil
 	}
 
 	var totalQuestions, answeredQuestions int
