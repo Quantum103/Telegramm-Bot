@@ -28,6 +28,8 @@ type StudentActiveCourse struct {
 	Status             string `json:"status"`
 	TotalLessons       int    `json:"total_lessons"`
 	CompletedLessons   int    `json:"completed_lessons"`
+	PendingReviews     int    `json:"pending_reviews"`
+	NeedsRevision      int    `json:"needs_revision"`
 }
 
 // AdminStudent содержит список учеников, активный курс и сводку прогресса без текстов ответов.

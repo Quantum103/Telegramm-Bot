@@ -120,8 +120,9 @@ func TestCuratorLearningReadScopeActiveCourseAndAdminAIRead(t *testing.T) {
 	if active := firstCuratorStudents[0].ActiveCourse; active == nil ||
 		active.CourseEnrollmentID != firstRun.Enrollment.ID ||
 		active.CourseTitle != firstRun.Enrollment.CourseTitle ||
-		active.Mode != "curator" || active.TotalLessons != 1 || active.CompletedLessons != 0 {
-		t.Fatalf("активный курс не включён в список закреплённых учеников: %+v", firstCuratorStudents[0])
+		active.Mode != "curator" || active.TotalLessons != 1 || active.CompletedLessons != 0 ||
+		active.PendingReviews != 1 || active.NeedsRevision != 0 {
+		t.Fatalf("активный курс или счётчики проверки не включены в список закреплённых учеников: %+v", firstCuratorStudents[0])
 	}
 	adminStudents, err := staff.ListStudentsForStaff(ctx, adminID)
 	if err != nil || len(adminStudents) != 2 {
@@ -131,6 +132,10 @@ func TestCuratorLearningReadScopeActiveCourseAndAdminAIRead(t *testing.T) {
 	for _, student := range adminStudents {
 		if student.ActiveCourse != nil {
 			activeModes[student.ID] = student.ActiveCourse.Mode
+			if student.ID == secondStudent.ID &&
+				(student.ActiveCourse.PendingReviews != 0 || student.ActiveCourse.NeedsRevision != 0) {
+				t.Fatalf("AI-прохождение получило счётчики ручной проверки: %+v", student.ActiveCourse)
+			}
 		}
 	}
 	if activeModes[firstStudent.ID] != "curator" || activeModes[secondStudent.ID] != "ai" {
@@ -264,6 +269,13 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 		*firstHistory[0].ReviewDecision != "needs_revision" {
 		t.Fatalf("история ученика не сохранила запрос исправления: history=%+v err=%v", firstHistory, err)
 	}
+	afterRevisionStudents, err := staff.ListStudentsForStaff(ctx, currentCuratorID)
+	if err != nil || len(afterRevisionStudents) != 1 || afterRevisionStudents[0].ActiveCourse == nil ||
+		afterRevisionStudents[0].ActiveCourse.PendingReviews != 0 ||
+		afterRevisionStudents[0].ActiveCourse.NeedsRevision != 1 {
+		t.Fatalf("сводка должна учитывать урок с запросом исправления: students=%+v err=%v", afterRevisionStudents, err)
+	}
+
 	courseAnswers, err := curatorLearning.ListLessonAnswers(ctx, currentCuratorID, student.ID, run.Enrollment.ID, lessonIDs[0])
 	if err != nil || len(courseAnswers) != 1 || courseAnswers[0].ReviewStatus != "needs_revision" ||
 		len(courseAnswers[0].Attempts) != 1 ||
@@ -293,6 +305,13 @@ func TestCuratorReviewHistoryRevisionApprovalAndIdempotency(t *testing.T) {
 	if err != nil || !replayAfterNewAttempt.Replayed || replayAfterNewAttempt.ID != revision.ID {
 		t.Fatalf("повтор старого решения после новой попытки не идемпотентен: review=%+v err=%v", replayAfterNewAttempt, err)
 	}
+	afterResubmissionStudents, err := staff.ListStudentsForStaff(ctx, currentCuratorID)
+	if err != nil || len(afterResubmissionStudents) != 1 || afterResubmissionStudents[0].ActiveCourse == nil ||
+		afterResubmissionStudents[0].ActiveCourse.PendingReviews != 1 ||
+		afterResubmissionStudents[0].ActiveCourse.NeedsRevision != 0 {
+		t.Fatalf("после повторной отправки счётчики урока некорректны: students=%+v err=%v", afterResubmissionStudents, err)
+	}
+
 	courseAnswers, err = curatorLearning.ListLessonAnswers(ctx, currentCuratorID, student.ID, run.Enrollment.ID, lessonIDs[0])
 	if err != nil || len(courseAnswers[0].Attempts) != 2 ||
 		courseAnswers[0].Attempts[0].ID != revised.AttemptID ||
