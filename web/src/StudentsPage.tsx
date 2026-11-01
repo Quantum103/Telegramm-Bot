@@ -113,9 +113,6 @@ export default function StudentsPage({
     [students, selectedStudentID],
   )
   const activeCourse = selectedStudent?.active_course ?? null
-  const selectedConversation = selectedStudent
-    ? conversations.find((conversation) => conversation.student_id === selectedStudent.id) ?? null
-    : null
 
   useEffect(() => {
     if (selectedStudentID !== null && !loading && !students.some((student) => student.id === selectedStudentID)) {
