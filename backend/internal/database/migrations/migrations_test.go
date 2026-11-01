@@ -55,6 +55,8 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"CREATE TABLE course_enrollment_lessons",
 				"CREATE TABLE answer_attempt_reviews",
 				"course_enrollments_one_active_uq",
+				"status IN ('awaiting_curator', 'in_progress', 'paused')",
+				"superseded",
 				"prevent_course_enrollment_mode_change",
 				"validate_course_lesson_enrollment",
 				"student_curator_assignments",
