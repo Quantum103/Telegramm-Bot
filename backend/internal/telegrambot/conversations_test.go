@@ -13,10 +13,10 @@ type fakeStudentConversationService struct {
 	chatMode   map[int64]bool
 	lessonMode map[int64]bool
 	messages   []domain.CreateStudentConversationMessageParams
-	createErr error
-	setErr    error
-	isModeErr error
-	replayed  bool
+	createErr  error
+	setErr     error
+	isModeErr  error
+	replayed   bool
 }
 
 func newFakeStudentConversationService() *fakeStudentConversationService {
