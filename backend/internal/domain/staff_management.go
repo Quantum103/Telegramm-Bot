@@ -19,7 +19,18 @@ type CreatedStaffAccount struct {
 	TemporaryPassword string
 }
 
-// AdminStudent содержит административный список и сводку прогресса без текстов ответов.
+// StudentActiveCourse — краткая проекция текущего незавершённого запуска курса.
+type StudentActiveCourse struct {
+	CourseEnrollmentID int64  `json:"course_enrollment_id"`
+	CourseID           int64  `json:"course_id"`
+	CourseTitle        string `json:"course_title"`
+	Mode               string `json:"mode"`
+	Status             string `json:"status"`
+	TotalLessons       int    `json:"total_lessons"`
+	CompletedLessons   int    `json:"completed_lessons"`
+}
+
+// AdminStudent содержит список учеников, активный курс и сводку прогресса без текстов ответов.
 type AdminStudent struct {
 	ID                     int64      `json:"id"`
 	TelegramID             int64      `json:"telegram_id"`
@@ -34,5 +45,6 @@ type AdminStudent struct {
 	TotalEnrollments       int        `json:"total_enrollments"`
 	InProgressEnrollments  int        `json:"in_progress_enrollments"`
 	CompletedEnrollments   int        `json:"completed_enrollments"`
-	LastLearningActivityAt *time.Time `json:"last_learning_activity_at,omitempty"`
+	LastLearningActivityAt *time.Time       `json:"last_learning_activity_at,omitempty"`
+	ActiveCourse            *StudentActiveCourse `json:"active_course,omitempty"`
 }
