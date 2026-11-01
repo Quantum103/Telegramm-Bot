@@ -40,25 +40,13 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	var lessonVersionID int64
 	var enrollmentStatus string
 	var courseEnrollmentID pgtype.Int8
-	var courseStatus pgtype.Text
-	var courseLessonMatches bool
 	if err := tx.QueryRow(ctx, `
-		SELECT le.lesson_version_id, le.status, le.course_enrollment_id, ce.status,
-		       CASE WHEN le.course_enrollment_id IS NULL THEN TRUE
-		            ELSE EXISTS (
-		                SELECT 1
-		                FROM course_enrollment_lessons cel
-		                WHERE cel.course_enrollment_id = le.course_enrollment_id
-		                  AND cel.lesson_id = le.lesson_id
-		                  AND cel.lesson_version_id = le.lesson_version_id
-		            )
-		       END
-		FROM lesson_enrollments le
-		LEFT JOIN course_enrollments ce ON ce.id = le.course_enrollment_id
-		WHERE le.id = $1 AND le.student_id = $2
-		FOR UPDATE OF le
+		SELECT lesson_version_id, status, course_enrollment_id
+		FROM lesson_enrollments
+		WHERE id = $1 AND student_id = $2
+		FOR UPDATE
 	`, params.EnrollmentID, params.StudentID).Scan(
-		&lessonVersionID, &enrollmentStatus, &courseEnrollmentID, &courseStatus, &courseLessonMatches,
+		&lessonVersionID, &enrollmentStatus, &courseEnrollmentID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SavedAnswer{}, ErrNotFound
@@ -68,10 +56,37 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	if enrollmentStatus == "cancelled" {
 		return SavedAnswer{}, ErrInvalidState
 	}
-	if courseEnrollmentID.Valid &&
-		(enrollmentStatus != "in_progress" || !courseStatus.Valid ||
-			courseStatus.String != "in_progress" || !courseLessonMatches) {
-		return SavedAnswer{}, ErrInvalidState
+	if courseEnrollmentID.Valid {
+		if enrollmentStatus != "in_progress" {
+			return SavedAnswer{}, ErrInvalidState
+		}
+		var courseStatus string
+		var courseLessonMatches bool
+		if err := tx.QueryRow(ctx, `
+			SELECT ce.status,
+			       EXISTS (
+			           SELECT 1
+			           FROM course_enrollment_lessons cel
+			           JOIN lesson_enrollments lesson
+			             ON lesson.id = $3
+			           WHERE cel.course_enrollment_id = ce.id
+			             AND cel.lesson_id = lesson.lesson_id
+			             AND cel.lesson_version_id = lesson.lesson_version_id
+			       )
+			FROM course_enrollments ce
+			WHERE ce.id = $1 AND ce.student_id = $2
+			FOR UPDATE
+		`, courseEnrollmentID.Int64, params.StudentID, params.EnrollmentID).Scan(
+			&courseStatus, &courseLessonMatches,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return SavedAnswer{}, ErrNotFound
+			}
+			return SavedAnswer{}, mapDatabaseError("проверить состояние курса перед отправкой ответа", err)
+		}
+		if courseStatus != "in_progress" || !courseLessonMatches {
+			return SavedAnswer{}, ErrInvalidState
+		}
 	}
 
 	var answerType string
