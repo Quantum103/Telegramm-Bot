@@ -548,6 +548,12 @@ func TestDeliveryWorkerIdentifiesCuratorAsMessageSender(t *testing.T) {
 	var payload struct {
 		ChatID int64  `json:"chat_id"`
 		Text   string `json:"text"`
+		ReplyMarkup struct {
+			InlineKeyboard [][]struct {
+				Text string `json:"text"`
+				CallbackData string `json:"callback_data"`
+			} `json:"inline_keyboard"`
+		} `json:"reply_markup"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -570,5 +576,41 @@ func TestDeliveryWorkerIdentifiesCuratorAsMessageSender(t *testing.T) {
 	}
 	if payload.ChatID != 123456 || payload.Text != "Сообщение от куратора — Анна Иванова:\n\nДобрый день! Чем могу помочь?" {
 		t.Fatalf("ученик должен видеть явного автора сообщения: %+v", payload)
+	}
+	if len(payload.ReplyMarkup.InlineKeyboard) != 2 ||
+		payload.ReplyMarkup.InlineKeyboard[0][0].CallbackData != "courses" ||
+		payload.ReplyMarkup.InlineKeyboard[1][0].CallbackData != "chat:start" {
+		t.Fatalf("после ответа куратора ученик должен получить кнопки навигации: %+v", payload.ReplyMarkup)
+	}
+}
+
+func TestDeliveryWorkerDefersCuratorReplyUntilLessonIsCompleted(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	queue := &fakeConversationDeliveryQueue{}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":95}}`))
+	}))
+	defer server.Close()
+	worker := NewDeliveryWorker(queue, newHTTPClient("fake-token", server.URL, server.Client()), nil)
+	worker.now = func() time.Time { return now }
+
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 21, MessageID: 22, Channel: "telegram", RecipientChatID: 123456,
+		BodyText: "Ответ куратора", StudentLessonInProgress: true, AttemptCount: 1,
+	})
+	if calls != 0 || queue.sent || !queue.deferredUntil.Equal(now.Add(time.Minute)) {
+		t.Fatalf("ответ нельзя отправлять во время урока: calls=%d sent=%v deferred=%s", calls, queue.sent, queue.deferredUntil)
+	}
+
+	queue.deferredUntil = time.Time{}
+	worker.deliver(context.Background(), domain.ConversationDelivery{
+		ID: 21, MessageID: 22, Channel: "telegram", RecipientChatID: 123456,
+		BodyText: "Ответ куратора", StudentLessonInProgress: false, AttemptCount: 1,
+	})
+	if calls != 1 || !queue.sent {
+		t.Fatalf("после завершения урока ответ должен быть доставлен: calls=%d queue=%+v", calls, queue)
 	}
 }

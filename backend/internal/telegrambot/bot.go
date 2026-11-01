@@ -93,6 +93,7 @@ type LearningNavigator interface {
 	OpenQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
 	PreviousQuestion(context.Context, int64, int64) (service.NavigationState, error)
 	NextQuestion(context.Context, int64, int64) (service.NavigationState, error)
+	CompleteLesson(context.Context, int64, int64) (domain.Enrollment, error)
 }
 
 type APIError struct {

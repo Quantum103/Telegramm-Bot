@@ -283,6 +283,12 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 			rows = append(rows, []InlineKeyboardButton{next})
 		}
 	}
+	if progress.Enrollment.Status == "in_progress" && progress.TotalQuestions > 0 &&
+		progress.AnsweredQuestions >= progress.TotalQuestions {
+		rows = append(rows, []InlineKeyboardButton{{
+			Text: "Завершить урок", CallbackData: fmt.Sprintf("lesson:finish:%d", progress.Enrollment.ID),
+		}})
+	}
 	if courseID > 0 {
 		rows = append(rows, []InlineKeyboardButton{button("К урокам", fmt.Sprintf("lessons:%d", courseID))})
 	} else {
@@ -360,6 +366,13 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 			return
 		}
 		b.showLessons(ctx, chatID, student.ID, courseID, messageID)
+	case len(parts) == 3 && parts[0] == "lesson" && parts[1] == "finish":
+		enrollmentID, ok := parsePositiveID(parts[2])
+		if !ok {
+			b.showStaleCallback(ctx, chatID, student.ID, messageID)
+			return
+		}
+		b.finishLesson(ctx, chatID, student.ID, messageID, enrollmentID)
 	case len(parts) == 3 && parts[0] == "lesson":
 		courseID, okCourse := parsePositiveID(parts[1])
 		lessonID, okLesson := parsePositiveID(parts[2])
@@ -386,6 +399,39 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 	default:
 		b.showStaleCallback(ctx, chatID, student.ID, messageID)
 	}
+}
+
+func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, enrollmentID int64) {
+	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		b.logger.Warn("не удалось проверить прогресс перед завершением урока", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
+		b.showStaleCallback(ctx, chatID, studentID, messageID)
+		return
+	}
+	if progress.Enrollment.Status != "in_progress" {
+		b.showCourses(ctx, chatID, studentID, messageID, "Это прохождение уже не активно. Выберите следующий урок.")
+		return
+	}
+	if progress.TotalQuestions == 0 || progress.AnsweredQuestions < progress.TotalQuestions {
+		if progress.Enrollment.CurrentQuestionID != nil {
+			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, 0)
+			return
+		}
+		b.render(ctx, chatID, messageID, "Сначала сохраните ответы на все вопросы урока.", keyboard(button("К курсам", "courses")))
+		return
+	}
+	completed, err := b.learning.CompleteLesson(ctx, studentID, enrollmentID)
+	if err != nil {
+		b.logger.Warn("не удалось завершить урок", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
+		b.render(ctx, chatID, messageID, "Не удалось завершить урок. Попробуйте ещё раз.", keyboard(button("Повторить завершение", fmt.Sprintf("lesson:finish:%d", enrollmentID)), button("К курсам", "courses")))
+		return
+	}
+	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
+	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Написать куратору", "chat:start")}}
+	if detail, detailErr := b.catalog.GetLessonDetail(ctx, completed.LessonID); detailErr == nil && detail.Lesson.CourseID > 0 {
+		rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", detail.Lesson.CourseID))}}, rows...)
+	}
+	b.render(ctx, chatID, messageID, text, markup(rows))
 }
 
 func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID, courseID int64, direction string) {

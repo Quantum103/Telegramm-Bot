@@ -237,6 +237,7 @@ type fakeLearning struct {
 	openErr          error
 	nextErr          error
 	previousErr      error
+	completeCalls    int
 }
 
 func newFakeLearning(catalog *fakeCatalog) *fakeLearning {
@@ -333,6 +334,24 @@ func (f *fakeLearning) NextQuestion(ctx context.Context, studentID, enrollmentID
 		return service.NavigationState{}, f.nextErr
 	}
 	return f.move(ctx, studentID, enrollmentID, 1)
+}
+
+func (f *fakeLearning) CompleteLesson(_ context.Context, studentID, enrollmentID int64) (domain.Enrollment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	progress, ok := f.progress[enrollmentID]
+	if !ok || progress.Enrollment.StudentID != studentID {
+		return domain.Enrollment{}, domain.ErrNotFound
+	}
+	if progress.Enrollment.Status != "in_progress" {
+		return domain.Enrollment{}, domain.ErrInvalidState
+	}
+	f.completeCalls++
+	progress.Enrollment.Status = "completed"
+	completedAt := time.Now()
+	progress.Enrollment.CompletedAt = &completedAt
+	f.progress[enrollmentID] = progress
+	return progress.Enrollment, nil
 }
 
 func (f *fakeLearning) move(ctx context.Context, studentID, enrollmentID int64, step int) (service.NavigationState, error) {
@@ -1035,4 +1054,33 @@ func lastEdit(t *testing.T, api *fakeAPI) editedMessage {
 		t.Fatal("expected an edited message")
 	}
 	return api.edits[len(api.edits)-1]
+}
+
+func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+	user := testUser()
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
+
+	last := lastEdit(t, api)
+	if hasButtonPrefix(last.markup, "lesson:finish:") {
+		t.Fatal("кнопка завершения не должна появляться до ответов на все вопросы")
+	}
+
+	learning.mu.Lock()
+	progress := learning.progress[701]
+	progress.AnsweredQuestions = progress.TotalQuestions
+	learning.progress[701] = progress
+	learning.mu.Unlock()
+	bot.handleCallback(context.Background(), testCallback("lesson:finish:701", user, messageID))
+
+	last = lastEdit(t, api)
+	if learning.completeCalls != 1 || !strings.Contains(last.text, "Урок завершён") ||
+		!hasButton(last.markup, "courses") || !hasButton(last.markup, "chat:start") {
+		t.Fatalf("завершение должно вернуть экран с рабочими кнопками: calls=%d edit=%+v", learning.completeCalls, last)
+	}
 }

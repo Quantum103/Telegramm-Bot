@@ -106,6 +106,13 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 	if w.now != nil {
 		now = w.now
 	}
+	if delivery.Channel == "telegram" && delivery.StudentLessonInProgress {
+		if err := w.queue.DeferDelivery(ctx, delivery.ID, now().Add(time.Minute)); err != nil {
+			w.logger.Error("не удалось отложить ответ куратора до завершения урока", "delivery_id", delivery.ID, "error", err)
+		}
+		return
+	}
+
 	var bodyText string
 	var markup *InlineKeyboardMarkup
 	switch delivery.Channel {
@@ -188,6 +195,7 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 		bodyText = formatAdminEscalation(delivery)
 	case "telegram":
 		bodyText = formatCuratorReply(delivery)
+		markup = keyboard(button("К курсам", "courses"), button("Написать куратору", "chat:start"))
 	default:
 		bodyText = delivery.BodyText
 	}

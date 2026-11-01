@@ -1028,3 +1028,76 @@ func TestConversationDeliveryFailureIsVisibleToCurator(t *testing.T) {
 		t.Fatalf("список диалогов не показывает ошибку последнего сообщения: items=%+v err=%v", items, err)
 	}
 }
+
+func TestCuratorReplyDeliveryWaitsUntilStudentCompletesLesson(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	conversations := NewConversationRepository(pool)
+	conversation, err := conversations.GetOrCreateForStudent(ctx, fixture.studentID)
+	if err != nil {
+		t.Fatalf("создать диалог: %v", err)
+	}
+	if _, err := conversations.SendCuratorMessage(ctx, fixture.curator1ID, conversation.ID, "Ответ куратора после урока"); err != nil {
+		t.Fatalf("сохранить ответ куратора: %v", err)
+	}
+
+	var lessonID, versionID, questionID int64
+	if err := pool.QueryRow(ctx, "INSERT INTO lessons DEFAULT VALUES RETURNING id").Scan(&lessonID); err != nil {
+		t.Fatalf("создать урок: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO lesson_versions (lesson_id, version_number, title, status, published_at)
+		VALUES ($1, 1, 'Урок для отложенного ответа', 'published', now())
+		RETURNING id
+	`, lessonID).Scan(&versionID); err != nil {
+		t.Fatalf("создать опубликованную версию урока: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO lesson_questions (lesson_version_id, question_number, prompt, expected_answer)
+		VALUES ($1, 1, 'Вопрос', 'Ответ')
+		RETURNING id
+	`, versionID).Scan(&questionID); err != nil {
+		t.Fatalf("создать вопрос: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO lesson_enrollments (
+			student_id, lesson_id, lesson_version_id, mode, current_question_id,
+			status, started_at, last_activity_at
+		) VALUES ($1, $2, $3, 'ai', $4, 'in_progress', now(), now())
+	`, fixture.studentID, lessonID, versionID, questionID); err != nil {
+		t.Fatalf("начать прохождение: %v", err)
+	}
+
+	deliveries := NewConversationDeliveryRepository(pool)
+	deferred, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить ответ куратора: %v", err)
+	}
+	if deferred.Channel != "telegram" || !deferred.StudentLessonInProgress {
+		t.Fatalf("активный урок должен блокировать отправку ответа: %+v", deferred)
+	}
+	if err := deliveries.DeferDelivery(ctx, deferred.ID, time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("отложить ответ до завершения урока: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE lesson_enrollments SET status = 'completed', completed_at = now(), updated_at = now()
+		WHERE student_id = $1 AND id = (
+			SELECT id FROM lesson_enrollments
+			WHERE student_id = $1 AND lesson_id = $2 ORDER BY id DESC LIMIT 1
+		)
+	`, fixture.studentID, lessonID); err != nil {
+		t.Fatalf("завершить урок: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE conversation_message_deliveries SET next_attempt_at = now() WHERE id = $1", deferred.ID); err != nil {
+		t.Fatalf("сделать отложенный ответ доступным: %v", err)
+	}
+	ready, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("повторно захватить ответ после завершения урока: %v", err)
+	}
+	if ready.ID != deferred.ID || ready.Channel != "telegram" || ready.StudentLessonInProgress {
+		t.Fatalf("после завершения урока ответ должен стать доступным для отправки: %+v", ready)
+	}
+}
