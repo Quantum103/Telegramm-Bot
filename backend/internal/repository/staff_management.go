@@ -332,6 +332,59 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 		return mapDatabaseError("получить текущее назначение куратора", err)
 	}
 	if previousCuratorID.Valid && previousCuratorID.Int64 == curatorStaffID {
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversations SET assigned_curator_staff_id = $2, updated_at = now()
+			WHERE student_id = $1 AND status = 'active'
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("синхронизировать назначение куратора в диалогах", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversation_participants participant
+			SET left_at = now()
+			FROM conversations conversation
+			WHERE conversation.id = participant.conversation_id
+			  AND conversation.student_id = $1 AND conversation.status = 'active'
+			  AND participant.staff_id IS NOT NULL AND participant.left_at IS NULL
+			  AND participant.staff_id <> $2
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("синхронизировать прежние участия кураторов", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_participants (conversation_id, staff_id)
+			SELECT conversation.id, $2
+			FROM conversations conversation
+			WHERE conversation.student_id = $1 AND conversation.status = 'active'
+			ON CONFLICT (conversation_id, staff_id)
+			WHERE staff_id IS NOT NULL AND left_at IS NULL DO NOTHING
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("синхронизировать участие текущего куратора", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_message_reads (message_id, participant_id, conversation_id)
+			SELECT message.id, participant.id, message.conversation_id
+			FROM conversations conversation
+			JOIN conversation_participants participant
+			  ON participant.conversation_id = conversation.id
+			 AND participant.staff_id = $2 AND participant.left_at IS NULL
+			JOIN conversation_messages message ON message.conversation_id = conversation.id
+			WHERE conversation.student_id = $1 AND conversation.status = 'active'
+			ON CONFLICT (message_id, participant_id) DO NOTHING
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("отметить прежнюю историю прочитанной для текущего куратора", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversation_participants participant
+			SET last_read_at = now()
+			FROM conversations conversation
+			WHERE conversation.id = participant.conversation_id
+			  AND conversation.student_id = $1 AND conversation.status = 'active'
+			  AND participant.staff_id = $2 AND participant.left_at IS NULL
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("обновить отметку прочтения текущего куратора", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapDatabaseError("зафиксировать синхронизацию участия куратора", err)
+		}
 		return nil
 	}
 	if previousCuratorID.Valid {
@@ -354,6 +407,51 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("обновить назначение куратора в активных диалогах", err)
 	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_participants participant
+		SET left_at = now()
+		FROM conversations conversation
+		WHERE conversation.id = participant.conversation_id
+		  AND conversation.student_id = $1 AND conversation.status = 'active'
+		  AND participant.staff_id IS NOT NULL AND participant.left_at IS NULL
+		  AND participant.staff_id <> $2
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("завершить участие прежнего куратора в диалогах", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO conversation_participants (conversation_id, staff_id)
+		SELECT conversation.id, $2
+		FROM conversations conversation
+		WHERE conversation.student_id = $1 AND conversation.status = 'active'
+		ON CONFLICT (conversation_id, staff_id)
+		WHERE staff_id IS NOT NULL AND left_at IS NULL DO NOTHING
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("добавить нового куратора в диалоги", err)
+	}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_message_reads (message_id, participant_id, conversation_id)
+			SELECT message.id, participant.id, message.conversation_id
+			FROM conversations conversation
+			JOIN conversation_participants participant
+			  ON participant.conversation_id = conversation.id
+			 AND participant.staff_id = $2 AND participant.left_at IS NULL
+			JOIN conversation_messages message ON message.conversation_id = conversation.id
+			WHERE conversation.student_id = $1 AND conversation.status = 'active'
+			ON CONFLICT (message_id, participant_id) DO NOTHING
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("отметить прежнюю историю прочитанной для нового куратора", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversation_participants participant
+			SET last_read_at = now()
+			FROM conversations conversation
+			WHERE conversation.id = participant.conversation_id
+			  AND conversation.student_id = $1 AND conversation.status = 'active'
+			  AND participant.staff_id = $2 AND participant.left_at IS NULL
+		`, studentID, curatorStaffID); err != nil {
+			return mapDatabaseError("обновить отметку прочтения нового куратора", err)
+		}
 	action := "student.curator.assign"
 	if previousCuratorID.Valid {
 		action = "student.curator.transfer"
@@ -424,6 +522,17 @@ func (r *StaffManagementRepository) EndStudentCuratorAssignment(ctx context.Cont
 		WHERE student_id = $1 AND status = 'active'
 	`, studentID); err != nil {
 		return mapDatabaseError("снять куратора с активных диалогов", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversation_participants participant
+		SET left_at = now()
+		FROM conversations conversation
+		WHERE conversation.id = participant.conversation_id
+		  AND conversation.student_id = $1 AND conversation.status = 'active'
+		  AND participant.staff_id = $2 AND participant.left_at IS NULL
+	`, studentID, curatorStaffID); err != nil {
+		return mapDatabaseError("завершить участие куратора в диалогах", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)

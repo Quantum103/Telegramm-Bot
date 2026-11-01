@@ -196,6 +196,7 @@ type handlers struct {
 	staffAuth    StaffAuthAPI
 	authoring    StaffAuthoringAPI
 	management   StaffManagementAPI
+	conversations ConversationAPI
 	cookieSecure bool
 	loginLimiter StaffLoginRateLimiter
 }
@@ -228,12 +229,21 @@ func newHandler(database databasePinger, logger *slog.Logger, catalog CatalogAPI
 	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, nil, cookieSecure, limiter)
 }
 
+// NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversations configures the protected curator conversation API.
+func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversations(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
+	return newHandlerWithManagementAndConversations(database, logger, catalog, staffAuth, authoring, management, conversations, cookieSecure, limiter)
+}
+
 // NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter configures the production staff API.
 func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
 	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, management, cookieSecure, limiter)
 }
 
 func newHandlerWithManagement(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
+	return newHandlerWithManagementAndConversations(database, logger, catalog, staffAuth, authoring, management, nil, cookieSecure, limiter)
+}
+
+func newHandlerWithManagementAndConversations(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -242,7 +252,7 @@ func newHandlerWithManagement(database databasePinger, logger *slog.Logger, cata
 	}
 	h := handlers{
 		database: database, logger: logger, catalog: catalog,
-		staffAuth: staffAuth, authoring: authoring, management: management, cookieSecure: cookieSecure, loginLimiter: limiter,
+		staffAuth: staffAuth, authoring: authoring, management: management, conversations: conversations, cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
@@ -289,6 +299,17 @@ func newHandlerWithManagement(database databasePinger, logger *slog.Logger, cata
 			staffAdminMux.HandleFunc("DELETE /api/v1/staff/admin/students/{studentID}/curator", h.staffEndStudentCuratorAssignment)
 		}
 		mux.Handle("/api/v1/staff/admin/", h.staffAdminMiddleware(staffAdminMux))
+		if h.conversations != nil {
+			staffConversationMux := http.NewServeMux()
+			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations", h.staffListConversations)
+			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations/unread", h.staffConversationUnreadCount)
+			staffConversationMux.HandleFunc("GET /api/v1/staff/conversations/{conversationID}/messages", h.staffListConversationMessages)
+			staffConversationMux.HandleFunc("POST /api/v1/staff/conversations/{conversationID}/messages", h.staffSendConversationMessage)
+			staffConversationMux.HandleFunc("POST /api/v1/staff/conversations/{conversationID}/read", h.staffMarkConversationRead)
+			protectedConversations := h.staffCuratorMiddleware(staffConversationMux)
+			mux.Handle("/api/v1/staff/conversations", protectedConversations)
+			mux.Handle("/api/v1/staff/conversations/", protectedConversations)
+		}
 	}
 	return securityHeaders(mux)
 }

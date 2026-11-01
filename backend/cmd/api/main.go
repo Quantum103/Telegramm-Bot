@@ -97,15 +97,16 @@ func run(logger *slog.Logger) error {
 		repository.NewEnrollmentRepository(pool),
 		repository.NewAnswerRepository(pool),
 	)
+	conversationService := service.NewConversationService(repository.NewConversationRepository(pool))
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(
+		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversations(
 			pool, logger, catalogService,
 			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
 			authoringService,
 			service.NewStaffManagementService(repository.NewStaffManagementRepository(pool)),
-			loginLimiter, true,
+			conversationService, loginLimiter, true,
 		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
