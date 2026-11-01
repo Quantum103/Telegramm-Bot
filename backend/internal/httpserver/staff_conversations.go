@@ -95,9 +95,7 @@ func (h handlers) staffConversationEvents(w http.ResponseWriter, r *http.Request
 			if authErr != nil || current.StaffID != identity.StaffID ||
 				!current.ExpiresAt.After(time.Now()) || !staffHasRole(current, "curator") ||
 				current.MustChangePassword {
-				closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
-				_ = connection.Close(closeCtx, websocket.StatusPolicyViolation, "staff session is no longer valid")
-				closeCancel()
+				_ = connection.Close(websocket.StatusPolicyViolation, "staff session is no longer valid")
 				return
 			}
 		}

@@ -248,8 +248,8 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 		t.Fatalf("неверная идентичность или содержимое сообщения: %+v", saved)
 	}
 	if !strings.Contains(api.messages[len(api.messages)-1].text, "Сообщение сохранено") ||
-		!strings.Contains(api.messages[len(api.messages)-1].text, "когда сможет") {
-		t.Fatalf("бот должен подтвердить сохранение без обещания немедленного ответа: %q", api.messages[len(api.messages)-1].text)
+		!strings.Contains(api.messages[len(api.messages)-1].text, "обязательно вам ответит") {
+		t.Fatalf("бот должен подтвердить сохранение и сообщить, что куратор ответит: %q", api.messages[len(api.messages)-1].text)
 	}
 }
 
