@@ -275,6 +275,7 @@ function App() {
       url.searchParams.delete('page')
       url.searchParams.delete('conversation_id')
       setInitialConversationID(null)
+      setConversationDraft('')
     }
     window.history.replaceState({}, '', url.toString())
     setActivePage(page); setSidebarOpen(false); setSearchTerm('')
