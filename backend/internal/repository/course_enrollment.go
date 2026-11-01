@@ -310,6 +310,50 @@ func (r *CourseEnrollmentRepository) getProgress(
 	return progress, nil
 }
 
+func (r *CourseEnrollmentRepository) GetLessonForRun(
+	ctx context.Context,
+	studentID, courseEnrollmentID, lessonID int64,
+) (domain.Lesson, error) {
+	if studentID <= 0 || courseEnrollmentID <= 0 || lessonID <= 0 {
+		return domain.Lesson{}, ErrInvalidInput
+	}
+	var lesson domain.Lesson
+	var description pgtype.Text
+	var publishedAt pgtype.Timestamptz
+	err := r.pool.QueryRow(ctx, `
+		SELECT c.id, c.title, cel.position, l.id, lv.id, lv.version_number,
+		       lv.title, lv.description, lv.published_at,
+		       (SELECT count(*)::INTEGER FROM lesson_questions q WHERE q.lesson_version_id = lv.id)
+		FROM course_enrollments ce
+		JOIN courses c ON c.id = ce.course_id
+		JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
+		JOIN lessons l ON l.id = cel.lesson_id
+		JOIN lesson_versions lv ON lv.id = cel.lesson_version_id AND lv.lesson_id = l.id
+		WHERE ce.id = $1 AND ce.student_id = $2
+		  AND ce.status IN ('in_progress', 'awaiting_curator')
+		  AND cel.lesson_id = $3
+	`, courseEnrollmentID, studentID, lessonID).Scan(
+		&lesson.CourseID, &lesson.CourseTitle, &lesson.Position, &lesson.ID,
+		&lesson.LessonVersionID, &lesson.VersionNumber, &lesson.Title,
+		&description, &publishedAt, &lesson.QuestionCount,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Lesson{}, ErrNotFound
+		}
+		return domain.Lesson{}, mapDatabaseError("получить урок из зафиксированного состава курса", err)
+	}
+	if description.Valid {
+		value := description.String
+		lesson.Description = &value
+	}
+	if publishedAt.Valid {
+		value := publishedAt.Time
+		lesson.PublishedAt = &value
+	}
+	return lesson, nil
+}
+
 func (r *CourseEnrollmentRepository) RefreshCompletion(
 	ctx context.Context,
 	studentID, courseEnrollmentID int64,
