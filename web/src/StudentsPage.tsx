@@ -72,7 +72,7 @@ export default function StudentsPage({
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<number, string>>({})
   const [busyAttemptID, setBusyAttemptID] = useState<number | null>(null)
   const busyAttemptRef = useRef<number | null>(null)
-  const answerLoadingRef = useRef(new Set<number>())
+  const answerLoadingRef = useRef(new Set<string>())
 
   useEffect(() => {
     const controller = new AbortController()
@@ -112,6 +112,19 @@ export default function StudentsPage({
     [students, selectedStudentID],
   )
   const activeCourse = selectedStudent?.active_course ?? null
+  const selectionRef = useRef({
+    studentID: selectedStudentID,
+    courseEnrollmentID: activeCourse?.course_enrollment_id ?? null,
+    version: 0,
+  })
+  if (selectionRef.current.studentID !== selectedStudentID ||
+      selectionRef.current.courseEnrollmentID !== (activeCourse?.course_enrollment_id ?? null)) {
+    selectionRef.current = {
+      studentID: selectedStudentID,
+      courseEnrollmentID: activeCourse?.course_enrollment_id ?? null,
+      version: selectionRef.current.version + 1,
+    }
+  }
 
   useEffect(() => {
     if (selectedStudentID !== null && !loading && !students.some((student) => student.id === selectedStudentID)) {
@@ -156,25 +169,33 @@ export default function StudentsPage({
 
   async function loadLessonAnswers(lesson: CourseEnrollmentLesson, force = false) {
     if (!selectedStudent || !activeCourse) return
-    if (!force && (answersLoaded[lesson.lesson_id] || answerLoadingRef.current.has(lesson.lesson_id))) return
-    answerLoadingRef.current.add(lesson.lesson_id)
+    const studentID = selectedStudent.id
+    const courseEnrollmentID = activeCourse.course_enrollment_id
+    const selectionVersion = selectionRef.current.version
+    const requestKey = `${selectionVersion}:${lesson.lesson_id}`
+    if (!force && (answersLoaded[lesson.lesson_id] || answerLoadingRef.current.has(requestKey))) return
+    answerLoadingRef.current.add(requestKey)
     setAnswersLoading((current) => ({ ...current, [lesson.lesson_id]: true }))
     setAnswersErrors((current) => ({ ...current, [lesson.lesson_id]: '' }))
     try {
       const [answers, lessonDetail] = await Promise.all([
-        listCuratorLessonAnswers(selectedStudent.id, activeCourse.course_enrollment_id, lesson.lesson_id),
+        listCuratorLessonAnswers(studentID, courseEnrollmentID, lesson.lesson_id),
         getCourseLessonDetail(activeCourse.course_id, lesson.lesson_id),
       ])
+      if (selectionRef.current.version !== selectionVersion) return
       setAnswersByLesson((current) => ({ ...current, [lesson.lesson_id]: answers }))
       setLessonDetailsByLesson((current) => ({ ...current, [lesson.lesson_id]: lessonDetail }))
       setAnswersLoaded((current) => ({ ...current, [lesson.lesson_id]: true }))
     } catch (reason: unknown) {
+      if (selectionRef.current.version !== selectionVersion) return
       const message = messageOf(reason, 'Не удалось загрузить ответы урока.')
       setAnswersErrors((current) => ({ ...current, [lesson.lesson_id]: message }))
       if (message.includes('Сессия завершена')) onSessionExpired()
     } finally {
-      answerLoadingRef.current.delete(lesson.lesson_id)
-      setAnswersLoading((current) => ({ ...current, [lesson.lesson_id]: false }))
+      answerLoadingRef.current.delete(requestKey)
+      if (selectionRef.current.version === selectionVersion) {
+        setAnswersLoading((current) => ({ ...current, [lesson.lesson_id]: false }))
+      }
     }
   }
 
