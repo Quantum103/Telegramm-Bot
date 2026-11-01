@@ -258,10 +258,29 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var studentID, enrollmentID, questionID, courseEnrollmentID int64
+	var studentID int64
+	if err := tx.QueryRow(ctx, `
+		SELECT le.student_id
+		FROM answer_attempts aa
+		JOIN lesson_enrollments le ON le.id = aa.enrollment_id
+		WHERE aa.id = $1
+	`, params.AttemptID).Scan(&studentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.AnswerAttemptReview{}, ErrNotFound
+		}
+		return domain.AnswerAttemptReview{}, mapDatabaseError("найти ученика по попытке ответа", err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT id FROM students WHERE id = $1 FOR UPDATE", studentID).Scan(&studentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.AnswerAttemptReview{}, ErrNotFound
+		}
+		return domain.AnswerAttemptReview{}, mapDatabaseError("заблокировать ученика перед проверкой ответа", err)
+	}
+
+	var enrollmentID, questionID, courseEnrollmentID int64
 	var enrollmentStatus, courseStatus, mode, processingStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT le.student_id, le.id, aa.question_id, ce.id,
+		SELECT le.id, aa.question_id, ce.id,
 		       le.status, ce.status, ce.mode, aa.processing_status
 		FROM answer_attempts aa
 		JOIN lesson_enrollments le
@@ -270,7 +289,7 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 		WHERE aa.id = $1
 		FOR UPDATE OF aa, le, ce
 	`, params.AttemptID).Scan(
-		&studentID, &enrollmentID, &questionID, &courseEnrollmentID,
+		&enrollmentID, &questionID, &courseEnrollmentID,
 		&enrollmentStatus, &courseStatus, &mode, &processingStatus,
 	)
 	if err != nil {
