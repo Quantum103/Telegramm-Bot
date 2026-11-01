@@ -80,7 +80,7 @@ func TestStaffCourseLearningStudentListIncludesActiveCourse(t *testing.T) {
 	const csrfToken = "csrf-course-learning-students-test-token"
 	identity := domain.StaffSessionIdentity{
 		StaffID: 51, DisplayName: "Admin", Email: "admin@example.test",
-		Roles: []string{"administrator"},
+		Roles:         []string{"administrator"},
 		CSRFTokenHash: auth.HashToken(csrfToken), ExpiresAt: time.Now().Add(time.Hour),
 	}
 	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
@@ -159,7 +159,7 @@ func TestStaffCourseLearningReadRolesAndReviewIdempotencyStatus(t *testing.T) {
 	}
 
 	// This handler is tied to the administrator identity above.
-	adminCourse := makeAdminRequest( http.MethodGet,
+	adminCourse := makeAdminRequest(http.MethodGet,
 		"/api/v1/staff/course-learning/students/88/courses/77/lessons", "", false)
 	if adminCourse.Code != http.StatusOK || learning.listCourseCalls != 1 ||
 		learning.lastStaffID != identity.StaffID || learning.lastStudentID != 88 || learning.lastRunID != 77 {
