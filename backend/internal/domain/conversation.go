@@ -21,6 +21,8 @@ type ConversationMessage struct {
 	BodyText            *string   `json:"body_text,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	Replayed            bool      `json:"replayed,omitempty"`
+	DeliveryStatus      string    `json:"delivery_status,omitempty"`
+	DeliveryErrorCode   *string   `json:"delivery_error_code,omitempty"`
 }
 
 type ConversationSummary struct {
@@ -39,4 +41,14 @@ type CreateStudentConversationMessageParams struct {
 	TelegramChatID    int64
 	TelegramMessageID int64
 	BodyText          string
+}
+
+
+// ConversationDelivery — задание на доставку ответа куратора в Telegram.
+type ConversationDelivery struct {
+	ID              int64
+	MessageID       int64
+	RecipientChatID int64
+	BodyText        string
+	AttemptCount    int
 }

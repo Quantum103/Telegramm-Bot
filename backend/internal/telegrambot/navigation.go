@@ -32,6 +32,7 @@ func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int6
 		text += "\n\nПока нет опубликованных курсов. Попробуйте позже."
 		rows = append(rows, []InlineKeyboardButton{button("Обновить список", "courses")})
 	}
+	rows = append(rows, []InlineKeyboardButton{button("Написать куратору", "chat:start")})
 	b.render(ctx, chatID, messageID, text, markup(rows))
 }
 
@@ -332,6 +333,17 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 
 	parts := strings.Split(callback.Data, ":")
 	switch {
+	case callback.Data == "chat:start":
+		b.startStudentChat(ctx, chatID, messageID, student)
+	case callback.Data == "chat:cancel":
+		if b.conversations != nil {
+			if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
+				b.logger.Warn("не удалось отменить режим общения из меню", "student_id", student.ID, "error", err)
+				b.render(ctx, chatID, messageID, "Не удалось выключить режим общения. Попробуйте ещё раз.", keyboard(button("Повторить", "chat:cancel")))
+				return
+			}
+		}
+		b.showCourses(ctx, chatID, student.ID, messageID, "Режим общения выключен. Выберите курс или напишите куратору.")
 	case callback.Data == "courses":
 		b.showCourses(ctx, chatID, student.ID, messageID, "Выберите курс для изучения Библии.")
 	case len(parts) == 2 && parts[0] == "course":

@@ -220,10 +220,11 @@ func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaf
 		return nil, ErrInvalidInput
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, c.student_id, student.display_name, c.status, c.created_at,
+		SELECT c.id, c.student_id, student.display_name, c.status, c.updated_at,
 		       last_message.id, last_message.sender_participant_id,
 		       CASE WHEN last_sender.student_id IS NOT NULL THEN 'student' ELSE 'curator' END,
 		       last_message.message_type, last_message.body_text, last_message.created_at,
+		       last_message.delivery_status, last_message.last_error_code,
 		       (SELECT count(*) FROM conversation_messages unread_message
 		        WHERE unread_message.conversation_id = c.id
 		          AND unread_message.sender_participant_id <> participant.id
@@ -236,8 +237,12 @@ func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaf
 		JOIN conversation_participants participant
 		  ON participant.conversation_id = c.id AND participant.staff_id = $1 AND participant.left_at IS NULL
 		LEFT JOIN LATERAL (
-			SELECT message.id, message.sender_participant_id, message.message_type, message.body_text, message.created_at
+			SELECT message.id, message.sender_participant_id, message.message_type,
+			       message.body_text, message.created_at, delivery.delivery_status,
+			       delivery.last_error_code
 			FROM conversation_messages message
+			LEFT JOIN conversation_message_deliveries delivery
+			  ON delivery.message_id = message.id AND delivery.channel = 'telegram'
 			WHERE message.conversation_id = c.id
 			ORDER BY message.created_at DESC, message.id DESC LIMIT 1
 		) last_message ON TRUE
@@ -251,7 +256,7 @@ func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaf
 		    WHERE assignment.student_id = c.student_id AND assignment.curator_staff_id = $1
 		      AND assignment.status = 'active' AND staff.account_status = 'active'
 		  )
-		ORDER BY COALESCE(last_message.created_at, c.created_at) DESC, c.id DESC
+		ORDER BY COALESCE(last_message.created_at, c.updated_at) DESC, c.id DESC
 	`, curatorStaffID)
 	if err != nil {
 		return nil, mapDatabaseError("получить диалоги куратора", err)
@@ -261,10 +266,11 @@ func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaf
 	for rows.Next() {
 		var item domain.ConversationSummary
 		var lastID, lastSenderID pgtype.Int8
-		var senderType, messageType, body pgtype.Text
+		var senderType, messageType, body, deliveryStatus, deliveryError pgtype.Text
 		var lastAt pgtype.Timestamptz
 		if err := rows.Scan(&item.ID, &item.StudentID, &item.StudentDisplayName, &item.Status, &item.LastActivityAt,
-			&lastID, &lastSenderID, &senderType, &messageType, &body, &lastAt, &item.UnreadCount); err != nil {
+			&lastID, &lastSenderID, &senderType, &messageType, &body, &lastAt,
+			&deliveryStatus, &deliveryError, &item.UnreadCount); err != nil {
 			return nil, mapDatabaseError("прочитать диалог куратора", err)
 		}
 		if lastID.Valid {
@@ -275,6 +281,13 @@ func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaf
 			if body.Valid {
 				value := body.String
 				last.BodyText = &value
+			}
+			if deliveryStatus.Valid {
+				last.DeliveryStatus = deliveryStatus.String
+			}
+			if deliveryError.Valid {
+				value := deliveryError.String
+				last.DeliveryErrorCode = &value
 			}
 			item.LastMessage = &last
 		}
@@ -380,9 +393,13 @@ func listConversationMessagesTx(ctx context.Context, tx pgx.Tx, conversationID, 
 	rows, err := tx.Query(ctx, `
 		SELECT message.id, message.conversation_id, message.sender_participant_id,
 		       CASE WHEN sender.student_id IS NOT NULL THEN 'student' ELSE 'curator' END,
-		       message.message_type, message.body_text, message.created_at
+		       message.message_type, message.body_text, message.created_at,
+		       COALESCE(delivery.delivery_status, ''),
+		       NULLIF(delivery.last_error_code, '')
 		FROM conversation_messages message
 		JOIN conversation_participants sender ON sender.id = message.sender_participant_id
+		LEFT JOIN conversation_message_deliveries delivery
+		  ON delivery.message_id = message.id AND delivery.channel = 'telegram'
 		WHERE message.conversation_id = $1
 		  AND ($3 = 0 OR (message.created_at, message.id) < (
 		    SELECT cursor_message.created_at, cursor_message.id
@@ -399,14 +416,22 @@ func listConversationMessagesTx(ctx context.Context, tx pgx.Tx, conversationID, 
 	result := make([]domain.ConversationMessage, 0)
 	for rows.Next() {
 		var message domain.ConversationMessage
-		var body pgtype.Text
+		var body, deliveryStatus, deliveryError pgtype.Text
 		if err := rows.Scan(&message.ID, &message.ConversationID, &message.SenderParticipantID,
-			&message.SenderType, &message.MessageType, &body, &message.CreatedAt); err != nil {
+			&message.SenderType, &message.MessageType, &body, &message.CreatedAt,
+			&deliveryStatus, &deliveryError); err != nil {
 			return nil, mapDatabaseError("прочитать сообщение", err)
 		}
 		if body.Valid {
 			value := body.String
 			message.BodyText = &value
+		}
+		if deliveryStatus.Valid {
+			message.DeliveryStatus = deliveryStatus.String
+		}
+		if deliveryError.Valid {
+			value := deliveryError.String
+			message.DeliveryErrorCode = &value
 		}
 		result = append(result, message)
 	}
@@ -460,6 +485,7 @@ func (r *ConversationRepository) SendCuratorMessage(ctx context.Context, staffID
 	}
 	message.ConversationID, message.SenderParticipantID = conversationID, participantID
 	message.SenderType, message.MessageType, message.BodyText = "curator", "text", &body
+	message.DeliveryStatus = "pending"
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ConversationMessage{}, mapDatabaseError("зафиксировать ответ куратора", err)
 	}

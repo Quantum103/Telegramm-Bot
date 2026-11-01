@@ -153,6 +153,18 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	if deliveryStatus != "pending" || recipientChatID != fixture.telegramID {
 		t.Fatalf("неверное намерение доставки: status=%s chat_id=%d", deliveryStatus, recipientChatID)
 	}
+	deliveryRepository := NewConversationDeliveryRepository(pool)
+	delivery, err := deliveryRepository.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить задание Telegram outbox: %v", err)
+	}
+	if delivery.MessageID != reply.ID || delivery.RecipientChatID != fixture.telegramID ||
+		delivery.BodyText != "Добрый день! Чем могу помочь?" || delivery.AttemptCount != 1 {
+		t.Fatalf("неверное задание Telegram outbox: %+v", delivery)
+	}
+	if err := deliveryRepository.MarkDeliverySent(ctx, delivery.ID); err != nil {
+		t.Fatalf("отметить доставку завершённой: %v", err)
+	}
 	encodedReply, err := json.Marshal(reply)
 	if err != nil {
 		t.Fatalf("сериализовать ответ для API: %v", err)
@@ -166,6 +178,9 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	history, err := repo.ListMessagesForCurator(ctx, fixture.curator1ID, conversationID, 0, 50)
 	if err != nil || len(history) != 2 {
 		t.Fatalf("история до передачи: messages=%+v err=%v", history, err)
+	}
+	if history[0].ID != reply.ID || history[0].DeliveryStatus != "sent" || history[0].DeliveryErrorCode != nil {
+		t.Fatalf("история не показывает успешный статус доставки: %+v", history[0])
 	}
 
 	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator2ID); err != nil {
@@ -264,5 +279,79 @@ func TestConversationMessageAndDeliveryRollbackTogether(t *testing.T) {
 	}
 	if afterCount != beforeCount {
 		t.Fatalf("сообщение сохранилось без записи доставки: before=%d after=%d", beforeCount, afterCount)
+	}
+}
+
+func TestStudentChatModePersistsInPostgres(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, false)
+	repo := NewConversationRepository(pool)
+
+	enabled, err := repo.IsStudentChatMode(ctx, fixture.studentID)
+	if err != nil || enabled {
+		t.Fatalf("режим общения по умолчанию должен быть выключен: enabled=%v err=%v", enabled, err)
+	}
+	if err := repo.SetStudentChatMode(ctx, fixture.studentID, true); err != nil {
+		t.Fatalf("включить режим общения: %v", err)
+	}
+	// Новый экземпляр репозитория имитирует чтение после перезапуска backend.
+	restartedRepository := NewConversationRepository(pool)
+	enabled, err = restartedRepository.IsStudentChatMode(ctx, fixture.studentID)
+	if err != nil || !enabled {
+		t.Fatalf("режим общения не сохранился в PostgreSQL: enabled=%v err=%v", enabled, err)
+	}
+	if err := restartedRepository.SetStudentChatMode(ctx, fixture.studentID, false); err != nil {
+		t.Fatalf("выключить режим общения: %v", err)
+	}
+	enabled, err = repo.IsStudentChatMode(ctx, fixture.studentID)
+	if err != nil || enabled {
+		t.Fatalf("режим общения не выключился: enabled=%v err=%v", enabled, err)
+	}
+}
+
+func TestConversationDeliveryFailureIsVisibleToCurator(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	conversations := NewConversationRepository(pool)
+	dialog, err := conversations.GetOrCreateForStudent(ctx, fixture.studentID)
+	if err != nil {
+		t.Fatalf("создать диалог: %v", err)
+	}
+	message, err := conversations.SendCuratorMessage(ctx, fixture.curator1ID, dialog.ID, "Проверка статуса доставки")
+	if err != nil {
+		t.Fatalf("сохранить ответ куратора: %v", err)
+	}
+
+	deliveries := NewConversationDeliveryRepository(pool)
+	delivery, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить задание доставки: %v", err)
+	}
+	if delivery.MessageID != message.ID {
+		t.Fatalf("захвачено другое сообщение: %+v", delivery)
+	}
+	if err := deliveries.MarkDeliveryFailed(ctx, delivery.ID, "telegram_recipient_unavailable"); err != nil {
+		t.Fatalf("сохранить окончательную ошибку: %v", err)
+	}
+
+	history, err := conversations.ListMessagesForCurator(ctx, fixture.curator1ID, dialog.ID, 0, 50)
+	if err != nil || len(history) != 1 {
+		t.Fatalf("получить историю после ошибки доставки: messages=%+v err=%v", history, err)
+	}
+	if history[0].DeliveryStatus != "failed" || history[0].DeliveryErrorCode == nil ||
+		*history[0].DeliveryErrorCode != "telegram_recipient_unavailable" {
+		t.Fatalf("ошибка доставки не отображается в истории: %+v", history[0])
+	}
+
+	items, err := conversations.ListForCurator(ctx, fixture.curator1ID)
+	if err != nil || len(items) != 1 || items[0].LastMessage == nil ||
+		items[0].LastMessage.DeliveryStatus != "failed" ||
+		items[0].LastMessage.DeliveryErrorCode == nil ||
+		*items[0].LastMessage.DeliveryErrorCode != "telegram_recipient_unavailable" {
+		t.Fatalf("список диалогов не показывает ошибку последнего сообщения: items=%+v err=%v", items, err)
 	}
 }

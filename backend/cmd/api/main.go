@@ -119,7 +119,7 @@ func run(logger *slog.Logger) error {
 	appCtx, cancelApp := context.WithCancel(signalCtx)
 	defer cancelApp()
 
-	componentErrors := make(chan error, 2)
+	componentErrors := make(chan error, 3)
 	serverDone := make(chan struct{})
 	go func() {
 		defer close(serverDone)
@@ -130,6 +130,7 @@ func run(logger *slog.Logger) error {
 	}()
 
 	var botDone chan struct{}
+	var deliveryDone chan struct{}
 	if cfg.TelegramBotToken == "" {
 		logger.Info("Telegram-бот отключён: переменная TELEGRAM_BOT_TOKEN не задана")
 	} else {
@@ -149,9 +150,10 @@ func run(logger *slog.Logger) error {
 		if chapterPublisher == nil {
 			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
 		}
-		bot := telegrambot.NewBotWithChapterPublisher(
-			telegrambot.NewHTTPClient(cfg.TelegramBotToken), studentService, catalogService, learningService,
-			logger, chapterPublisher,
+		telegramAPI := telegrambot.NewHTTPClient(cfg.TelegramBotToken)
+		bot := telegrambot.NewBotWithChapterPublisherAndConversations(
+			telegramAPI, studentService, catalogService, learningService,
+			logger, chapterPublisher, conversationService,
 		)
 		go func() {
 			defer close(botDone)
@@ -159,7 +161,18 @@ func run(logger *slog.Logger) error {
 				componentErrors <- fmt.Errorf("Telegram-бот: %w", err)
 			}
 		}()
-		logger.Info("Telegram-бот запускает проверку подключения и long polling")
+
+		deliveryDone = make(chan struct{})
+		deliveryWorker := telegrambot.NewDeliveryWorker(
+			repository.NewConversationDeliveryRepository(pool), telegramAPI, logger,
+		)
+		go func() {
+			defer close(deliveryDone)
+			if err := deliveryWorker.Run(appCtx); err != nil {
+				componentErrors <- fmt.Errorf("Telegram delivery worker: %w", err)
+			}
+		}()
+		logger.Info("Telegram-бот, приём обновлений и worker доставки запущены")
 	}
 
 	var componentErr error
@@ -189,6 +202,15 @@ func run(logger *slog.Logger) error {
 	if botDone != nil {
 		select {
 		case <-botDone:
+		case <-shutdownCtx.Done():
+			if shutdownErr == nil {
+				shutdownErr = shutdownCtx.Err()
+			}
+		}
+	}
+	if deliveryDone != nil {
+		select {
+		case <-deliveryDone:
 		case <-shutdownCtx.Done():
 			if shutdownErr == nil {
 				shutdownErr = shutdownCtx.Err()

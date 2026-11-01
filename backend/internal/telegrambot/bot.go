@@ -98,6 +98,7 @@ type LearningNavigator interface {
 type APIError struct {
 	Code        int
 	Description string
+	RetryAfter  time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -250,6 +251,9 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 		Result      json.RawMessage `json:"result"`
 		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
+		Parameters struct {
+			RetryAfter int `json:"retry_after"`
+		} `json:"parameters"`
 	}
 	if err := json.Unmarshal(responseBody, &envelope); err != nil {
 		return fmt.Errorf("Telegram Bot API вернул некорректный ответ (HTTP %d)", resp.StatusCode)
@@ -259,7 +263,10 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 		if code == 0 {
 			code = resp.StatusCode
 		}
-		return &APIError{Code: code, Description: envelope.Description}
+		return &APIError{
+			Code: code, Description: envelope.Description,
+			RetryAfter: time.Duration(envelope.Parameters.RetryAfter) * time.Second,
+		}
 	}
 	if result != nil {
 		if err := json.Unmarshal(envelope.Result, result); err != nil {
@@ -269,6 +276,12 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 	return nil
 }
 
+type StudentConversationAPI interface {
+	CreateStudentMessage(context.Context, domain.CreateStudentConversationMessageParams) (domain.ConversationMessage, error)
+	SetStudentChatMode(context.Context, int64, bool) error
+	IsStudentChatMode(context.Context, int64) (bool, error)
+}
+
 type Bot struct {
 	api              TelegramAPI
 	students         StudentRegistrar
@@ -276,6 +289,7 @@ type Bot struct {
 	learning         LearningNavigator
 	logger           *slog.Logger
 	chapterPublisher ChapterPagePublisher
+	conversations    StudentConversationAPI
 
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
@@ -289,19 +303,23 @@ func NewBot(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, l
 	return NewBotWithChapterPublisher(api, students, catalog, learning, logger, nil)
 }
 
-// NewBotWithChapterPublisher enables full-chapter links when a Telegraph publisher is configured.
+// NewBotWithChapterPublisher keeps the original constructor contract.
 func NewBotWithChapterPublisher(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher) *Bot {
+	return NewBotWithChapterPublisherAndConversations(api, students, catalog, learning, logger, publisher, nil)
+}
+
+// NewBotWithChapterPublisherAndConversations reuses the current Telegram Bot API client.
+func NewBotWithChapterPublisherAndConversations(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher, conversations StudentConversationAPI) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
-		chapterPublisher: publisher,
-		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
+		chapterPublisher: publisher, conversations: conversations,
+		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
 }
-
 func (b *Bot) Run(ctx context.Context) error {
 	me, err := b.waitForAPI(ctx)
 	if err != nil {
@@ -336,7 +354,13 @@ func (b *Bot) Run(ctx context.Context) error {
 			if update.UpdateID < offset {
 				continue
 			}
-			b.handleUpdate(ctx, update)
+			if !b.handleUpdate(ctx, update) {
+				// Не подтверждаем offset при временной ошибке сохранения: Telegram повторит update.
+				if !wait(ctx, time.Second) {
+					return nil
+				}
+				break
+			}
 			offset = update.UpdateID + 1
 		}
 	}
@@ -384,43 +408,141 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 	}
 }
 
-func (b *Bot) handleUpdate(ctx context.Context, update Update) {
+func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 	if update.CallbackQuery != nil {
 		b.handleCallbackWithUpdateID(ctx, update.UpdateID, *update.CallbackQuery)
-		return
+		return true
 	}
 	message := update.Message
 	if message == nil || message.From == nil || message.From.ID <= 0 || message.Chat.ID <= 0 {
-		return
+		return true
 	}
 	if message.Chat.Type != "" && message.Chat.Type != "private" {
-		return
+		return true
 	}
 
 	trimmedText := strings.TrimSpace(message.Text)
 	if trimmedText == "" {
-		return
+		return true
 	}
 	fields := strings.Fields(trimmedText)
 	if len(fields) == 0 {
-		return
+		return true
 	}
 	if !strings.HasPrefix(fields[0], "/") {
+		if b.conversations != nil {
+			student, err := b.ensureStudent(ctx, *message.From)
+			if err != nil {
+				b.logger.Warn("не удалось определить ученика для сообщения куратору", "telegram_user_id", message.From.ID, "error", err)
+				return false
+			}
+			chatMode, err := b.conversations.IsStudentChatMode(ctx, student.ID)
+			if err != nil {
+				b.logger.Warn("не удалось проверить режим общения ученика", "student_id", student.ID, "error", err)
+				return false
+			}
+			if chatMode {
+				return b.handleStudentConversationText(ctx, student, *message, trimmedText)
+			}
+		}
 		b.handleTextAnswer(ctx, update.UpdateID, *message.From, *message, trimmedText)
-		return
+		return true
 	}
-	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
 
+	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
 	switch command {
 	case "/start":
 		b.handleStart(ctx, message.Chat.ID, *message.From)
+	case "/chat":
+		b.handleChatCommand(ctx, message.Chat.ID, *message.From)
 	case "/help":
-		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки.\n\n/start — открыть каталог курсов\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. В вопросах с вариантами используйте кнопки.")
+		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть каталог курсов\n/chat — написать куратору\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
 	case "/cancel":
-		b.send(ctx, message.Chat.ID, "Сейчас нет активного действия для отмены.")
+		b.handleCancelCommand(ctx, message.Chat.ID, *message.From)
 	default:
-		b.send(ctx, message.Chat.ID, "Пока доступны команды /start, /help и /cancel.")
+		b.send(ctx, message.Chat.ID, "Пока доступны команды /start, /chat, /help и /cancel.")
 	}
+	return true
+}
+
+func (b *Bot) handleChatCommand(ctx context.Context, chatID int64, user User) {
+	student, err := b.ensureStudent(ctx, user)
+	if err != nil {
+		b.logger.Warn("не удалось определить ученика для режима общения", "telegram_user_id", user.ID, "error", err)
+		b.send(ctx, chatID, "Не удалось проверить регистрацию. Отправьте /start и попробуйте ещё раз.")
+		return
+	}
+	b.startStudentChat(ctx, chatID, 0, student)
+}
+
+func (b *Bot) startStudentChat(ctx context.Context, chatID, messageID int64, student domain.Student) {
+	if b.conversations == nil {
+		b.render(ctx, chatID, messageID, "Общение с куратором пока недоступно. Попробуйте позже.", keyboard(button("К курсам", "courses")))
+		return
+	}
+	if err := b.conversations.SetStudentChatMode(ctx, student.ID, true); err != nil {
+		b.logger.Error("не удалось включить режим общения", "student_id", student.ID, "error", err)
+		b.render(ctx, chatID, messageID, "Не удалось включить режим общения. Попробуйте ещё раз.", keyboard(button("Повторить", "chat:start")))
+		return
+	}
+	b.render(ctx, chatID, messageID,
+		"Режим общения с куратором включён.\n\nНапишите сообщение следующим сообщением. Оно будет сохранено и появится в диалоге вашего назначенного куратора.\n\nЧтобы вернуться к ответам на уроки, нажмите «Отмена» или отправьте /cancel.",
+		keyboard(button("Отмена", "chat:cancel")))
+}
+
+func (b *Bot) handleCancelCommand(ctx context.Context, chatID int64, user User) {
+	if b.conversations == nil {
+		b.send(ctx, chatID, "Сейчас нет активного действия для отмены.")
+		return
+	}
+	student, err := b.ensureStudent(ctx, user)
+	if err != nil {
+		b.logger.Warn("не удалось определить ученика при отмене действия", "telegram_user_id", user.ID, "error", err)
+		b.send(ctx, chatID, "Не удалось проверить регистрацию. Отправьте /start и попробуйте снова.")
+		return
+	}
+	enabled, err := b.conversations.IsStudentChatMode(ctx, student.ID)
+	if err != nil {
+		b.logger.Warn("не удалось проверить режим общения при отмене", "student_id", student.ID, "error", err)
+		b.send(ctx, chatID, "Не удалось отменить действие из-за временной ошибки. Попробуйте ещё раз.")
+		return
+	}
+	if !enabled {
+		b.send(ctx, chatID, "Сейчас нет активного действия для отмены.")
+		return
+	}
+	if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
+		b.logger.Error("не удалось отключить режим общения", "student_id", student.ID, "error", err)
+		b.send(ctx, chatID, "Не удалось выключить режим общения. Попробуйте ещё раз.")
+		return
+	}
+	b.send(ctx, chatID, "Режим общения выключен. Следующие текстовые сообщения будут обрабатываться как ответы на вопросы уроков.")
+}
+
+func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.Student, message Message, bodyText string) bool {
+	saved, err := b.conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: student.ID, TelegramChatID: message.Chat.ID,
+		TelegramMessageID: message.MessageID, BodyText: bodyText,
+	})
+	if errors.Is(err, domain.ErrInvalidState) {
+		// Не удаляем текст и не подтверждаем как отправленный: он остаётся в истории Telegram-чата.
+		b.send(ctx, message.Chat.ID, "Сейчас вам не назначен активный куратор. Сообщение НЕ отправлено и не сохранено. Оно остаётся в истории этого Telegram-чата: скопируйте его и отправьте повторно после назначения куратора.")
+		return true
+	}
+	if errors.Is(err, domain.ErrInvalidInput) {
+		b.send(ctx, message.Chat.ID, "Сообщение не отправлено: допустимая длина — до 4000 символов. Сократите текст и отправьте его ещё раз.")
+		return true
+	}
+	if err != nil {
+		b.logger.Error("не удалось сохранить сообщение ученика", "student_id", student.ID, "telegram_message_id", message.MessageID, "error", err)
+		return false
+	}
+	if saved.Replayed {
+		b.send(ctx, message.Chat.ID, "Это сообщение уже принято и сохранено. Куратор увидит его в диалоге.")
+	} else {
+		b.send(ctx, message.Chat.ID, "Сообщение принято и сохранено. Ваш назначенный куратор увидит его в диалоге.")
+	}
+	return true
 }
 
 func (b *Bot) handleStart(ctx context.Context, chatID int64, user User) {
@@ -429,6 +551,11 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User) {
 		b.logger.Error("не удалось зарегистрировать ученика Telegram", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось завершить регистрацию из-за временной ошибки. Попробуйте ещё раз немного позже.")
 		return
+	}
+	if b.conversations != nil {
+		if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
+			b.logger.Warn("не удалось выключить режим общения при открытии каталога", "student_id", student.ID, "error", err)
+		}
 	}
 	name := student.DisplayName
 	if strings.TrimSpace(name) == "" {
