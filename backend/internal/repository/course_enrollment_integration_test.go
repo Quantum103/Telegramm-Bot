@@ -363,6 +363,52 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 	if assignedCuratorID != secondCuratorID {
 		t.Fatalf("старт ai изменил административное назначение: got=%d want=%d", assignedCuratorID, secondCuratorID)
 	}
+
+	aiLesson, err := courses.GetLessonForRun(ctx, student.ID, nextRun.Enrollment.ID, lessonIDs[0])
+	if err != nil {
+		t.Fatalf("получить урок для AI-прохождения: %v", err)
+	}
+	aiEnrollment, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
+		StudentID: student.ID,
+		LessonID: lessonIDs[0],
+		LessonVersionID: aiLesson.LessonVersionID,
+		CourseEnrollmentID: nextRun.Enrollment.ID,
+		Mode: "ai",
+	})
+	if err != nil {
+		t.Fatalf("начать урок в режиме ai: %v", err)
+	}
+	var aiQuestionID int64
+	if err := pool.QueryRow(ctx, "SELECT id FROM lesson_questions WHERE lesson_version_id = $1", aiLesson.LessonVersionID).Scan(&aiQuestionID); err != nil {
+		t.Fatalf("получить вопрос AI-прохождения: %v", err)
+	}
+	aiAnswer, err := answers.Submit(ctx, AnswerSubmission{
+		StudentID: student.ID,
+		EnrollmentID: aiEnrollment.ID,
+		QuestionID: aiQuestionID,
+		AnswerText: "Ответ для самостоятельного прохождения",
+	})
+	if err != nil {
+		t.Fatalf("отправить ответ в режиме ai: %v", err)
+	}
+	if _, err := curatorRepository.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		CuratorStaffID: secondCuratorID,
+		AttemptID: aiAnswer.AttemptID,
+		Decision: "approved",
+		Feedback: "Не должно приниматься в режиме ai.",
+	}); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("режим ai не должен запускать ручную проверку куратора, получено %v", err)
+	}
+	if _, err := enrollments.Complete(ctx, student.ID, aiEnrollment.ID); err != nil {
+		t.Fatalf("AI-урок должен завершаться без ручного решения куратора: %v", err)
+	}
+	var aiReviewCount int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM answer_attempt_reviews WHERE answer_attempt_id = $1", aiAnswer.AttemptID).Scan(&aiReviewCount); err != nil {
+		t.Fatalf("проверить отсутствие ручной проверки AI-ответа: %v", err)
+	}
+	if aiReviewCount != 0 {
+		t.Fatalf("AI-ответ получил %d ручных решений куратора", aiReviewCount)
+	}
 }
 
 func TestLegacyLessonProgressRemainsAccessibleAndBlocksUnsafeCourseGuess(t *testing.T) {
