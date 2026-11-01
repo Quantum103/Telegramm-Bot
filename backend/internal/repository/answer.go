@@ -140,10 +140,12 @@ func (r *AnswerRepository) ListAttemptHistory(ctx context.Context, studentID, en
 		SELECT aa.id, aa.answer_id, aa.submitted_answer_text, aa.processing_status,
 		       aa.evaluation_result, aa.explanation, aa.missing_points,
 		       aa.provider, aa.model, aa.duration_ms, aa.error_code,
-		       aa.created_at, aa.completed_at
+		       aa.created_at, aa.completed_at,
+		       review.decision, review.feedback, review.reviewed_at
 		FROM answer_attempts aa
 		JOIN lesson_enrollments le
 		  ON le.id = aa.enrollment_id AND le.lesson_version_id = aa.lesson_version_id
+		LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = aa.id
 		WHERE le.student_id = $1 AND le.id = $2 AND aa.question_id = $3
 		ORDER BY aa.created_at DESC, aa.id DESC
 	`, studentID, enrollmentID, questionID)
@@ -156,14 +158,15 @@ func (r *AnswerRepository) ListAttemptHistory(ctx context.Context, studentID, en
 	for rows.Next() {
 		var attempt AnswerAttempt
 		var result, explanation, provider, model, errorCode pgtype.Text
+		var reviewDecision, reviewFeedback pgtype.Text
 		var durationMS pgtype.Int4
-		var completedAt pgtype.Timestamptz
+		var completedAt, reviewedAt pgtype.Timestamptz
 		var missingJSON []byte
 
 		if err := rows.Scan(
 			&attempt.ID, &attempt.AnswerID, &attempt.SubmittedAnswer, &attempt.ProcessingStatus,
 			&result, &explanation, &missingJSON, &provider, &model, &durationMS, &errorCode,
-			&attempt.CreatedAt, &completedAt,
+			&attempt.CreatedAt, &completedAt, &reviewDecision, &reviewFeedback, &reviewedAt,
 		); err != nil {
 			return nil, mapDatabaseError("прочитать историю попыток", err)
 		}
@@ -194,6 +197,18 @@ func (r *AnswerRepository) ListAttemptHistory(ctx context.Context, studentID, en
 		if completedAt.Valid {
 			value := completedAt.Time
 			attempt.CompletedAt = &value
+		}
+		if reviewDecision.Valid {
+			value := reviewDecision.String
+			attempt.ReviewDecision = &value
+		}
+		if reviewFeedback.Valid {
+			value := reviewFeedback.String
+			attempt.ReviewFeedback = &value
+		}
+		if reviewedAt.Valid {
+			value := reviewedAt.Time
+			attempt.ReviewedAt = &value
 		}
 		if err := json.Unmarshal(missingJSON, &attempt.MissingPoints); err != nil {
 			return nil, mapDatabaseError("разобрать недостающие пункты ответа", err)
