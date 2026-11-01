@@ -24,8 +24,11 @@ type AnswerStore interface {
 }
 
 type CourseRunLearningStore interface {
+	Start(context.Context, int64, int64, string) (domain.CourseEnrollmentProgress, error)
+	GetActiveForStudent(context.Context, int64) (domain.CourseEnrollmentProgress, error)
 	GetForStudent(context.Context, int64, int64) (domain.CourseEnrollmentProgress, error)
 	GetLessonForRun(context.Context, int64, int64, int64) (domain.Lesson, error)
+	ListLessons(context.Context, int64, int64) ([]domain.CourseEnrollmentLesson, error)
 }
 
 type LearningService struct {
@@ -110,6 +113,52 @@ func (s *LearningService) StartLesson(ctx context.Context, studentID, lessonID i
 	return progress, nil
 }
 
+
+
+// StartCourse сохраняет режим и возвращает существующий запуск, если он уже есть.
+// При попытке открыть другой курс возвращает ErrActiveCourse вместе с его прогрессом.
+func (s *LearningService) StartCourse(
+	ctx context.Context,
+	studentID, courseID int64,
+	mode string,
+) (domain.CourseEnrollmentProgress, error) {
+	if studentID <= 0 || courseID <= 0 || (mode != "ai" && mode != "curator") {
+		return domain.CourseEnrollmentProgress{}, domain.ErrInvalidInput
+	}
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.CourseEnrollmentProgress{}, err
+	}
+	if s.courseEnrollments == nil {
+		return domain.CourseEnrollmentProgress{}, domain.ErrInvalidState
+	}
+	return s.courseEnrollments.Start(ctx, studentID, courseID, mode)
+}
+
+func (s *LearningService) ActiveCourse(
+	ctx context.Context,
+	studentID int64,
+) (domain.CourseEnrollmentProgress, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.CourseEnrollmentProgress{}, err
+	}
+	if s.courseEnrollments == nil {
+		return domain.CourseEnrollmentProgress{}, domain.ErrInvalidState
+	}
+	return s.courseEnrollments.GetActiveForStudent(ctx, studentID)
+}
+
+func (s *LearningService) CourseLessons(
+	ctx context.Context,
+	studentID, courseEnrollmentID int64,
+) ([]domain.CourseEnrollmentLesson, error) {
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return nil, err
+	}
+	if s.courseEnrollments == nil {
+		return nil, domain.ErrInvalidState
+	}
+	return s.courseEnrollments.ListLessons(ctx, studentID, courseEnrollmentID)
+}
 
 // StartLessonForCourse начинает или восстанавливает урок только внутри ранее созданного
 // запуска курса. Режим берётся из PostgreSQL и не принимается от клиента.
