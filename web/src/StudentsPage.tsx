@@ -127,6 +127,7 @@ export default function StudentsPage({
   const [busyAttemptID, setBusyAttemptID] = useState<number | null>(null)
   const busyAttemptRef = useRef<number | null>(null)
   const answerLoadingRef = useRef(new Set<string>())
+  const studentDetailRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -354,6 +355,7 @@ export default function StudentsPage({
     setExpandedLessonIDs((current) => current.includes(lesson.lesson_id)
       ? current : [...current, lesson.lesson_id])
     void loadLessonAnswers(lesson, true)
+    studentDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     setPendingLessonOpen(null)
   }, [pendingLessonOpen, loading, students, selectedStudentID, courseLoading, courseAccess])
 
@@ -598,7 +600,7 @@ export default function StudentsPage({
       </div>}
     </div>
 
-    {selectedStudent && <section className="panel student-detail-panel" aria-labelledby="student-detail-title">
+    {selectedStudent && <section ref={studentDetailRef} className="panel student-detail-panel" aria-labelledby="student-detail-title">
       <div className="student-detail-heading">
         <div><p className="eyebrow">КАРТОЧКА УЧЕНИКА</p><h2 id="student-detail-title">{selectedStudent.preferred_name || selectedStudent.display_name}</h2>
           <p>{activeCourse?.course_title || 'Нет активного курса'}{activeCourse ? ` · ${activeCourse.mode === 'curator' ? 'С куратором' : 'С ИИ'}` : ''}</p>
@@ -720,7 +722,7 @@ export default function StudentsPage({
                   </div>
                   {canReview && revisionQuestionID === answer.question_id && <div className="review-feedback-form">
                     <label htmlFor={`review-feedback-${answer.question_id}`}>Объяснение для ученика</label>
-                    <textarea id={`review-feedback-${answer.question_id}`} rows={3} maxLength={4000}
+                    <textarea id={`review-feedback-${answer.question_id}`} rows={3} maxLength={4000} required
                       value={feedbackDrafts[answer.question_id] ?? ''}
                       onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [answer.question_id]: event.target.value }))}
                       placeholder="Укажите, что нужно уточнить или исправить…" />
