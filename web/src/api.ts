@@ -21,6 +21,16 @@ export type Lesson = {
   question_count: number
 }
 
+export type CourseLessonDetail = Lesson & {
+  questions: {
+    id: number
+    question_number: number
+    prompt: string
+    answer_type: string
+    options: { id: number; key: string; text: string }[]
+  }[]
+}
+
 export type StaffIdentity = {
   id: number
   display_name: string
@@ -292,6 +302,19 @@ export async function listCourseLessons(courseID: number, signal?: AbortSignal):
   const body = await getJSON<LessonsResponse>(`/api/v1/courses/${courseID}/lessons`, signal)
   if (!body || !Array.isArray(body.lessons)) throw new Error('Сервер вернул некорректный список уроков.')
   return body.lessons
+}
+
+export async function getCourseLessonDetail(
+  courseID: number, lessonID: number, signal?: AbortSignal,
+): Promise<CourseLessonDetail> {
+  if (![courseID, lessonID].every((id) => Number.isSafeInteger(id) && id > 0)) {
+    throw new Error('Некорректный идентификатор курса или урока.')
+  }
+  const body = await getJSON<CourseLessonDetail>(
+    `/api/v1/courses/${courseID}/lessons/${lessonID}`, signal,
+  )
+  if (!body || !Array.isArray(body.questions)) throw new Error('Сервер вернул некорректное содержимое урока.')
+  return body
 }
 
 export async function getStaffSession(signal?: AbortSignal): Promise<StaffSession | null> {
