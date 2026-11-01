@@ -249,7 +249,7 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		if state.Question.AnswerType == "multiple_choice" && state.SavedAnswer != nil {
 			b.seedMultiDraft(key, state.SavedAnswer.SelectedOptionIDs)
 		}
-		b.renderQuestionMode(ctx, chatID, studentID, messageID, state, nil, 0, true)
+		b.renderQuestionMode(ctx, chatID, studentID, messageID, state, nil, 0, true, "")
 		return
 	case "pick":
 		if state.Question.AnswerType != "single_choice" {
@@ -285,7 +285,7 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		}
 		b.toggleMultiDraft(key, optionID)
 		b.setChoiceEditing(key, true)
-		b.renderQuestionMode(ctx, chatID, studentID, messageID, state, nil, 0, true)
+		b.renderQuestionMode(ctx, chatID, studentID, messageID, state, nil, 0, true, "")
 		return
 	case "multi-submit":
 		if state.Question.AnswerType != "multiple_choice" {

@@ -21,6 +21,7 @@ type CourseEnrollmentNavigator interface {
 // showStudentHome restores the student's active course from PostgreSQL. The
 // Telegram process never keeps the learning mode or course progress in memory.
 func (b *Bot) showStudentHome(ctx context.Context, chatID, studentID, messageID int64, greeting string) {
+	b.leaveStudentInteraction(ctx, studentID)
 	nav, ok := b.learning.(CourseEnrollmentNavigator)
 	if !ok {
 		b.showCourses(ctx, chatID, studentID, messageID, greeting)
@@ -169,7 +170,8 @@ func (b *Bot) startCourseWithMode(
 		// A concurrent AI selection may have won the race. In that case the
 		// persisted mode is authoritative and must not be overwritten.
 		if current, currentErr := nav.ActiveCourse(ctx, studentID); currentErr == nil &&
-			current.Enrollment.CourseID == courseID {
+			current.Enrollment.CourseID == courseID &&
+			current.Enrollment.Status == "in_progress" {
 			run, err = current, nil
 		} else {
 			b.render(ctx, chatID, messageID,
