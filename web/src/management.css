@@ -183,3 +183,153 @@
   .review-feedback-footer { align-items: flex-start; flex-direction: column; }
   .review-feedback-footer button { width: 100%; justify-content: center; }
 }
+
+
+/* Очередь проверки и сводка по отдельному уроку. */
+.review-queue-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 20px;
+}
+.review-queue-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.review-queue-heading .eyebrow { margin: 0 0 5px; }
+.review-queue-heading h2 { margin: 0; color: #405047; font-size: 17px; }
+.review-queue-heading p:not(.eyebrow) { margin: 5px 0 0; color: #87948b; font-size: 11px; }
+.review-queue-empty {
+  margin: 0;
+  padding: 22px;
+  border: 1px dashed #dce7df;
+  border-radius: 9px;
+  background: #fafcfb;
+  color: #78867d;
+  text-align: center;
+  font-size: 12px;
+}
+.review-queue-list { display: grid; gap: 10px; }
+.review-queue-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 16px;
+  border: 1px solid #e8efea;
+  border-radius: 10px;
+  background: #fff;
+}
+.review-queue-card-main { display: grid; flex: 1; gap: 9px; min-width: 0; }
+.review-queue-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.review-queue-avatar {
+  display: grid;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: #eff5f0;
+  color: #587562;
+  font-size: 12px;
+  font-weight: 700;
+}
+.review-queue-person > div { display: grid; gap: 3px; min-width: 0; }
+.review-queue-person strong { color: #405047; font-size: 12px; }
+.review-queue-person small { color: #93a097; font-size: 10px; }
+.review-queue-card h3 { margin: 0; color: #46564b; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.review-queue-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  color: #8a978e;
+  font-size: 10px;
+}
+.review-queue-progress {
+  height: 5px;
+  max-width: 360px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #e8eee9;
+}
+.review-queue-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #6e9879;
+  transition: width .2s ease;
+}
+.review-queue-open { flex: 0 0 auto; min-height: 38px; white-space: nowrap; }
+.student-lesson-review-action {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 14px 12px;
+}
+.student-lesson-review-action .primary-button { min-height: 34px; padding: 8px 12px; font-size: 11px; }
+.review-lesson-summary {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e7eee9;
+  border-radius: 9px;
+  background: #f8fbf9;
+}
+.review-lesson-summary-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.review-lesson-summary-heading > div { display: grid; gap: 4px; }
+.review-lesson-summary-heading .eyebrow { margin: 0; font-size: 9px; }
+.review-lesson-summary-heading strong { color: #46564b; font-size: 13px; }
+.review-lesson-summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #849188;
+  font-size: 10px;
+}
+.review-lesson-summary-stats strong { color: #526257; font-weight: 650; }
+.review-lesson-complete {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #edf6ef;
+  color: #4e805c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.curator-selected-options {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e8eee9;
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+.curator-selected-options > span { color: #8b988f; font-size: 10px; }
+.curator-selected-options p {
+  margin: 0;
+  color: #48584d;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .review-queue-card { align-items: stretch; flex-direction: column; }
+  .review-queue-open { width: 100%; justify-content: center; }
+}
+@media (max-width: 560px) {
+  .review-queue-panel { padding: 15px; }
+  .review-queue-heading { align-items: flex-start; }
+  .review-queue-heading .secondary-button { min-height: 34px; padding: 7px 10px; }
+  .review-queue-meta { align-items: flex-start; flex-direction: column; }
+  .review-queue-open { width: 100%; justify-content: center; }
+  .review-lesson-summary-heading { align-items: flex-start; flex-direction: column; }
+  .review-lesson-summary-stats { flex-direction: column; gap: 6px; }
+}
