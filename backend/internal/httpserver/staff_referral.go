@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
 )
 
 type staffReferralLinkResponse struct {
@@ -52,4 +51,3 @@ func validTelegramBotUsername(username string) bool {
 	}
 	return true
 }
-
