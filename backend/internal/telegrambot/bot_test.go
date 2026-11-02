@@ -138,6 +138,21 @@ type fakeStudents struct {
 	err    error
 }
 
+type fakeStudentReferralAssigner struct {
+	calls     int
+	studentID []int64
+	codes     []string
+	result    domain.ReferralAssignmentResult
+	err       error
+}
+
+func (f *fakeStudentReferralAssigner) AssignStudentByReferral(_ context.Context, studentID int64, code string) (domain.ReferralAssignmentResult, error) {
+	f.calls++
+	f.studentID = append(f.studentID, studentID)
+	f.codes = append(f.codes, code)
+	return f.result, f.err
+}
+
 func (f *fakeStudents) EnsureByTelegramID(_ context.Context, params domain.EnsureStudentParams) (domain.Student, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -504,6 +519,72 @@ func TestStartRegistersStudentAndShowsCourses(t *testing.T) {
 	}
 	if !hasButton(api.messages[0].markup, "course:10") || !hasButton(api.messages[0].markup, "course:20") {
 		t.Fatalf("published courses not displayed: %+v", api.messages[0].markup)
+	}
+}
+
+func TestStartWithReferralAssignsCuratorWithoutChangingCourseMode(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+	referrals := &fakeStudentReferralAssigner{
+		result: domain.ReferralAssignmentResult{CuratorStaffID: 42, Assigned: true},
+	}
+	bot.studentReferrals = referrals
+	user := testUser()
+
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start c_42", user))
+
+	if referrals.calls != 1 || len(referrals.studentID) != 1 || referrals.studentID[0] != 1 || referrals.codes[0] != "c_42" {
+		t.Fatalf("referral was not applied to the registered student: %+v", referrals)
+	}
+	if len(api.messages) != 1 || !strings.Contains(api.messages[0].text, "Куратор закреплён за вами") {
+		t.Fatalf("successful referral result missing: %+v", api.messages)
+	}
+	if !strings.Contains(api.messages[0].text, "не меняет способ прохождения курса") {
+		t.Fatalf("referral must not select or change the course mode: %q", api.messages[0].text)
+	}
+	if !hasButton(api.messages[0].markup, "course:10") || learning.startCalls != 0 {
+		t.Fatalf("referral must show the catalog without starting a course: message=%+v starts=%d", api.messages[0], learning.startCalls)
+	}
+}
+
+func TestStartWithInvalidReferralKeepsNormalCatalogFlow(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+	referrals := &fakeStudentReferralAssigner{err: domain.ErrNotFound}
+	bot.studentReferrals = referrals
+
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start c_999", testUser()))
+
+	if referrals.calls != 1 || len(referrals.codes) != 1 || referrals.codes[0] != "c_999" {
+		t.Fatalf("invalid referral was not checked: %+v", referrals)
+	}
+	if len(api.messages) != 1 || !strings.Contains(api.messages[0].text, "недействительна") {
+		t.Fatalf("friendly invalid-referral response missing: %+v", api.messages)
+	}
+	if !hasButton(api.messages[0].markup, "course:10") || learning.startCalls != 0 {
+		t.Fatalf("invalid referral must not block the ordinary catalog: message=%+v starts=%d", api.messages[0], learning.startCalls)
+	}
+}
+
+func TestStartWithReferralConflictDoesNotReplaceCurator(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+	referrals := &fakeStudentReferralAssigner{err: domain.ErrConflict}
+	bot.studentReferrals = referrals
+
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start c_42", testUser()))
+
+	if referrals.calls != 1 || !strings.Contains(api.messages[0].text, "Текущее назначение не изменено") {
+		t.Fatalf("existing curator assignment was not preserved: %+v", api.messages)
+	}
+	if !hasButton(api.messages[0].markup, "course:10") || learning.startCalls != 0 {
+		t.Fatalf("referral conflict must preserve normal catalog flow: message=%+v starts=%d", api.messages[0], learning.startCalls)
 	}
 }
 
