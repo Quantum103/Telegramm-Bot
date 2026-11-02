@@ -248,7 +248,6 @@ func run(logger *slog.Logger) error {
 	return componentErr
 }
 
-
 // cachedTelegramBotUsernameProvider resolves the bot username once and retries after failures.
 type cachedTelegramBotUsernameProvider struct {
 	api      *telegrambot.HTTPClient
