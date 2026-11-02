@@ -2,8 +2,8 @@ package repository
 
 import (
 	"context"
-	"strconv"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -11,10 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const (
-	staffReferralCodePrefix = "c_"
-	staffReferralRandomSize = 32
-)
+const staffReferralCodePrefix = "c_"
 
 func validStaffReferralCode(code string) bool {
 	if !strings.HasPrefix(code, staffReferralCodePrefix) {
