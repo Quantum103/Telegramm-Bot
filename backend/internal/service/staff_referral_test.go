@@ -37,7 +37,7 @@ func (s *staffReferralTestStore) AssignStudentByReferral(_ context.Context, _ in
 	return s.assignment, s.assignErr
 }
 
-func TestGetOrCreateReferralCodeReturnsPermanentURLSafeCode(t *testing.T) {
+func TestGetOrCreateReferralCodeReturnsStableShortCode(t *testing.T) {
 	store := &staffReferralTestStore{}
 	service := NewStaffReferralService(store)
 	first, err := service.GetOrCreateReferralCode(context.Background(), 42)
