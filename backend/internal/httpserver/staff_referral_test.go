@@ -13,10 +13,10 @@ import (
 )
 
 type fakeStaffReferralLinkAPI struct {
-	result   domain.StaffReferralCode
-	err      error
-	calls    int
-	staffID  int64
+	result  domain.StaffReferralCode
+	err     error
+	calls   int
+	staffID int64
 }
 
 func (f *fakeStaffReferralLinkAPI) GetOrCreateReferralCode(_ context.Context, staffID int64) (domain.StaffReferralCode, error) {
