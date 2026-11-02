@@ -109,6 +109,9 @@ func run(logger *slog.Logger) error {
 		},
 	)
 	staffTelegramService := service.NewStaffTelegramService(repository.NewStaffTelegramRepository(pool))
+	staffManagementRepository := repository.NewStaffManagementRepository(pool)
+	staffManagementService := service.NewStaffManagementService(staffManagementRepository)
+	staffReferralService := service.NewStaffReferralService(staffManagementRepository)
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
@@ -116,7 +119,7 @@ func run(logger *slog.Logger) error {
 			pool, logger, catalogService,
 			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
 			authoringService,
-			service.NewStaffManagementService(repository.NewStaffManagementRepository(pool)),
+			staffManagementService,
 			conversationService, staffTelegramService, curatorLearningService, loginLimiter, true,
 		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
@@ -162,9 +165,9 @@ func run(logger *slog.Logger) error {
 			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
 		}
 		telegramAPI := telegrambot.NewHTTPClient(cfg.TelegramBotToken)
-		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
 			telegramAPI, studentService, catalogService, learningService,
-			logger, chapterPublisher, conversationService, staffTelegramService,
+			logger, chapterPublisher, conversationService, staffTelegramService, staffReferralService,
 		)
 		go func() {
 			defer close(botDone)

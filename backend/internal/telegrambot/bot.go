@@ -290,6 +290,10 @@ type StaffTelegramBotAPI interface {
 	RestoreNotifications(context.Context, int64) error
 }
 
+type StudentReferralAssigner interface {
+	AssignStudentByReferral(context.Context, int64, string) (domain.ReferralAssignmentResult, error)
+}
+
 type Bot struct {
 	api              TelegramAPI
 	students         StudentRegistrar
@@ -299,6 +303,7 @@ type Bot struct {
 	chapterPublisher ChapterPagePublisher
 	conversations    StudentConversationAPI
 	staffTelegram    StaffTelegramBotAPI
+	studentReferrals StudentReferralAssigner
 
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
@@ -324,13 +329,31 @@ func NewBotWithChapterPublisherAndConversations(api TelegramAPI, students Studen
 
 // NewBotWithChapterPublisherAndConversationsAndStaffTelegram adds verified curator account binding.
 func NewBotWithChapterPublisherAndConversationsAndStaffTelegram(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger, publisher ChapterPagePublisher, conversations StudentConversationAPI, staffTelegram StaffTelegramBotAPI) *Bot {
+	return NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
+		api, students, catalog, learning, logger, publisher, conversations, staffTelegram, nil,
+	)
+}
+
+// NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals adds /start referral support.
+func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
+	api TelegramAPI,
+	students StudentRegistrar,
+	catalog CourseCatalog,
+	learning LearningNavigator,
+	logger *slog.Logger,
+	publisher ChapterPagePublisher,
+	conversations StudentConversationAPI,
+	staffTelegram StaffTelegramBotAPI,
+	studentReferrals StudentReferralAssigner,
+) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
 		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
-		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
+		studentReferrals: studentReferrals,
+		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
 }
@@ -471,7 +494,11 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
 	switch command {
 	case "/start":
-		b.handleStart(ctx, message.Chat.ID, *message.From)
+		referralPayload := ""
+		if len(fields) > 1 {
+			referralPayload = strings.Join(fields[1:], " ")
+		}
+		b.handleStart(ctx, message.Chat.ID, *message.From, referralPayload)
 	case "/chat":
 		b.handleChatCommand(ctx, message.Chat.ID, *message.From)
 	case "/link":
@@ -646,7 +673,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	return true
 }
 
-func (b *Bot) handleStart(ctx context.Context, chatID int64, user User) {
+func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referralPayload string) {
 	student, err := b.ensureStudent(ctx, user)
 	if err != nil {
 		b.logger.Error("не удалось зарегистрировать ученика Telegram", "telegram_user_id", user.ID, "error", err)
@@ -662,7 +689,43 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User) {
 	if strings.TrimSpace(name) == "" {
 		name = displayName(user)
 	}
-	b.showStudentHome(ctx, chatID, student.ID, 0, "Привет, "+name+"!")
+	greeting := "Привет, " + name + "!"
+	if referralPayload != "" {
+		greeting += "\n\n" + b.applyStudentReferral(ctx, student.ID, referralPayload)
+	}
+	b.showStudentHome(ctx, chatID, student.ID, 0, greeting)
+}
+
+func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code string) string {
+	if b.studentReferrals == nil {
+		b.logger.Error("реферальный сервис Telegram-бота не подключён", "student_id", studentID)
+		return "Не удалось применить приглашение куратора. Каталог курсов открыт."
+	}
+
+	result, err := b.studentReferrals.AssignStudentByReferral(ctx, studentID, code)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrInvalidInput), errors.Is(err, domain.ErrNotFound):
+			return "Ссылка приглашения недействительна или куратор больше неактивен. Каталог курсов открыт."
+		case errors.Is(err, domain.ErrConflict):
+			return "За вами уже закреплён другой куратор. Текущее назначение не изменено."
+		case errors.Is(err, domain.ErrInvalidState):
+			return "Не удалось применить приглашение: аккаунт ученика неактивен."
+		default:
+			b.logger.Error("не удалось применить реферальное назначение куратора", "student_id", studentID, "error", err)
+			return "Не удалось применить приглашение из-за временной ошибки. Каталог курсов открыт."
+		}
+	}
+
+	if result.Assigned {
+		return "Куратор закреплён за вами. Это не меняет способ прохождения курса."
+	}
+	if result.AlreadyAssigned {
+		return "Вы уже закреплены за этим куратором. Способ прохождения курса не изменён."
+	}
+
+	b.logger.Warn("реферальный сервис вернул пустой результат назначения", "student_id", studentID)
+	return "Не удалось подтвердить назначение куратора. Каталог курсов открыт."
 }
 
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
