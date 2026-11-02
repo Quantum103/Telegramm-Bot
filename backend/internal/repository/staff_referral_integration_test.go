@@ -81,11 +81,17 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 	repo := NewStaffManagementRepository(pool)
 	referrals := service.NewStaffReferralService(repo)
 	firstCode, err := referrals.GetOrCreateReferralCode(ctx, firstCuratorID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	firstAgain, err := referrals.GetOrCreateReferralCode(ctx, firstCuratorID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondCode, err := referrals.GetOrCreateReferralCode(ctx, secondCuratorID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if firstCode.Code != firstAgain.Code || firstCode.Code == secondCode.Code {
 		t.Fatalf("коды должны быть постоянными и уникальными: %q / %q / %q", firstCode.Code, firstAgain.Code, secondCode.Code)
 	}
@@ -96,7 +102,9 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 		t.Fatalf("неактивный куратор получил код: %v", err)
 	}
 	unknownCode := "c_" + strings.Repeat("A", 43)
-	if unknownCode == firstCode.Code || unknownCode == secondCode.Code { t.Fatal("неожиданное совпадение кода") }
+	if unknownCode == firstCode.Code || unknownCode == secondCode.Code {
+		t.Fatal("неожиданное совпадение кода")
+	}
 	if _, err := referrals.AssignStudentByReferral(ctx, newStudentID, unknownCode); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("неизвестный код не отклонён: %v", err)
 	}
@@ -114,12 +122,18 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 		t.Fatalf("число назначений = %d, err=%v", assignmentCount, err)
 	}
 
-	if err := repo.AssignStudentCurator(ctx, adminID, otherAssignedStudentID, secondCuratorID); err != nil { t.Fatal(err) }
+	if err := repo.AssignStudentCurator(ctx, adminID, otherAssignedStudentID, secondCuratorID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := referrals.AssignStudentByReferral(ctx, otherAssignedStudentID, firstCode.Code); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("ссылка перевела ученика от другого куратора: %v", err)
 	}
-	if err := repo.AssignStudentCurator(ctx, adminID, endedStudentID, firstCuratorID); err != nil { t.Fatal(err) }
-	if err := repo.EndStudentCuratorAssignment(ctx, adminID, endedStudentID); err != nil { t.Fatal(err) }
+	if err := repo.AssignStudentCurator(ctx, adminID, endedStudentID, firstCuratorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EndStudentCuratorAssignment(ctx, adminID, endedStudentID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := referrals.AssignStudentByReferral(ctx, endedStudentID, firstCode.Code); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("ссылка повторно назначила ученика с завершённой историей: %v", err)
 	}
@@ -127,7 +141,10 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 		t.Fatalf("назначение заблокированному ученику не отклонено: %v", err)
 	}
 
-	type attempt struct { result domain.ReferralAssignmentResult; err error }
+	type attempt struct {
+		result domain.ReferralAssignmentResult
+		err    error
+	}
 	results := make(chan attempt, 2)
 	var wg sync.WaitGroup
 	for _, code := range []string{firstCode.Code, secondCode.Code} {
@@ -142,8 +159,14 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 	close(results)
 	assigned, conflicts := 0, 0
 	for result := range results {
-		if result.err == nil && result.result.Assigned { assigned++; continue }
-		if errors.Is(result.err, domain.ErrConflict) { conflicts++; continue }
+		if result.err == nil && result.result.Assigned {
+			assigned++
+			continue
+		}
+		if errors.Is(result.err, domain.ErrConflict) {
+			conflicts++
+			continue
+		}
 		t.Errorf("неожиданная конкурентная попытка: %+v", result)
 	}
 	if assigned != 1 || conflicts != 1 {
@@ -161,7 +184,9 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 			RETURN NEW;
 		END;
 		$$
-	`, functionName)); err != nil { t.Fatal(err) }
+	`, functionName)); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
@@ -171,7 +196,9 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`
 		CREATE TRIGGER %s BEFORE INSERT ON audit_events
 		FOR EACH ROW EXECUTE FUNCTION %s()
-	`, triggerName, functionName)); err != nil { t.Fatal(err) }
+	`, triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := referrals.AssignStudentByReferral(ctx, rollbackStudentID, firstCode.Code); err == nil {
 		t.Fatal("ожидался отказ аудита")
 	}
