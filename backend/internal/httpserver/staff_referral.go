@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
 type staffReferralLinkResponse struct {
@@ -54,5 +53,3 @@ func validTelegramBotUsername(username string) bool {
 	return true
 }
 
-// Keep the referral endpoint's API contract tied to the existing domain model.
-var _ = domain.StaffReferralCode{}
