@@ -353,7 +353,7 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
 		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
 		studentReferrals: studentReferrals,
-		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
+		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
 }
