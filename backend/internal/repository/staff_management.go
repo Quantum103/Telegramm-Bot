@@ -423,6 +423,34 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	`, studentID).Scan(&previousCuratorID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return mapDatabaseError("получить текущее назначение куратора", err)
 	}
+	action := "student.curator.assign"
+	if previousCuratorID.Valid {
+		action = "student.curator.transfer"
+	}
+	if err := assignStudentCuratorTx(ctx, tx, studentID, curatorStaffID, &actorID, previousCuratorID, action); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать назначение куратора", err)
+	}
+	return nil
+}
+
+func assignStudentCuratorTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	studentID, curatorStaffID int64,
+	actorStaffID *int64,
+	previousCuratorID pgtype.Int8,
+	action string,
+) error {
+	var assignedByStaffID any
+	var auditActorID any
+	if actorStaffID != nil {
+		assignedByStaffID = *actorStaffID
+		auditActorID = *actorStaffID
+	}
+
 	if previousCuratorID.Valid && previousCuratorID.Int64 == curatorStaffID {
 		if _, err := tx.Exec(ctx, `
 			UPDATE course_enrollments
@@ -484,9 +512,6 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 		`, studentID, curatorStaffID); err != nil {
 			return mapDatabaseError("обновить отметку прочтения текущего куратора", err)
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return mapDatabaseError("зафиксировать синхронизацию участия куратора", err)
-		}
 		return nil
 	}
 	if previousCuratorID.Valid {
@@ -500,7 +525,7 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO student_curator_assignments (student_id, curator_staff_id, assigned_by_staff_id)
 		VALUES ($1, $2, $3)
-	`, studentID, curatorStaffID, actorID); err != nil {
+	`, studentID, curatorStaffID, assignedByStaffID); err != nil {
 		return mapDatabaseError("создать назначение куратора", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -564,15 +589,11 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("обновить отметку прочтения нового куратора", err)
 	}
-	action := "student.curator.assign"
-	if previousCuratorID.Valid {
-		action = "student.curator.transfer"
-	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
 		VALUES ($1, $2, 'student', $3,
 		        jsonb_build_object('curator_staff_id', $4::bigint, 'previous_curator_staff_id', $5::bigint))
-	`, actorID, action, studentID, curatorStaffID, nullableInt64(previousCuratorID)); err != nil {
+	`, auditActorID, action, studentID, curatorStaffID, nullableInt64(previousCuratorID)); err != nil {
 		return mapDatabaseError("записать аудит назначения куратора", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -633,9 +654,6 @@ func (r *StaffManagementRepository) AssignStudentCurator(ctx context.Context, ac
 			locked_at = NULL, last_error_code = NULL, last_error_at = NULL, updated_at = now()
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("создать уведомление о передаче диалога новому куратору", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return mapDatabaseError("зафиксировать назначение куратора", err)
 	}
 	return nil
 }
