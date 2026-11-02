@@ -625,6 +625,11 @@ export type StaffTelegramLinkToken = {
   expires_at: string
 }
 
+export type StaffReferralLink = {
+  code: string
+  url?: string
+}
+
 export type CuratorNotification = {
   id: number
   message_id: number
@@ -703,6 +708,14 @@ export async function createStaffTelegramLinkToken(): Promise<StaffTelegramLinkT
   return readJSONResponse<StaffTelegramLinkToken>(response)
 }
 
+export async function getStaffReferralLink(signal?: AbortSignal): Promise<StaffReferralLink> {
+  const body = await getJSON<StaffReferralLink>('/api/v1/staff/referral-link', signal)
+  if (!body || typeof body.code !== 'string' || !/^c_[1-9][0-9]*$/.test(body.code) ||
+      (body.url !== undefined && typeof body.url !== 'string')) {
+    throw new Error('Сервер вернул некорректную реферальную ссылку.')
+  }
+  return body
+}
 
 export async function getStaffNotificationPreferences(signal?: AbortSignal): Promise<StaffNotificationPreferences> {
   return getJSON<StaffNotificationPreferences>('/api/v1/staff/telegram/preferences', signal)

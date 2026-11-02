@@ -45,6 +45,14 @@ type StaffAuthAPI interface {
 	Logout(context.Context, string) error
 }
 
+type StaffReferralAPI interface {
+	GetOrCreateReferralCode(context.Context, int64) (domain.StaffReferralCode, error)
+}
+
+type TelegramBotUsernameProvider interface {
+	GetBotUsername(context.Context) (string, error)
+}
+
 type StaffAuthoringAPI interface {
 	ListCoursesForStaff(context.Context) ([]domain.Course, error)
 	ListLessonsForStaffByCourseID(context.Context, int64) ([]domain.StaffLesson, error)
@@ -190,17 +198,19 @@ type healthResponse struct {
 }
 
 type handlers struct {
-	database       databasePinger
-	logger         *slog.Logger
-	catalog        CatalogAPI
-	staffAuth      StaffAuthAPI
-	authoring      StaffAuthoringAPI
-	management     StaffManagementAPI
-	conversations  ConversationAPI
-	staffTelegram  StaffTelegramAPI
-	courseLearning CuratorLearningAPI
-	cookieSecure   bool
-	loginLimiter   StaffLoginRateLimiter
+	database            databasePinger
+	logger              *slog.Logger
+	catalog             CatalogAPI
+	staffAuth           StaffAuthAPI
+	authoring           StaffAuthoringAPI
+	management          StaffManagementAPI
+	conversations       ConversationAPI
+	staffTelegram       StaffTelegramAPI
+	courseLearning      CuratorLearningAPI
+	staffReferral       StaffReferralAPI
+	botUsernameProvider TelegramBotUsernameProvider
+	cookieSecure        bool
+	loginLimiter        StaffLoginRateLimiter
 }
 
 // NewHandler собирает публичные маршруты и сохраняет обратную совместимость тестов.
@@ -262,6 +272,28 @@ func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversat
 	)
 }
 
+// NewHandlerWith...AndReferralLinks adds the curator-owned deep link endpoint.
+func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
+	database databasePinger,
+	logger *slog.Logger,
+	catalog CatalogAPI,
+	staffAuth StaffAuthAPI,
+	authoring StaffAuthoringAPI,
+	management StaffManagementAPI,
+	conversations ConversationAPI,
+	staffTelegram StaffTelegramAPI,
+	courseLearning CuratorLearningAPI,
+	staffReferral StaffReferralAPI,
+	botUsernameProvider TelegramBotUsernameProvider,
+	limiter StaffLoginRateLimiter,
+	cookieSecure bool,
+) http.Handler {
+	return newHandlerWithManagementAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
+		database, logger, catalog, staffAuth, authoring, management,
+		conversations, staffTelegram, courseLearning, staffReferral, botUsernameProvider, cookieSecure, limiter,
+	)
+}
+
 // NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter configures the production staff API.
 func NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiter(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, limiter StaffLoginRateLimiter, cookieSecure bool) http.Handler {
 	return newHandlerWithManagement(database, logger, catalog, staffAuth, authoring, management, cookieSecure, limiter)
@@ -283,6 +315,27 @@ func newHandlerWithManagementAndConversationsAndTelegram(database databasePinger
 }
 
 func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(database databasePinger, logger *slog.Logger, catalog CatalogAPI, staffAuth StaffAuthAPI, authoring StaffAuthoringAPI, management StaffManagementAPI, conversations ConversationAPI, staffTelegram StaffTelegramAPI, courseLearning CuratorLearningAPI, cookieSecure bool, limiter StaffLoginRateLimiter) http.Handler {
+	return newHandlerWithManagementAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
+		database, logger, catalog, staffAuth, authoring, management,
+		conversations, staffTelegram, courseLearning, nil, nil, cookieSecure, limiter,
+	)
+}
+
+func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
+	database databasePinger,
+	logger *slog.Logger,
+	catalog CatalogAPI,
+	staffAuth StaffAuthAPI,
+	authoring StaffAuthoringAPI,
+	management StaffManagementAPI,
+	conversations ConversationAPI,
+	staffTelegram StaffTelegramAPI,
+	courseLearning CuratorLearningAPI,
+	staffReferral StaffReferralAPI,
+	botUsernameProvider TelegramBotUsernameProvider,
+	cookieSecure bool,
+	limiter StaffLoginRateLimiter,
+) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -293,6 +346,7 @@ func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(databa
 		database: database, logger: logger, catalog: catalog,
 		staffAuth: staffAuth, authoring: authoring, management: management,
 		conversations: conversations, staffTelegram: staffTelegram, courseLearning: courseLearning,
+		staffReferral: staffReferral, botUsernameProvider: botUsernameProvider,
 		cookieSecure: cookieSecure, loginLimiter: limiter,
 	}
 	mux := http.NewServeMux()
@@ -364,6 +418,11 @@ func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearning(databa
 			staffCourseLearningMux.HandleFunc("GET /api/v1/staff/course-learning/students/{studentID}/courses/{courseEnrollmentID}/lessons/{lessonID}/answers", h.staffCuratorLessonAnswers)
 			staffCourseLearningMux.HandleFunc("POST /api/v1/staff/course-learning/attempts/{attemptID}/review", h.staffCuratorReviewAttempt)
 			mux.Handle("/api/v1/staff/course-learning/", h.staffCourseLearningMiddleware(staffCourseLearningMux))
+		}
+		if h.staffReferral != nil {
+			staffReferralMux := http.NewServeMux()
+			staffReferralMux.HandleFunc("GET /api/v1/staff/referral-link", h.staffReferralLink)
+			mux.Handle("/api/v1/staff/referral-link", h.staffCuratorMiddleware(staffReferralMux))
 		}
 		if h.staffTelegram != nil {
 			staffTelegramMux := http.NewServeMux()

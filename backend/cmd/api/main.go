@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -113,14 +115,22 @@ func run(logger *slog.Logger) error {
 	staffManagementService := service.NewStaffManagementService(staffManagementRepository)
 	staffReferralService := service.NewStaffReferralService(staffManagementRepository)
 
+	var telegramAPI *telegrambot.HTTPClient
+	var botUsernameProvider httpserver.TelegramBotUsernameProvider
+	if cfg.TelegramBotToken != "" {
+		telegramAPI = telegrambot.NewHTTPClient(cfg.TelegramBotToken)
+		botUsernameProvider = newCachedTelegramBotUsernameProvider(telegramAPI)
+	}
+
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearning(
+		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
 			pool, logger, catalogService,
 			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
 			authoringService,
 			staffManagementService,
-			conversationService, staffTelegramService, curatorLearningService, loginLimiter, true,
+			conversationService, staffTelegramService, curatorLearningService,
+			staffReferralService, botUsernameProvider, loginLimiter, true,
 		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
@@ -164,7 +174,6 @@ func run(logger *slog.Logger) error {
 		if chapterPublisher == nil {
 			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
 		}
-		telegramAPI := telegrambot.NewHTTPClient(cfg.TelegramBotToken)
 		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
 			telegramAPI, studentService, catalogService, learningService,
 			logger, chapterPublisher, conversationService, staffTelegramService, staffReferralService,
@@ -237,4 +246,40 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("HTTP-сервер и Telegram-бот остановлены")
 	return componentErr
+}
+
+// cachedTelegramBotUsernameProvider resolves the bot username once and retries after failures.
+type cachedTelegramBotUsernameProvider struct {
+	api      *telegrambot.HTTPClient
+	mu       sync.Mutex
+	username string
+}
+
+func newCachedTelegramBotUsernameProvider(api *telegrambot.HTTPClient) *cachedTelegramBotUsernameProvider {
+	return &cachedTelegramBotUsernameProvider{api: api}
+}
+
+func (p *cachedTelegramBotUsernameProvider) GetBotUsername(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.username != "" {
+		return p.username, nil
+	}
+	if p.api == nil {
+		return "", errors.New("Telegram Bot API is not configured")
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	me, err := p.api.GetMe(lookupCtx)
+	if err != nil {
+		return "", err
+	}
+	username := strings.TrimPrefix(strings.TrimSpace(me.Username), "@")
+	if username == "" {
+		return "", errors.New("Telegram Bot API returned an empty username")
+	}
+	p.username = username
+	return username, nil
 }

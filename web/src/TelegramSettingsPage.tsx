@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
   createStaffTelegramLinkToken, getStaffTelegramBindingStatus, getStaffNotificationPreferences,
-  listCuratorTelegramNotifications, updateStaffNotificationPreferences,
+  getStaffReferralLink, listCuratorTelegramNotifications, updateStaffNotificationPreferences,
   type CuratorNotification, type StaffIdentity, type StaffNotificationPreferences,
-  type StaffTelegramBindingStatus, type StaffTelegramLinkToken,
+  type StaffReferralLink, type StaffTelegramBindingStatus, type StaffTelegramLinkToken,
 } from './api'
 import './communications.css'
 
@@ -37,6 +37,7 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
   const [status, setStatus] = useState<StaffTelegramBindingStatus | null>(null)
   const [items, setItems] = useState<CuratorNotification[]>([])
   const [token, setToken] = useState<StaffTelegramLinkToken | null>(null)
+  const [referralLink, setReferralLink] = useState<StaffReferralLink | null>(null)
   const [confirmRebind, setConfirmRebind] = useState(false)
   const [preferences, setPreferences] = useState<StaffNotificationPreferences>({
     reminders_enabled: true, notifications_enabled: true, timezone: 'UTC',
@@ -58,11 +59,15 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
       staff.roles.includes('curator')
         ? getStaffNotificationPreferences(controller.signal)
         : Promise.resolve(null),
-    ]).then(([binding, notifications, prefs]) => {
+      staff.roles.includes('curator')
+        ? getStaffReferralLink(controller.signal)
+        : Promise.resolve(null),
+    ]).then(([binding, notifications, prefs, referral]) => {
       if (controller.signal.aborted) return
       setStatus(binding)
       setItems(notifications)
       if (prefs) setPreferences(prefs)
+      setReferralLink(referral)
       setLoading(false)
     }).catch((reason: unknown) => {
       if (controller.signal.aborted) return
@@ -120,6 +125,19 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
     }
   }
 
+  async function copyReferralLink() {
+    if (!referralLink) return
+    const value = referralLink.url || '/start ' + referralLink.code
+    try {
+      await navigator.clipboard.writeText(value)
+      setNotice(referralLink.url
+        ? 'Персональная ссылка скопирована. Отправьте её ученику.'
+        : 'Команда скопирована. Передайте ученику также ссылку на Telegram-бота.')
+    } catch {
+      setError('Не удалось скопировать приглашение автоматически. Выделите его и скопируйте вручную.')
+    }
+  }
+
   function openDialog(conversationID: number) {
     const url = new URL(window.location.href)
     url.searchParams.set('page', 'dialogs')
@@ -150,6 +168,21 @@ export default function TelegramSettingsPage({ staff, onSessionExpired }: { staf
         </div>}
       </div>
     </section>
+    {staff.roles.includes('curator') && <section className="panel telegram-token-panel">
+      <h2>Персональная ссылка для приглашения</h2>
+      <p>Отправьте эту ссылку ученику. При первом запуске бота он будет закреплён за вами, если у него ещё нет истории назначений куратора. Ссылка не меняет выбранный учеником способ прохождения курса.</p>
+      {loading && <p className="catalog-message">Подготавливаем персональную ссылку…</p>}
+      {!loading && referralLink?.url && <>
+        <code>{referralLink.url}</code>
+        <button className="secondary-button" type="button" onClick={() => void copyReferralLink()}>Скопировать ссылку</button>
+      </>}
+      {!loading && referralLink && !referralLink.url && <>
+        <code>/start {referralLink.code}</code>
+        <p>Код приглашения готов, но username бота пока недоступен. Проверьте, что Telegram-бот настроен и запущен.</p>
+        <button className="secondary-button" type="button" onClick={() => void copyReferralLink()}>Скопировать команду</button>
+      </>}
+      {!loading && !referralLink && <p className="catalog-message">Не удалось загрузить приглашение. Нажмите «Обновить», чтобы попробовать ещё раз.</p>}
+    </section>}
     {token && <section className="panel telegram-token-panel">
       <h2>Одноразовая команда</h2>
       <p>Откройте личный чат с ботом и отправьте эту команду. Код доступен только сейчас, действует до {new Date(token.expires_at).toLocaleTimeString('ru-RU')} и не сохраняется в открытом виде.</p>
