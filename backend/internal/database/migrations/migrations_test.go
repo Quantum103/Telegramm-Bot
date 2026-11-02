@@ -55,43 +55,7 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"REFERENCES staff_accounts(id)",
 				"code TEXT NOT NULL UNIQUE",
 				"created_at TIMESTAMPTZ NOT NULL DEFAULT now()",
-				"CHECK (code ~ '^c_[A-Za-z0-9_-]{43}
-			required = []string{
-				"CREATE TABLE course_enrollments",
-				"CREATE TABLE course_enrollment_lessons",
-				"CREATE TABLE answer_attempt_reviews",
-				"course_enrollments_one_active_uq",
-				"status IN ('awaiting_curator', 'in_progress', 'paused')",
-				"superseded",
-				"prevent_course_enrollment_mode_change",
-				"validate_course_lesson_enrollment",
-				"student_curator_assignments",
-				"lesson_enrollments",
-				"count(DISTINCT le.lesson_id)",
-				"all_lessons_completed THEN 'completed'",
-				"safe_legacy_students AS",
-				"HAVING count(DISTINCT le.mode) > 1",
-				"HAVING count(*) > 1",
-			}
-		}
-		for _, item := range required {
-			if !strings.Contains(string(content), item) {
-				t.Errorf("%s не содержит обязательный элемент %q", filepath.Base(upPath), item)
-			}
-		}
-		if strings.HasPrefix(filepath.Base(upPath), "000012_") {
-			snapshotAt := strings.Index(string(content), "INSERT INTO course_enrollment_lessons")
-			linkAt := strings.Index(string(content), "UPDATE lesson_enrollments le")
-			triggerAt := strings.Index(string(content), "CREATE TRIGGER lesson_enrollments_course_consistency_trg")
-			if snapshotAt < 0 || linkAt < 0 || triggerAt < 0 ||
-				snapshotAt > linkAt || linkAt > triggerAt {
-				t.Errorf("%s должен сначала создать снимок курса, затем привязать старые уроки и только потом включить триггер целостности",
-					filepath.Base(upPath))
-			}
-		}
-	}
-}
-)",
+				"CHECK (code ~ '^c_[A-Za-z0-9_-]{43}$')",
 			}
 		case strings.HasPrefix(filepath.Base(upPath), "000012_"):
 			required = []string{
