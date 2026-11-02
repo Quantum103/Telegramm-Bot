@@ -2,18 +2,14 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
 const (
-	staffReferralCodePrefix  = "c_"
-	staffReferralRandomSize  = 32
-	staffReferralCodeRetries = 5
+	staffReferralCodePrefix = "c_"
 )
 
 type StaffReferralStore interface {
@@ -33,19 +29,8 @@ func (s *StaffReferralService) GetOrCreateReferralCode(ctx context.Context, staf
 	if s == nil || s.store == nil || staffID <= 0 {
 		return domain.StaffReferralCode{}, domain.ErrInvalidInput
 	}
-	for attempt := 0; attempt < staffReferralCodeRetries; attempt++ {
-		raw := make([]byte, staffReferralRandomSize)
-		if _, err := rand.Read(raw); err != nil {
-			return domain.StaffReferralCode{}, errors.New("не удалось создать реферальный код")
-		}
-		candidate := staffReferralCodePrefix + base64.RawURLEncoding.EncodeToString(raw)
-		referral, err := s.store.GetOrCreateReferralCode(ctx, staffID, candidate)
-		if errors.Is(err, domain.ErrConflict) {
-			continue
-		}
-		return referral, err
-	}
-	return domain.StaffReferralCode{}, domain.ErrConflict
+	candidate := staffReferralCodePrefix + strconv.FormatInt(staffID, 10)
+	return s.store.GetOrCreateReferralCode(ctx, staffID, candidate)
 }
 
 func (s *StaffReferralService) AssignStudentByReferral(
@@ -61,11 +46,10 @@ func (s *StaffReferralService) AssignStudentByReferral(
 }
 
 func validStaffReferralCode(code string) bool {
-	if len(code) != len(staffReferralCodePrefix)+base64.RawURLEncoding.EncodedLen(staffReferralRandomSize) ||
-		!strings.HasPrefix(code, staffReferralCodePrefix) {
+	if !strings.HasPrefix(code, staffReferralCodePrefix) {
 		return false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(code, staffReferralCodePrefix))
-	return err == nil && len(raw) == staffReferralRandomSize &&
-		base64.RawURLEncoding.EncodeToString(raw) == strings.TrimPrefix(code, staffReferralCodePrefix)
+	idText := strings.TrimPrefix(code, staffReferralCodePrefix)
+	id, err := strconv.ParseInt(idText, 10, 64)
+	return err == nil && id > 0 && strconv.FormatInt(id, 10) == idText
 }

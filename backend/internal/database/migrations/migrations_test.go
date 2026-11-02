@@ -49,6 +49,15 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"evaluation_result",
 				"uncertain",
 			}
+		case strings.HasPrefix(filepath.Base(upPath), "000014_"):
+			required = []string{
+				"RENAME COLUMN code TO legacy_code",
+				"ALTER COLUMN legacy_code DROP NOT NULL",
+				"ADD COLUMN code TEXT",
+				"UPDATE staff_referral_codes",
+				"staff_referral_codes_short_code_key",
+				"^c_[1-9][0-9]*$",
+			}
 		case strings.HasPrefix(filepath.Base(upPath), "000013_"):
 			required = []string{
 				"CREATE TABLE staff_referral_codes",

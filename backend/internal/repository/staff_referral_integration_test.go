@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -92,8 +91,11 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstCode.Code != firstAgain.Code || firstCode.Code == secondCode.Code {
-		t.Fatalf("коды должны быть постоянными и уникальными: %q / %q / %q", firstCode.Code, firstAgain.Code, secondCode.Code)
+	if firstCode.Code != firstAgain.Code ||
+		firstCode.Code != fmt.Sprintf("c_%d", firstCuratorID) ||
+		secondCode.Code != fmt.Sprintf("c_%d", secondCuratorID) ||
+		firstCode.Code == secondCode.Code {
+		t.Fatalf("ожидались короткие постоянные коды c_<staff_id>: first=%q again=%q second=%q", firstCode.Code, firstAgain.Code, secondCode.Code)
 	}
 	if _, err := referrals.GetOrCreateReferralCode(ctx, adminID); !errors.Is(err, domain.ErrInvalidState) {
 		t.Fatalf("администратор без роли куратора получил код: %v", err)
@@ -101,7 +103,7 @@ func TestReferralCodesAndAssignmentsRespectCuratorHistory(t *testing.T) {
 	if _, err := referrals.GetOrCreateReferralCode(ctx, inactiveCuratorID); !errors.Is(err, domain.ErrInvalidState) {
 		t.Fatalf("неактивный куратор получил код: %v", err)
 	}
-	unknownCode := "c_" + strings.Repeat("A", 43)
+	unknownCode := "c_9223372036854775807"
 	if unknownCode == firstCode.Code || unknownCode == secondCode.Code {
 		t.Fatal("неожиданное совпадение кода")
 	}

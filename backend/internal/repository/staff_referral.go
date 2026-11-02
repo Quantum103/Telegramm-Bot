@@ -2,7 +2,7 @@ package repository
 
 import (
 	"context"
-	"encoding/base64"
+	"strconv"
 	"errors"
 	"strings"
 
@@ -17,13 +17,12 @@ const (
 )
 
 func validStaffReferralCode(code string) bool {
-	if len(code) != len(staffReferralCodePrefix)+base64.RawURLEncoding.EncodedLen(staffReferralRandomSize) ||
-		!strings.HasPrefix(code, staffReferralCodePrefix) {
+	if !strings.HasPrefix(code, staffReferralCodePrefix) {
 		return false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(code, staffReferralCodePrefix))
-	return err == nil && len(raw) == staffReferralRandomSize &&
-		base64.RawURLEncoding.EncodeToString(raw) == strings.TrimPrefix(code, staffReferralCodePrefix)
+	idText := strings.TrimPrefix(code, staffReferralCodePrefix)
+	id, err := strconv.ParseInt(idText, 10, 64)
+	return err == nil && id > 0 && strconv.FormatInt(id, 10) == idText
 }
 
 func (r *StaffManagementRepository) GetOrCreateReferralCode(
@@ -31,7 +30,7 @@ func (r *StaffManagementRepository) GetOrCreateReferralCode(
 	staffID int64,
 	candidateCode string,
 ) (domain.StaffReferralCode, error) {
-	if staffID <= 0 || !validStaffReferralCode(candidateCode) {
+	if staffID <= 0 || !validStaffReferralCode(candidateCode) || candidateCode != staffReferralCodePrefix+strconv.FormatInt(staffID, 10) {
 		return domain.StaffReferralCode{}, ErrInvalidInput
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})

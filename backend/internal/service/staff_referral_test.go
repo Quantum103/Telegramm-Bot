@@ -2,8 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
+		"errors"
 	"testing"
 	"time"
 
@@ -52,12 +51,8 @@ func TestGetOrCreateReferralCodeReturnsPermanentURLSafeCode(t *testing.T) {
 	if first.Code != second.Code || first.StaffID != 42 || second.StaffID != 42 {
 		t.Fatalf("referral code must remain stable: first=%+v second=%+v", first, second)
 	}
-	if len(first.Code) != 45 || first.Code[:2] != "c_" {
-		t.Fatalf("unexpected referral code format: %q", first.Code)
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(first.Code[2:])
-	if err != nil || len(raw) != 32 {
-		t.Fatalf("referral code must contain 32 URL-safe random bytes: len=%d err=%v", len(raw), err)
+	if first.Code != "c_42" {
+		t.Fatalf("referral code = %q, want c_42", first.Code)
 	}
 	if store.getCalls != 2 {
 		t.Fatalf("store calls = %d, want 2", store.getCalls)
@@ -84,7 +79,7 @@ func TestAssignStudentByReferralValidatesCodeAndReturnsStoreResult(t *testing.T)
 	if store.assignCalls != 0 {
 		t.Fatal("invalid referral code reached the store")
 	}
-	code := "c_" + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	code := "c_42"
 	result, err := service.AssignStudentByReferral(context.Background(), 11, code)
 	if err != nil {
 		t.Fatalf("AssignStudentByReferral() error = %v", err)
