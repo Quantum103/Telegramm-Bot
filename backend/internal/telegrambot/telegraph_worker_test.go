@@ -151,6 +151,9 @@ type fakeTelegraphJobPublisher struct {
 	active       atomic.Int32
 	maxActive    atomic.Int32
 	calls        atomic.Int32
+	firstTwo     atomic.Int32
+	ready        chan struct{}
+	readyOnce    sync.Once
 	mu           sync.Mutex
 	attempts     map[int]int
 	failFirstFor map[int]bool
@@ -162,7 +165,7 @@ func newFakeTelegraphJobPublisher(failFirstFor ...int) *fakeTelegraphJobPublishe
 		failures[chapter] = true
 	}
 	return &fakeTelegraphJobPublisher{
-		attempts: make(map[int]int), failFirstFor: failures,
+		attempts: make(map[int]int), failFirstFor: failures, ready: make(chan struct{}),
 	}
 }
 
@@ -176,6 +179,14 @@ func (p *fakeTelegraphJobPublisher) PublishChapter(_ context.Context, reference 
 			break
 		}
 	}
+	if p.firstTwo.Add(1) == 2 {
+		p.readyOnce.Do(func() { close(p.ready) })
+	}
+	select {
+	case <-p.ready:
+	case <-time.After(250 * time.Millisecond):
+	}
+
 	p.mu.Lock()
 	p.attempts[reference.Chapter]++
 	attempt := p.attempts[reference.Chapter]
