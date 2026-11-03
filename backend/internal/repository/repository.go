@@ -15,6 +15,7 @@ var (
 	ErrInvalidState       = domain.ErrInvalidState
 	ErrNoPreviousQuestion = domain.ErrNoPreviousQuestion
 	ErrNoNextQuestion     = domain.ErrNoNextQuestion
+	ErrStaleNavigation    = domain.ErrStaleNavigation
 )
 
 func mapDatabaseError(operation string, err error) error {
