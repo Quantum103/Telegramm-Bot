@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -62,9 +63,14 @@ func (w *TelegraphPreparationWorker) Run(ctx context.Context) error {
 		return errors.New("очередь или публикатор Telegraph не настроены")
 	}
 
+	var workers sync.WaitGroup
 	if enqueuer, ok := w.queue.(publishedTelegraphChapterEnqueuer); ok {
 		w.enqueuePublished(ctx, enqueuer)
-		go w.backfillLoop(ctx, enqueuer)
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			w.backfillLoop(ctx, enqueuer)
+		}()
 	}
 
 	w.logger.Info("worker подготовки полных глав запущен",
@@ -73,10 +79,15 @@ func (w *TelegraphPreparationWorker) Run(ctx context.Context) error {
 		"job_timeout_seconds", int(telegraphJobTimeout.Seconds()),
 	)
 	for range w.concurrency {
-		go w.runWorker(ctx)
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			w.runWorker(ctx)
+		}()
 	}
 
 	<-ctx.Done()
+	workers.Wait()
 	return nil
 }
 
