@@ -415,7 +415,15 @@ func TestTelegramQuestionUsesCachedTelegraphLinkWithoutExternalRequests(t *testi
 	}
 }
 
-func TestTelegramQuestionShowsPreparationNoticeWhenLinkIsMissing(t *testing.T) {
+func TestTelegramQuestionShowsPreparationNoticeWithoutExternalRequests(t *testing.T) {
+	var pageCreations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pageCreations.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"url":"https://telegra.ph/Matfeya-4-01-01"}}`))
+	}))
+	defer server.Close()
+
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
@@ -426,9 +434,9 @@ func TestTelegramQuestionShowsPreparationNoticeWhenLinkIsMissing(t *testing.T) {
 	}}
 	catalog.details[100] = detail
 
-	reader := &fakeBibleChapterReader{err: errors.New("внешний источник не должен вызываться при рендеринге")}
-	store := newFakeTelegraphLinkStore(false)
-	publisher := NewTelegraphPublisherWithDependencies("test-secret", reader, store)
+	reader := &fakeBibleChapterReader{chapter: testTelegraphChapter()}
+	store := newFakeTelegraphLinkStore(true)
+	publisher := newTestTelegraphPublisher("test-secret", reader, store, server)
 	bot := NewBotWithChapterPublisher(api, students, catalog, learning, nil, publisher)
 	user := testUser()
 
@@ -454,8 +462,12 @@ func TestTelegramQuestionShowsPreparationNoticeWhenLinkIsMissing(t *testing.T) {
 			}
 		}
 	}
-	if reader.callCount() != 0 || store.chapterReads != 1 || store.linkReads != 0 {
-		t.Fatalf("external source calls=%d chapter cache reads=%d link reads=%d; want 0, 1, 0",
-			reader.callCount(), store.chapterReads, store.linkReads)
+	if reader.callCount() != 0 || pageCreations.Load() != 0 {
+		t.Fatalf("external Bible calls=%d Telegraph page creates=%d; want 0, 0",
+			reader.callCount(), pageCreations.Load())
+	}
+	if store.chapterReads != 1 || store.linkReads != 1 || store.linkWrites != 0 {
+		t.Fatalf("cache operations: chapter reads=%d link reads=%d writes=%d; want 1, 1, 0",
+			store.chapterReads, store.linkReads, store.linkWrites)
 	}
 }
