@@ -336,7 +336,7 @@ func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.Bible
 	cachedReader, ok := b.chapterPublisher.(cachedChapterLinkReader)
 	if !ok {
 		b.logger.Error("публикатор Telegraph не поддерживает чтение готовых ссылок")
-		return nil, "Ссылка на полную главу готовится. Она появится после подготовки."
+		return nil, "Ссылка на полную главу готовится. Откройте вопрос ещё раз позже."
 	}
 
 	links := make([]string, 0, len(targets))
@@ -386,7 +386,7 @@ func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.Bible
 		notice += "Сейчас не удалось получить готовую ссылку на полную главу. Попробуйте открыть вопрос позже."
 	}
 	if len(links) == 0 && notice == "" {
-		notice = "Ссылка на полную главу готовится. Она появится автоматически после подготовки."
+		notice = "Ссылка на полную главу готовится. Откройте вопрос ещё раз позже."
 	}
 	return links, notice
 }
