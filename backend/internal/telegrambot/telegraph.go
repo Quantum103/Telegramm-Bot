@@ -142,10 +142,10 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	}
 	link := domain.TelegraphChapterLink{
 		TranslationCode: "synodal",
-		BookID: reference.BookID,
-		ChapterNumber: reference.Chapter,
-		ContentSHA256: contentSHA256,
-		PageURL: pageURL,
+		BookID:          reference.BookID,
+		ChapterNumber:   reference.Chapter,
+		ContentSHA256:   contentSHA256,
+		PageURL:         pageURL,
 	}
 	// UNIQUE (translation, book, chapter, content_sha256) оставляет одну
 	// каноническую ссылку. Сохранение выполняется отдельным коротким SQL-запросом.
@@ -219,10 +219,10 @@ func bibleChapterToTextChapter(chapter domain.BibleChapter) bibletext.Chapter {
 		verses[index] = bibletext.Verse{Number: verse.Number, Text: verse.Text}
 	}
 	return bibletext.Chapter{
-		Book: chapter.BookName,
-		Chapter: chapter.ChapterNumber,
+		Book:        chapter.BookName,
+		Chapter:     chapter.ChapterNumber,
 		Translation: "Синодальный перевод",
-		Verses: verses,
+		Verses:      verses,
 	}
 }
 
