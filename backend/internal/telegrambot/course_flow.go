@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 // CourseEnrollmentNavigator exposes the PostgreSQL-backed course run workflow.
@@ -28,7 +30,9 @@ func (b *Bot) showStudentHome(ctx context.Context, chatID, studentID, messageID 
 		return
 	}
 
-	active, err := nav.ActiveCourse(ctx, studentID)
+	active, err := performance.Measure(ctx, "learning.course.active_lookup", func() (domain.CourseEnrollmentProgress, error) {
+		return nav.ActiveCourse(ctx, studentID)
+	})
 	if errors.Is(err, domain.ErrNotFound) {
 		b.showCourses(ctx, chatID, studentID, messageID, greeting)
 		return
@@ -96,7 +100,9 @@ func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, mes
 		b.showLessons(ctx, chatID, studentID, courseID, messageID)
 		return
 	}
-	active, err := nav.ActiveCourse(ctx, studentID)
+	active, err := performance.Measure(ctx, "learning.course.active_lookup", func() (domain.CourseEnrollmentProgress, error) {
+		return nav.ActiveCourse(ctx, studentID)
+	})
 	if err == nil {
 		if active.Enrollment.CourseID != courseID {
 			b.renderActiveCourseBlocked(ctx, chatID, messageID, active)
@@ -114,7 +120,9 @@ func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, mes
 		return
 	}
 
-	course, err := b.catalog.GetCourse(ctx, courseID)
+	course, err := performance.Measure(ctx, "catalog.course.get", func() (domain.Course, error) {
+		return b.catalog.GetCourse(ctx, courseID)
+	})
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Этот курс больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
@@ -124,7 +132,9 @@ func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, mes
 		b.render(ctx, chatID, messageID, "Не удалось открыть курс. Попробуйте позже.", keyboard(button("К курсам", "courses")))
 		return
 	}
-	lessons, err := b.catalog.ListCourseLessons(ctx, courseID)
+	lessons, err := performance.Measure(ctx, "catalog.course.lessons.list", func() ([]domain.Lesson, error) {
+		return b.catalog.ListCourseLessons(ctx, courseID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось проверить уроки перед выбором режима", "student_id", studentID, "course_id", courseID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить уроки курса. Попробуйте позже.", keyboard(button("К курсам", "courses")))
@@ -165,7 +175,9 @@ func (b *Bot) startCourseWithMode(
 		return
 	}
 
-	run, err := nav.StartCourse(ctx, studentID, courseID, requestedMode)
+	run, err := performance.Measure(ctx, "learning.course.open", func() (domain.CourseEnrollmentProgress, error) {
+		return nav.StartCourse(ctx, studentID, courseID, requestedMode)
+	})
 	if errors.Is(err, domain.ErrNoCurator) {
 		// A concurrent AI selection may have won the race. In that case the
 		// persisted mode is authoritative and must not be overwritten.
@@ -215,7 +227,9 @@ func (b *Bot) continueCurrentCourse(ctx context.Context, chatID, studentID, mess
 		b.showCourses(ctx, chatID, studentID, messageID, "Выберите курс для продолжения.")
 		return
 	}
-	active, err := nav.ActiveCourse(ctx, studentID)
+	active, err := performance.Measure(ctx, "learning.course.active_lookup", func() (domain.CourseEnrollmentProgress, error) {
+		return nav.ActiveCourse(ctx, studentID)
+	})
 	if errors.Is(err, domain.ErrNotFound) {
 		b.showCourses(ctx, chatID, studentID, messageID, "У вас пока нет незавершённого курса. Выберите курс для изучения.")
 		return
@@ -228,7 +242,9 @@ func (b *Bot) continueCurrentCourse(ctx context.Context, chatID, studentID, mess
 
 	// StartCourse resumes a paused run, and for an active run returns its
 	// existing database record without changing the originally chosen mode.
-	run, err := nav.StartCourse(ctx, studentID, active.Enrollment.CourseID, active.Enrollment.Mode)
+	run, err := performance.Measure(ctx, "learning.course.open", func() (domain.CourseEnrollmentProgress, error) {
+		return nav.StartCourse(ctx, studentID, active.Enrollment.CourseID, active.Enrollment.Mode)
+	})
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
 			"Не удалось продолжить курс с куратором: назначение куратора сейчас неактивно. Администратор платформы должен восстановить назначение. Режим обучения не изменён.",
@@ -250,7 +266,9 @@ func (b *Bot) openFirstIncompleteLesson(
 	run domain.CourseEnrollmentProgress,
 	notice string,
 ) {
-	lessons, err := nav.CourseLessons(ctx, studentID, run.Enrollment.ID)
+	lessons, err := performance.Measure(ctx, "learning.course.lessons", func() ([]domain.CourseEnrollmentLesson, error) {
+		return nav.CourseLessons(ctx, studentID, run.Enrollment.ID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось получить сохранённые уроки курса", "student_id", studentID, "course_enrollment_id", run.Enrollment.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить прогресс уроков курса. Попробуйте ещё раз.", keyboard(button("Продолжить курс", "course:continue")))
@@ -276,7 +294,9 @@ func (b *Bot) openCourseRunLesson(
 	lesson domain.CourseEnrollmentLesson,
 	notice string,
 ) {
-	progress, err := nav.StartLessonForCourse(ctx, studentID, run.Enrollment.ID, run.Enrollment.CourseID, lesson.LessonID)
+	progress, err := performance.Measure(ctx, "learning.lesson.open", func() (domain.Progress, error) {
+		return nav.StartLessonForCourse(ctx, studentID, run.Enrollment.ID, run.Enrollment.CourseID, lesson.LessonID)
+	})
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
 			"Не удалось открыть урок с куратором: активное назначение куратора недоступно. Администратор платформы должен проверить назначение. Режим обучения не изменён.",
@@ -305,7 +325,9 @@ func (b *Bot) openCourseRunLesson(
 		b.render(ctx, chatID, messageID, "В этом уроке пока нет доступных вопросов.", keyboard(button("Продолжить курс", "course:continue")))
 		return
 	}
-	state, err := b.learning.OpenQuestion(ctx, studentID, progress.Enrollment.ID, questionID)
+	state, err := performance.Measure(ctx, "learning.question.fetch", func() (service.NavigationState, error) {
+		return b.learning.OpenQuestion(ctx, studentID, progress.Enrollment.ID, questionID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось восстановить вопрос курса", "student_id", studentID, "course_enrollment_id", run.Enrollment.ID, "lesson_id", lesson.LessonID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось открыть сохранённый вопрос. Попробуйте продолжить курс ещё раз.", keyboard(button("Продолжить курс", "course:continue")))
@@ -324,7 +346,9 @@ func (b *Bot) openCourseLesson(ctx context.Context, chatID, studentID, courseID,
 		b.openLesson(ctx, chatID, studentID, courseID, lessonID, messageID)
 		return
 	}
-	active, err := nav.ActiveCourse(ctx, studentID)
+	active, err := performance.Measure(ctx, "learning.course.active_lookup", func() (domain.CourseEnrollmentProgress, error) {
+		return nav.ActiveCourse(ctx, studentID)
+	})
 	if errors.Is(err, domain.ErrNotFound) {
 		b.selectCourse(ctx, chatID, studentID, courseID, messageID)
 		return
@@ -338,7 +362,9 @@ func (b *Bot) openCourseLesson(ctx context.Context, chatID, studentID, courseID,
 		b.renderActiveCourseBlocked(ctx, chatID, messageID, active)
 		return
 	}
-	lessons, err := nav.CourseLessons(ctx, studentID, active.Enrollment.ID)
+	lessons, err := performance.Measure(ctx, "learning.course.lessons", func() ([]domain.CourseEnrollmentLesson, error) {
+		return nav.CourseLessons(ctx, studentID, active.Enrollment.ID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось проверить состав активного курса", "student_id", studentID, "course_enrollment_id", active.Enrollment.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить уроки текущего курса. Попробуйте ещё раз.", keyboard(button("Продолжить курс", "course:continue")))

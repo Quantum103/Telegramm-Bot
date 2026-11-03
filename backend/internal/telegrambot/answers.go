@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
@@ -112,7 +113,9 @@ func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, m
 		return
 	}
 
-	state, err := answerService.CurrentQuestion(ctx, student.ID)
+	state, err := performance.Measure(ctx, "learning.current_question", func() (service.NavigationState, error) {
+		return answerService.CurrentQuestion(ctx, student.ID)
+	})
 	if err != nil {
 		b.logger.Warn("нет доступного текущего вопроса для текстового ответа", "student_id", student.ID, "error", err)
 		b.send(ctx, message.Chat.ID, "Сейчас нет открытого текстового вопроса. Отправьте /start и выберите курс и урок.")
@@ -133,10 +136,12 @@ func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, m
 		return
 	}
 
-	result, err := answerService.SubmitAnswer(ctx, domain.AnswerSubmission{
-		StudentID: student.ID, EnrollmentID: state.Progress.Enrollment.ID,
-		QuestionID: state.Question.ID, AnswerText: strings.TrimSpace(text),
-		IdempotencyKey: telegramUpdateIdempotencyKey(updateID),
+	result, err := performance.Measure(ctx, "learning.answer.save", func() (service.SubmissionResult, error) {
+		return answerService.SubmitAnswer(ctx, domain.AnswerSubmission{
+			StudentID: student.ID, EnrollmentID: state.Progress.Enrollment.ID,
+			QuestionID: state.Question.ID, AnswerText: strings.TrimSpace(text),
+			IdempotencyKey: telegramUpdateIdempotencyKey(updateID),
+		})
 	})
 	if err != nil {
 		b.logger.Warn("не удалось сохранить текстовый ответ", "student_id", student.ID,
@@ -147,7 +152,9 @@ func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, m
 
 	// Сохранение уже завершено. Ошибка удаления сообщения Telegram не должна отменять ответ.
 	b.deleteIncomingMessage(ctx, message)
-	refreshed, refreshErr := b.learning.OpenQuestion(ctx, student.ID, result.Progress.Enrollment.ID, state.Question.ID)
+	refreshed, refreshErr := performance.Measure(ctx, "learning.question.refresh", func() (service.NavigationState, error) {
+		return b.learning.OpenQuestion(ctx, student.ID, result.Progress.Enrollment.ID, state.Question.ID)
+	})
 	if refreshErr != nil {
 		state.SavedAnswer = &result.Answer
 		state.Progress = result.Progress
@@ -162,7 +169,9 @@ func (b *Bot) deleteIncomingMessage(ctx context.Context, message Message) {
 	if !ok {
 		return
 	}
-	if err := deleter.DeleteMessage(ctx, message.Chat.ID, message.MessageID); err != nil && ctx.Err() == nil {
+	if err := performance.MeasureErr(ctx, "telegram.delete_message", func() error {
+		return deleter.DeleteMessage(ctx, message.Chat.ID, message.MessageID)
+	}); err != nil && ctx.Err() == nil {
 		b.logger.Warn("не удалось удалить исходное сообщение с ответом; сохранённый ответ оставлен без изменений",
 			"chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
 	}
@@ -220,7 +229,9 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		}
 	}
 
-	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
+	progress, err := performance.Measure(ctx, "learning.progress.check", func() (domain.Progress, error) {
+		return b.learning.GetProgress(ctx, studentID, enrollmentID)
+	})
 	if err != nil || progress.Enrollment.Status != "in_progress" ||
 		progress.Enrollment.CurrentQuestionID == nil ||
 		*progress.Enrollment.CurrentQuestionID != questionID {
@@ -231,7 +242,9 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		}
 		return
 	}
-	state, err := b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
+	state, err := performance.Measure(ctx, "learning.question.fetch", func() (service.NavigationState, error) {
+		return b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
+	})
 	if err != nil {
 		b.logger.Warn("не удалось проверить вопрос для ответа кнопкой", "student_id", studentID,
 			"enrollment_id", enrollmentID, "question_id", questionID, "error", err)
@@ -315,12 +328,14 @@ func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID,
 	}
 	enrollmentID := state.Progress.Enrollment.ID
 	questionID := state.Question.ID
-	result, err := answerService.SubmitAnswer(ctx, domain.AnswerSubmission{
-		StudentID:         studentID,
-		EnrollmentID:      enrollmentID,
-		QuestionID:        questionID,
-		SelectedOptionIDs: append([]int64(nil), selected...),
-		IdempotencyKey:    telegramUpdateIdempotencyKey(updateID),
+	result, err := performance.Measure(ctx, "learning.answer.save", func() (service.SubmissionResult, error) {
+		return answerService.SubmitAnswer(ctx, domain.AnswerSubmission{
+			StudentID:         studentID,
+			EnrollmentID:      enrollmentID,
+			QuestionID:        questionID,
+			SelectedOptionIDs: append([]int64(nil), selected...),
+			IdempotencyKey:    telegramUpdateIdempotencyKey(updateID),
+		})
 	})
 	if err != nil {
 		b.logger.Warn("не удалось сохранить выбор ответа", "student_id", studentID,
@@ -329,7 +344,9 @@ func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID,
 		return
 	}
 	b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: questionID})
-	refreshed, refreshErr := b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
+	refreshed, refreshErr := performance.Measure(ctx, "learning.question.refresh", func() (service.NavigationState, error) {
+		return b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
+	})
 	if refreshErr != nil {
 		state.SavedAnswer = &result.Answer
 		state.Progress = result.Progress

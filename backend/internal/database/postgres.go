@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/config"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,6 +31,7 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, error)
 	poolConfig.MaxConns = cfg.MaxConns
 	poolConfig.MinConns = cfg.MinConns
 	poolConfig.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
+	poolConfig.ConnConfig.Tracer = performance.QueryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
