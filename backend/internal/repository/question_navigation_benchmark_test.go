@@ -31,14 +31,14 @@ type navigationBenchmarkFixture struct {
 	students     *StudentRepository
 	enrollments  *EnrollmentRepository
 	content      *ContentRepository
-	catalog       *CatalogRepository
-	answers       *AnswerRepository
-	studentID     int64
-	enrollmentID  int64
-	lessonID      int64
-	versionID     int64
-	firstID       int64
-	secondID      int64
+	catalog      *CatalogRepository
+	answers      *AnswerRepository
+	studentID    int64
+	enrollmentID int64
+	lessonID     int64
+	versionID    int64
+	firstID      int64
+	secondID     int64
 }
 
 func newNavigationBenchmarkFixture(b *testing.B) *navigationBenchmarkFixture {
@@ -271,8 +271,8 @@ func (f *navigationBenchmarkFixture) optimizedStep(
 	}
 	if _, _, err := f.answers.GetNavigationAnswerState(ctx, f.studentID, f.enrollmentID, targetID); err != nil {
 		return 0, err
-	} 
-	if _, err := f.catalog.GetPublishedLessonByID(ctx, f.lessonID()); err != nil {
+	}
+	if _, err := f.catalog.GetPublishedLessonByID(ctx, f.lessonID); err != nil {
 		return 0, err
 	}
 	return targetID, nil
