@@ -73,4 +73,30 @@ func TestPublishingLessonVersionEnqueuesSynodalBibleChapters(t *testing.T) {
 	if status != "queued" || attempts != 0 {
 		t.Fatalf("new job state = %q attempts=%d, want queued and 0", status, attempts)
 	}
+
+	// Simulate a pre-existing published lesson whose queue row was not present
+	// when the async preparation worker was introduced.
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM bible_chapter_telegraph_jobs
+		WHERE translation_code = 'synodal' AND book_id = 40 AND chapter_number = $1
+	`, chapterNumber); err != nil {
+		t.Fatalf("remove job before backfill test: %v", err)
+	}
+	if err := repository.EnqueuePublishedTelegraphChapters(ctx); err != nil {
+		t.Fatalf("backfill published lesson chapters: %v", err)
+	}
+	if err := repository.EnqueuePublishedTelegraphChapters(ctx); err != nil {
+		t.Fatalf("repeat backfill of published lesson chapters: %v", err)
+	}
+	var queuedJobs int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)::INTEGER
+		FROM bible_chapter_telegraph_jobs
+		WHERE translation_code = 'synodal' AND book_id = 40 AND chapter_number = $1
+	`, chapterNumber).Scan(&queuedJobs); err != nil {
+		t.Fatalf("count backfilled Telegraph jobs: %v", err)
+	}
+	if queuedJobs != 1 {
+		t.Fatalf("backfill jobs = %d, want exactly 1 after repeated runs", queuedJobs)
+	}
 }
