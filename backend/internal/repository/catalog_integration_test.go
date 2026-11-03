@@ -166,7 +166,7 @@ func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
 	}
 	if err := enrollments.SetCurrentQuestionFrom(
 		ctx, student.ID, enrollment.ID, firstQuestionID, firstQuestionID,
-	); !errors.Is(err, domain.ErrStaleNavigation) {
+	); !errors.Is(err, ErrStaleNavigation) {
 		t.Fatalf("устаревшая позиция должна быть отклонена, получено %v", err)
 	}
 	otherStudent, err := NewStudentRepository(pool).EnsureByTelegramID(ctx, EnsureStudentParams{
