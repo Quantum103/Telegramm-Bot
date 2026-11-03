@@ -17,7 +17,6 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
-	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 const (
