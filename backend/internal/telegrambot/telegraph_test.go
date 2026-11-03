@@ -354,8 +354,8 @@ func TestTelegraphPublisherDoesNotQueryLinkStoreWhenChapterServiceIsUnavailable(
 	if !errors.Is(err, service.ErrBibleChapterUnavailable) {
 		t.Fatalf("error = %v, want ErrBibleChapterUnavailable", err)
 	}
-	if store.calls != 0 {
-		t.Fatalf("link store calls = %d, want 0", store.calls)
+	if store.chapterReads != 0 || store.linkReads != 0 {
+		t.Fatalf("link store reads = chapter:%d link:%d, want 0", store.chapterReads, store.linkReads)
 	}
 }
 
@@ -390,11 +390,7 @@ func TestTelegramQuestionUsesCachedTelegraphLinkWithoutExternalRequests(t *testi
 		"Откуда взято: Матфея 4:4-7",
 		"Библейский текст:",
 		"Он же сказал ему в ответ",
-		"готовятся",
 	} {
-		if expected == "готовятся" {
-			continue
-		}
 		if !strings.Contains(last.text, expected) {
 			t.Fatalf("question screen is missing %q: %s", expected, last.text)
 		}
@@ -418,6 +414,7 @@ func TestTelegramQuestionUsesCachedTelegraphLinkWithoutExternalRequests(t *testi
 			store.chapterReads, store.linkReads, store.linkWrites)
 	}
 }
+
 func TestTelegramQuestionShowsPreparationNoticeWhenLinkIsMissing(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
