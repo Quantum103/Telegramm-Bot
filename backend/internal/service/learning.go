@@ -679,6 +679,18 @@ func (s *LearningService) ensureCourseRunActive(ctx context.Context, enrollment 
 	if course.Enrollment.Status != "in_progress" || course.Enrollment.Mode != enrollment.Mode {
 		return domain.ErrInvalidState
 	}
+	if validator, ok := s.courseEnrollments.(interface {
+		ValidateActiveLesson(context.Context, int64, int64, int64, int64, string) error
+	}); ok {
+		return validator.ValidateActiveLesson(
+			ctx,
+			enrollment.StudentID,
+			*enrollment.CourseEnrollmentID,
+			enrollment.LessonID,
+			enrollment.LessonVersionID,
+			enrollment.Mode,
+		)
+	}
 	lesson, err := s.courseEnrollments.GetLessonForRun(
 		ctx, enrollment.StudentID, *enrollment.CourseEnrollmentID, enrollment.LessonID,
 	)
