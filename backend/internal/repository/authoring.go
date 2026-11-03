@@ -1017,7 +1017,6 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID,
 	return nil
 }
 
-
 // enqueueLessonVersionBibleChapters records supported full-chapter links in the
 // same transaction as lesson publication. It performs no external network calls.
 func enqueueLessonVersionBibleChapters(ctx context.Context, tx pgx.Tx, versionID int64) error {
@@ -1033,7 +1032,7 @@ func enqueueLessonVersionBibleChapters(ctx context.Context, tx pgx.Tx, versionID
 		return mapDatabaseError("получить библейские главы опубликованного урока", err)
 	}
 	type chapterKey struct {
-		bookID int
+		bookID  int
 		chapter int
 	}
 	keys := make([]chapterKey, 0)
