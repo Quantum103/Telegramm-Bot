@@ -33,14 +33,14 @@ func TestPublishingLessonVersionEnqueuesSynodalBibleChapters(t *testing.T) {
 	chapterNumber := 10000 + int(time.Now().UnixNano()%20000)
 	if _, err := authoring.CreateQuestion(ctx, domain.CreateQuestionParams{
 		LessonVersionID: lesson.LessonVersionID,
-		QuestionNumber: 1,
-		Prompt: "Почему это важно?",
-		ExpectedAnswer: "Потому что так написано.",
-		AnswerType: "text",
+		QuestionNumber:  1,
+		Prompt:          "Почему это важно?",
+		ExpectedAnswer:  "Потому что так написано.",
+		AnswerType:      "text",
 		BiblePassages: []domain.BiblePassageInput{{
 			BookName: "Матфея", Chapter: chapterNumber, StartVerse: 1, EndVerse: 2,
 			TranslationName: stringPtr("Синодальный перевод"),
-			PassageText: stringPtr("Тестовый отрывок."),
+			PassageText:     stringPtr("Тестовый отрывок."),
 		}},
 	}); err != nil {
 		t.Fatalf("create question with Bible passage: %v", err)
