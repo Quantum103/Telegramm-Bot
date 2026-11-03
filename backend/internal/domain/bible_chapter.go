@@ -34,7 +34,6 @@ type TelegraphChapterLink struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
- 
 // TelegraphChapterJob is a durable request to prepare or refresh a full-chapter
 // Telegraph link. LeaseToken is scoped to one claim attempt and guards completion.
 type TelegraphChapterJob struct {
