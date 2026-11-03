@@ -672,13 +672,6 @@ func (s *LearningService) ensureCourseRunActive(ctx context.Context, enrollment 
 	if s.courseEnrollments == nil {
 		return domain.ErrInvalidState
 	}
-	course, err := s.courseEnrollments.GetForStudent(ctx, enrollment.StudentID, *enrollment.CourseEnrollmentID)
-	if err != nil {
-		return err
-	}
-	if course.Enrollment.Status != "in_progress" || course.Enrollment.Mode != enrollment.Mode {
-		return domain.ErrInvalidState
-	}
 	if validator, ok := s.courseEnrollments.(interface {
 		ValidateActiveLesson(context.Context, int64, int64, int64, int64, string) error
 	}); ok {
@@ -690,6 +683,15 @@ func (s *LearningService) ensureCourseRunActive(ctx context.Context, enrollment 
 			enrollment.LessonVersionID,
 			enrollment.Mode,
 		)
+	}
+	course, err := s.courseEnrollments.GetForStudent(
+		ctx, enrollment.StudentID, *enrollment.CourseEnrollmentID,
+	)
+	if err != nil {
+		return err
+	}
+	if course.Enrollment.Status != "in_progress" || course.Enrollment.Mode != enrollment.Mode {
+		return domain.ErrInvalidState
 	}
 	lesson, err := s.courseEnrollments.GetLessonForRun(
 		ctx, enrollment.StudentID, *enrollment.CourseEnrollmentID, enrollment.LessonID,
