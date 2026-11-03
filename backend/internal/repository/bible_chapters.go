@@ -327,15 +327,48 @@ func (r *BibleChapterRepository) ClaimTelegraphChapterJob(
 	if r.pool == nil || leaseDuration <= 0 {
 		return domain.TelegraphChapterJob{}, ErrInvalidInput
 	}
+	leaseMilliseconds := leaseDuration.Milliseconds()
+	if leaseMilliseconds < 1 {
+		leaseMilliseconds = 1
+	}
+
 	var tokenBytes [16]byte
 	if _, err := rand.Read(tokenBytes[:]); err != nil {
 		return domain.TelegraphChapterJob{}, fmt.Errorf("создать токен аренды задания Telegraph: %w", err)
 	}
 	leaseToken := hex.EncodeToString(tokenBytes[:])
 
+	// This advisory lock is held only while counting and leasing a row. The
+	// transaction is committed before the worker starts any external request.
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.TelegraphChapterJob{}, mapDatabaseError("начать получение задания подготовки Telegraph", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	const globalClaimLock = "bible_chapter_telegraph_jobs:global_concurrency"
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", globalClaimLock); err != nil {
+		return domain.TelegraphChapterJob{}, mapDatabaseError("сериализовать получение задания Telegraph", err)
+	}
+
+	var activeJobs int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)::INTEGER
+		FROM bible_chapter_telegraph_jobs
+		WHERE status = 'processing' AND lease_until > now()
+	`).Scan(&activeJobs); err != nil {
+		return domain.TelegraphChapterJob{}, mapDatabaseError("проверить число активных заданий Telegraph", err)
+	}
+	if activeJobs >= 2 {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.TelegraphChapterJob{}, mapDatabaseError("завершить проверку лимита worker Telegraph", err)
+		}
+		return domain.TelegraphChapterJob{}, ErrNotFound
+	}
+
 	var job domain.TelegraphChapterJob
 	var bookID, chapterNumber int16
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE bible_chapter_telegraph_jobs AS job
 		SET status = 'processing',
 		    attempts = job.attempts + 1,
@@ -356,14 +389,20 @@ func (r *BibleChapterRepository) ClaimTelegraphChapterJob(
 		)
 		RETURNING job.id, job.translation_code, job.book_id, job.chapter_number,
 		          job.attempts, job.lease_token
-	`, leaseDuration.Milliseconds(), leaseToken).Scan(
+	`, leaseMilliseconds, leaseToken).Scan(
 		&job.ID, &job.TranslationCode, &bookID, &chapterNumber, &job.Attempts, &job.LeaseToken,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return domain.TelegraphChapterJob{}, mapDatabaseError("завершить пустое получение задания Telegraph", commitErr)
+			}
 			return domain.TelegraphChapterJob{}, ErrNotFound
 		}
 		return domain.TelegraphChapterJob{}, mapDatabaseError("забрать задание подготовки Telegraph", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.TelegraphChapterJob{}, mapDatabaseError("зафиксировать lease задания Telegraph", err)
 	}
 	job.BookID = int(bookID)
 	job.ChapterNumber = int(chapterNumber)
