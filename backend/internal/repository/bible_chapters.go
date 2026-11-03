@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -340,7 +339,7 @@ func (r *BibleChapterRepository) ClaimTelegraphChapterJob(
 		UPDATE bible_chapter_telegraph_jobs AS job
 		SET status = 'processing',
 		    attempts = job.attempts + 1,
-		    lease_until = now() + ($2::bigint * INTERVAL '1 millisecond'),
+		    lease_until = now() + ($2::double precision * INTERVAL '1 millisecond'),
 		    lease_token = $3,
 		    updated_at = now()
 		WHERE job.id = (
@@ -352,8 +351,8 @@ func (r *BibleChapterRepository) ClaimTelegraphChapterJob(
 		        (candidate.status = 'processing' AND candidate.lease_until <= now())
 		    )
 		    ORDER BY candidate.available_at, candidate.id
-		    FOR UPDATE SKIP LOCKED
 		    LIMIT 1
+		    FOR UPDATE SKIP LOCKED
 		)
 		RETURNING job.id, job.translation_code, job.book_id, job.chapter_number,
 		          job.attempts, job.lease_token
