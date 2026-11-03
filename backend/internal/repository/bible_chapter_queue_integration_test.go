@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -131,5 +130,4 @@ func TestTelegraphChapterQueueDeduplicatesJobsAndUsesLeaseOwnership(t *testing.T
 	}
 	assertJobCount(1)
 
-	_ = fmt.Sprintf("%s", translation) // keep test key explicit in failure traces above
 }
