@@ -230,10 +230,10 @@ func (store *fakeTelegraphLinkStore) seedCurrentChapterLink(chapter bibletext.Ch
 	store.chapterExists = true
 	store.links[telegraphTestLinkKey("synodal", 40, chapter.Chapter, digest)] = domain.TelegraphChapterLink{
 		TranslationCode: "synodal",
-		BookID: 40,
-		ChapterNumber: chapter.Chapter,
-		ContentSHA256: digest,
-		PageURL: pageURL,
+		BookID:          40,
+		ChapterNumber:   chapter.Chapter,
+		ContentSHA256:   digest,
+		PageURL:         pageURL,
 	}
 	return nil
 }
