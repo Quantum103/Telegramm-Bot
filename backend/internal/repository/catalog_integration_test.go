@@ -159,6 +159,33 @@ func TestCatalogChoiceSubmissionProgressAndCompletion(t *testing.T) {
 		t.Fatalf("неверный начальный прогресс/навигация: %+v", progress)
 	}
 
+	if err := enrollments.SetCurrentQuestionFrom(
+		ctx, student.ID, enrollment.ID, firstQuestionID, secondQuestionID,
+	); err != nil {
+		t.Fatalf("условно перейти ко второму вопросу: %v", err)
+	}
+	if err := enrollments.SetCurrentQuestionFrom(
+		ctx, student.ID, enrollment.ID, firstQuestionID, firstQuestionID,
+	); !errors.Is(err, domain.ErrStaleNavigation) {
+		t.Fatalf("устаревшая позиция должна быть отклонена, получено %v", err)
+	}
+	otherStudent, err := NewStudentRepository(pool).EnsureByTelegramID(ctx, EnsureStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "other-student-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("создать второго ученика: %v", err)
+	}
+	if err := enrollments.SetCurrentQuestionFrom(
+		ctx, otherStudent.ID, enrollment.ID, secondQuestionID, firstQuestionID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("чужой ученик не должен менять позицию: %v", err)
+	}
+	if err := enrollments.SetCurrentQuestionFrom(
+		ctx, student.ID, enrollment.ID, secondQuestionID, firstQuestionID,
+	); err != nil {
+		t.Fatalf("вернуть позицию к первому вопросу: %v", err)
+	}
+
 	answers := NewAnswerRepository(pool)
 	_, err = answers.Submit(ctx, AnswerSubmission{
 		StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: otherQuestionID,
