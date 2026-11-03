@@ -144,8 +144,8 @@ func (w *TelegraphPreparationWorker) runWorker(ctx context.Context) {
 func (w *TelegraphPreparationWorker) processJob(ctx context.Context, job domain.TelegraphChapterJob) {
 	jobCtx, cancel := context.WithTimeout(ctx, telegraphJobTimeout)
 	_, publishErr := w.publisher.PublishChapter(jobCtx, ChapterReference{
-		BookID: job.BookID,
-		Chapter: job.ChapterNumber,
+		BookID:      job.BookID,
+		Chapter:     job.ChapterNumber,
 		Translation: job.TranslationCode,
 	})
 	cancel()
