@@ -82,10 +82,11 @@ func TestPublishingLessonVersionEnqueuesSynodalBibleChapters(t *testing.T) {
 	`, chapterNumber); err != nil {
 		t.Fatalf("remove job before backfill test: %v", err)
 	}
-	if err := repository.EnqueuePublishedTelegraphChapters(ctx); err != nil {
+	chapterRepository := NewBibleChapterRepository(pool)
+	if err := chapterRepository.EnqueuePublishedTelegraphChapters(ctx); err != nil {
 		t.Fatalf("backfill published lesson chapters: %v", err)
 	}
-	if err := repository.EnqueuePublishedTelegraphChapters(ctx); err != nil {
+	if err := chapterRepository.EnqueuePublishedTelegraphChapters(ctx); err != nil {
 		t.Fatalf("repeat backfill of published lesson chapters: %v", err)
 	}
 	var queuedJobs int
