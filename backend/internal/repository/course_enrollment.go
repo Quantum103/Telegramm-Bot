@@ -358,6 +358,40 @@ func (r *CourseEnrollmentRepository) getProgress(
 	return progress, nil
 }
 
+// ValidateActiveLesson checks the persisted active course, mode, student and
+// immutable lesson-version membership with one indexed query.
+func (r *CourseEnrollmentRepository) ValidateActiveLesson(
+	ctx context.Context,
+	studentID, courseEnrollmentID, lessonID, lessonVersionID int64,
+	mode string,
+) error {
+	if studentID <= 0 || courseEnrollmentID <= 0 || lessonID <= 0 || lessonVersionID <= 0 ||
+		(mode != "ai" && mode != "curator") {
+		return ErrInvalidInput
+	}
+	var valid bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM course_enrollments ce
+			JOIN course_enrollment_lessons cel
+			  ON cel.course_enrollment_id = ce.id
+			WHERE ce.id = $1
+			  AND ce.student_id = $2
+			  AND ce.status = 'in_progress'
+			  AND ce.mode = $6
+			  AND cel.lesson_id = $3
+			  AND cel.lesson_version_id = $4
+			)
+	`, courseEnrollmentID, studentID, lessonID, lessonVersionID, mode).Scan(&valid); err != nil {
+		return mapDatabaseError("проверить активное прохождение урока курса", err)
+	}
+	if !valid {
+		return domain.ErrInvalidState
+	}
+	return nil
+}
+
 func (r *CourseEnrollmentRepository) GetLessonForRun(
 	ctx context.Context,
 	studentID, courseEnrollmentID, lessonID int64,
