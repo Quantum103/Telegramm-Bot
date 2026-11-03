@@ -87,7 +87,7 @@ func TestCourseEnrollmentPersistsModeAndRejectsSecondActiveCourse(t *testing.T) 
 		t.Fatalf("создать ученика: %v", err)
 	}
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	firstCourse, _, _ := createCourseForEnrollmentTest(t, ctx, pool, suffix+"-a", "Первый курс", 1)
+	firstCourse, firstLessonIDs, firstVersionIDs := createCourseForEnrollmentTest(t, ctx, pool, suffix+"-a", "Первый курс", 1)
 	secondCourse, _, _ := createCourseForEnrollmentTest(t, ctx, pool, suffix+"-b", "Второй курс", 1)
 	courses := NewCourseEnrollmentRepository(pool)
 
@@ -116,6 +116,28 @@ func TestCourseEnrollmentPersistsModeAndRejectsSecondActiveCourse(t *testing.T) 
 	if started.Enrollment.Mode != "curator" || started.Enrollment.CuratorStaffID == nil ||
 		*started.Enrollment.CuratorStaffID != curatorID || started.TotalLessons != 1 {
 		t.Fatalf("режим/ответственный не сохранены: %+v", started)
+	}
+
+	if err := courses.ValidateActiveLesson(
+		ctx, student.ID, started.Enrollment.ID, firstLessonIDs[0], firstVersionIDs[0], "curator",
+	); err != nil {
+		t.Fatalf("валидный состав активного курса должен проходить проверку: %v", err)
+	}
+	if err := courses.ValidateActiveLesson(
+		ctx, student.ID, started.Enrollment.ID, firstLessonIDs[0], firstVersionIDs[0], "ai",
+	); !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("проверка должна отклонить неверный режим: %v", err)
+	}
+	otherStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "course-mode-other-student",
+	})
+	if err != nil {
+		t.Fatalf("создать второго ученика для проверки доступа: %v", err)
+	}
+	if err := courses.ValidateActiveLesson(
+		ctx, otherStudent.ID, started.Enrollment.ID, firstLessonIDs[0], firstVersionIDs[0], "curator",
+	); !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("проверка не должна раскрывать чужое прохождение: %v", err)
 	}
 
 	reopened, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, firstCourse, "ai")
