@@ -267,7 +267,7 @@ func (r *BibleChapterRepository) EnqueuePublishedTelegraphChapters(ctx context.C
 		JOIN lesson_questions q ON q.lesson_version_id = lv.id
 		JOIN question_bible_passages qbp ON qbp.question_id = q.id
 		JOIN bible_passages bp ON bp.id = qbp.passage_id
-		WHERE lv.status = 'published'
+		WHERE lv.status IN ('published', 'archived')
 		ORDER BY bp.book_name, bp.chapter
 	`)
 	if err != nil {
