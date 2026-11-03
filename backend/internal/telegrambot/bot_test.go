@@ -187,7 +187,9 @@ type fakeCatalog struct {
 	courseErr   error
 	lessonsErr  error
 	detailErr   error
-	detailCalls []int64
+	detailCalls        []int64
+	metadataCalls      []int64
+	detailOnlyCalls    int
 }
 
 func (f *fakeCatalog) ListCourses(context.Context) ([]domain.Course, error) {
@@ -231,7 +233,17 @@ func (f *fakeCatalog) GetLessonDetailInCourse(_ context.Context, courseID, lesso
 	return detail, nil
 }
 
+func (f *fakeCatalog) GetLesson(_ context.Context, lessonID int64) (domain.Lesson, error) {
+	f.metadataCalls = append(f.metadataCalls, lessonID)
+	detail, ok := f.details[lessonID]
+	if !ok {
+		return domain.Lesson{}, domain.ErrNotFound
+	}
+	return detail.Lesson, nil
+}
+
 func (f *fakeCatalog) GetLessonDetail(_ context.Context, lessonID int64) (domain.LessonDetail, error) {
+	f.detailOnlyCalls++
 	detail, ok := f.details[lessonID]
 	if !ok {
 		return domain.LessonDetail{}, domain.ErrNotFound
@@ -253,6 +265,7 @@ type fakeLearning struct {
 	nextErr          error
 	previousErr      error
 	completeCalls    int
+	progressCalls    int
 }
 
 func newFakeLearning(catalog *fakeCatalog) *fakeLearning {
@@ -305,6 +318,7 @@ func (f *fakeLearning) StartLesson(ctx context.Context, studentID, lessonID int6
 func (f *fakeLearning) GetProgress(_ context.Context, studentID, enrollmentID int64) (domain.Progress, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.progressCalls++
 	if f.progressErr != nil {
 		return domain.Progress{}, f.progressErr
 	}
@@ -349,6 +363,31 @@ func (f *fakeLearning) NextQuestion(ctx context.Context, studentID, enrollmentID
 		return service.NavigationState{}, f.nextErr
 	}
 	return f.move(ctx, studentID, enrollmentID, 1)
+}
+
+
+type optimizedFakeLearning struct {
+	*fakeLearning
+	navigationCalls int
+	currentCalls    int
+	navigationState service.NavigationState
+	currentState    service.NavigationState
+	navigationErr   error
+	currentErr      error
+}
+
+func (f *optimizedFakeLearning) NavigateFromQuestion(
+	context.Context, int64, int64, int64, int,
+) (service.NavigationState, error) {
+	f.navigationCalls++
+	return f.navigationState, f.navigationErr
+}
+
+func (f *optimizedFakeLearning) OpenCurrentQuestion(
+	context.Context, int64, int64,
+) (service.NavigationState, error) {
+	f.currentCalls++
+	return f.currentState, f.currentErr
 }
 
 func (f *fakeLearning) CompleteLesson(_ context.Context, studentID, enrollmentID int64) (domain.Enrollment, error) {
@@ -1179,5 +1218,66 @@ func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
 	if learning.completeCalls != 1 || !strings.Contains(last.text, "Урок завершён") ||
 		!hasButton(last.markup, "courses") || !hasButton(last.markup, "chat:start") {
 		t.Fatalf("завершение должно вернуть экран с рабочими кнопками: calls=%d edit=%+v", learning.completeCalls, last)
+	}
+}
+
+
+func TestTelegramNavigationUsesSingleServiceOperationAndLessonMetadata(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, baseLearning := fixture()
+	state := service.NavigationState{
+		Question: domain.LessonQuestion{ID: 1002, LessonVersionID: 501, QuestionNumber: 2, Prompt: "Второй вопрос", AnswerType: "text"},
+		Progress: domain.Progress{
+			Enrollment: domain.Enrollment{
+				ID: 701, StudentID: 1, LessonID: 100, LessonVersionID: 501,
+				Mode: "ai", Status: "in_progress", CurrentQuestionID: int64Pointer(1002),
+			},
+			TotalQuestions: 2,
+		},
+	}
+	learning := &optimizedFakeLearning{fakeLearning: baseLearning, navigationState: state}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	bot := NewBot(api, students, catalog, learning, logger)
+
+	bot.navigate(context.Background(), 987654, 1, 10, 701, 1001, 10, "next")
+
+	if learning.navigationCalls != 1 || baseLearning.progressCalls != 0 {
+		t.Fatalf("navigation calls = %d, fallback progress calls = %d; want 1 and 0",
+			learning.navigationCalls, baseLearning.progressCalls)
+	}
+	if len(catalog.metadataCalls) != 1 || catalog.metadataCalls[0] != 100 || catalog.detailOnlyCalls != 0 {
+		t.Fatalf("lesson metadata calls=%v full-detail calls=%d; want metadata only",
+			catalog.metadataCalls, catalog.detailOnlyCalls)
+	}
+}
+
+func TestTelegramShowQuestionUsesCurrentQuestionOperationAndLessonMetadata(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, baseLearning := fixture()
+	state := service.NavigationState{
+		Question: domain.LessonQuestion{ID: 1001, LessonVersionID: 501, QuestionNumber: 1, Prompt: "Первый вопрос", AnswerType: "text"},
+		Progress: domain.Progress{
+			Enrollment: domain.Enrollment{
+				ID: 701, StudentID: 1, LessonID: 100, LessonVersionID: 501,
+				Mode: "ai", Status: "in_progress", CurrentQuestionID: int64Pointer(1001),
+			},
+			TotalQuestions: 2,
+		},
+	}
+	learning := &optimizedFakeLearning{fakeLearning: baseLearning, currentState: state}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	bot := NewBot(api, students, catalog, learning, logger)
+
+	bot.showQuestion(context.Background(), 987654, 1, 10, 701, 10)
+
+	if learning.currentCalls != 1 || baseLearning.progressCalls != 0 || baseLearning.openCalls != 0 {
+		t.Fatalf("current calls=%d progress calls=%d open calls=%d; want 1, 0, 0",
+			learning.currentCalls, baseLearning.progressCalls, baseLearning.openCalls)
+	}
+	if len(catalog.metadataCalls) != 1 || catalog.detailOnlyCalls != 0 {
+		t.Fatalf("lesson metadata calls=%v full-detail calls=%d; want metadata only",
+			catalog.metadataCalls, catalog.detailOnlyCalls)
 	}
 }
