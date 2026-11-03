@@ -137,13 +137,27 @@ func (reader *fakeBibleChapterReader) callCount() int {
 type fakeTelegraphLinkStore struct {
 	mu            sync.Mutex
 	links         map[string]domain.TelegraphChapterLink
+	chapter       domain.BibleChapter
 	chapterExists bool
-	calls         int
+	chapterReads  int
+	linkReads     int
+	linkWrites    int
 }
 
 func newFakeTelegraphLinkStore(chapterExists bool) *fakeTelegraphLinkStore {
+	chapter := testTelegraphChapter()
+	verses := make([]domain.BibleVerse, len(chapter.Verses))
+	for index, verse := range chapter.Verses {
+		verses[index] = domain.BibleVerse{Number: verse.Number, Text: verse.Text}
+	}
 	return &fakeTelegraphLinkStore{
-		links:         make(map[string]domain.TelegraphChapterLink),
+		links: make(map[string]domain.TelegraphChapterLink),
+		chapter: domain.BibleChapter{
+			TranslationCode: "synodal", BookID: 40, BookName: chapter.Book,
+			ChapterNumber: chapter.Chapter, Verses: verses,
+			SourceProvider: "midvash", SourceVersion: "synodal",
+			ContentSHA256: strings.Repeat("a", 64), FetchedAt: time.Now().UTC(),
+		},
 		chapterExists: chapterExists,
 	}
 }
@@ -152,36 +166,76 @@ func telegraphTestLinkKey(translation string, bookID, chapter int, digest string
 	return fmt.Sprintf("%s:%d:%d:%s", translation, bookID, chapter, digest)
 }
 
-func (store *fakeTelegraphLinkStore) GetOrCreateTelegraphLink(
-	ctx context.Context,
+func (store *fakeTelegraphLinkStore) GetChapter(
+	_ context.Context,
+	translation string,
+	bookID, chapter int,
+) (domain.BibleChapter, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.chapterReads++
+	if !store.chapterExists || translation != store.chapter.TranslationCode ||
+		bookID != store.chapter.BookID || chapter != store.chapter.ChapterNumber {
+		return domain.BibleChapter{}, domain.ErrNotFound
+	}
+	copy := store.chapter
+	copy.Verses = append([]domain.BibleVerse(nil), store.chapter.Verses...)
+	return copy, nil
+}
+
+func (store *fakeTelegraphLinkStore) GetTelegraphLink(
+	_ context.Context,
 	translation string,
 	bookID, chapter int,
 	digest string,
-	createPage func(context.Context) (string, error),
 ) (domain.TelegraphChapterLink, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	store.calls++
-	key := telegraphTestLinkKey(translation, bookID, chapter, digest)
-	if existing, ok := store.links[key]; ok {
-		return existing, nil
-	}
-	if !store.chapterExists {
+	store.linkReads++
+	link, ok := store.links[telegraphTestLinkKey(translation, bookID, chapter, digest)]
+	if !ok {
 		return domain.TelegraphChapterLink{}, domain.ErrNotFound
 	}
-	pageURL, err := createPage(ctx)
-	if err != nil {
-		return domain.TelegraphChapterLink{}, err
-	}
-	link := domain.TelegraphChapterLink{
-		TranslationCode: translation,
-		BookID:          bookID,
-		ChapterNumber:   chapter,
-		ContentSHA256:   digest,
-		PageURL:         pageURL,
-	}
-	store.links[key] = link
 	return link, nil
+}
+
+func (store *fakeTelegraphLinkStore) SaveTelegraphLink(
+	_ context.Context,
+	link domain.TelegraphChapterLink,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.linkWrites++
+	if !store.chapterExists {
+		return domain.ErrNotFound
+	}
+	key := telegraphTestLinkKey(link.TranslationCode, link.BookID, link.ChapterNumber, link.ContentSHA256)
+	if _, exists := store.links[key]; !exists {
+		store.links[key] = link
+	}
+	return nil
+}
+
+func (store *fakeTelegraphLinkStore) seedCurrentChapterLink(chapter bibletext.Chapter, pageURL string) error {
+	nodes, err := buildTelegraphChapterContent(chapter)
+	if err != nil {
+		return err
+	}
+	digest, err := telegraphContentSHA256(nodes)
+	if err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.chapterExists = true
+	store.links[telegraphTestLinkKey("synodal", 40, chapter.Chapter, digest)] = domain.TelegraphChapterLink{
+		TranslationCode: "synodal",
+		BookID: 40,
+		ChapterNumber: chapter.Chapter,
+		ContentSHA256: digest,
+		PageURL: pageURL,
+	}
+	return nil
 }
 
 func (store *fakeTelegraphLinkStore) linkCount() int {
