@@ -273,7 +273,7 @@ func (r *BibleChapterRepository) EnqueuePublishedTelegraphChapters(ctx context.C
 		return mapDatabaseError("найти опубликованные главы для подготовки Telegraph", err)
 	}
 	type chapterKey struct {
-		bookID int
+		bookID  int
 		chapter int
 	}
 	keys := make([]chapterKey, 0)
