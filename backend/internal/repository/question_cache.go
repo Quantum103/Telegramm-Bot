@@ -158,9 +158,9 @@ func questionContentWeight(questions []domain.LessonQuestion) int64 {
 		weight += int64(len(question.BiblePassages) * 64)
 		for _, passage := range question.BiblePassages {
 			weight += int64(len(passage.BookName) +
-				len(optionalStringValue(passage.TranslationName)) +
-				len(optionalStringValue(passage.PassageText)) +
-				len(optionalStringValue(passage.SourceNote)))
+				len(questionCacheOptionalStringValue(passage.TranslationName)) +
+				len(questionCacheOptionalStringValue(passage.PassageText)) +
+				len(questionCacheOptionalStringValue(passage.SourceNote)))
 		}
 	}
 	return weight
@@ -173,7 +173,7 @@ func stringPointerWeight(value *string) int64 {
 	return int64(len(*value))
 }
 
-func optionalStringValue(value *string) string {
+func questionCacheOptionalStringValue(value *string) string {
 	if value == nil {
 		return ""
 	}
