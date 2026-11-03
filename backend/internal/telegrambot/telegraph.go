@@ -306,45 +306,52 @@ func isTelegraphPageURL(raw string) bool {
 	return host == "telegra.ph" || host == "graph.org"
 }
 
+type cachedChapterLinkReader interface {
+	CachedChapterURL(context.Context, ChapterReference) (string, error)
+}
+
 func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.BiblePassage) ([]string, string) {
 	if len(passages) == 0 {
 		return nil, ""
 	}
 	if b.chapterPublisher == nil {
-		return nil, "⚙️ Ссылка на полную главу появится после настройки TELEGRAPH_ACCESS_TOKEN."
+		return nil, "Ссылка на полную главу пока не настроена."
 	}
-
 	targets := bibleChapterTargets(passages)
 	if len(targets) == 0 {
 		return nil, "Полная глава для указанного перевода пока не подключена."
 	}
+	cachedReader, ok := b.chapterPublisher.(cachedChapterLinkReader)
+	if !ok {
+		b.logger.Error("публикатор Telegraph не поддерживает чтение готовых ссылок")
+		return nil, "Ссылка на полную главу готовится. Она появится после подготовки."
+	}
 
 	links := make([]string, 0, len(targets))
-	unavailableChapter := false
-	publishFailed := false
+	pending := false
+	unavailable := false
 	for _, target := range targets {
 		reference := ChapterReference{
 			BookID: target.bookID, BookName: target.bookName,
 			Chapter: target.chapter, Translation: "synodal",
 		}
-		pageURL, err := b.chapterPublisher.PublishChapter(ctx, reference)
+		pageURL, err := cachedReader.CachedChapterURL(ctx, reference)
 		if err != nil {
-			if errors.Is(err, bibletext.ErrChapterNotFound) || errors.Is(err, service.ErrBibleChapterUnavailable) {
-				unavailableChapter = true
+			if errors.Is(err, domain.ErrNotFound) {
+				pending = true
 			} else {
-				publishFailed = true
-				b.logger.Warn("не удалось создать статью полной главы в Telegraph",
+				unavailable = true
+				b.logger.Warn("не удалось прочитать готовую ссылку полной главы из PostgreSQL",
 					"book", target.bookName, "chapter", target.chapter, "error", err)
 			}
 			continue
 		}
 		if !isTelegraphPageURL(pageURL) {
-			publishFailed = true
-			b.logger.Warn("публикатор вернул ссылку не на статью Telegraph",
+			unavailable = true
+			b.logger.Warn("кэш вернул некорректную ссылку на Telegraph",
 				"book", target.bookName, "chapter", target.chapter)
 			continue
 		}
-
 		label := "📖 Прочитать всю главу"
 		if len(targets) > 1 {
 			label = fmt.Sprintf("📖 %s %d", target.bookName, target.chapter)
@@ -357,17 +364,17 @@ func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.Bible
 	}
 
 	notice := ""
-	if unavailableChapter {
-		notice = "Полная глава временно недоступна. Попробуйте снова позже."
+	if pending {
+		notice = "Ссылка на полную главу готовится. Она появится автоматически после подготовки."
 	}
-	if publishFailed {
+	if unavailable {
 		if notice != "" {
 			notice += " "
 		}
-		notice += "Не удалось создать статью Telegraph сейчас. Попробуйте открыть вопрос позже."
+		notice += "Сейчас не удалось получить готовую ссылку на полную главу. Попробуйте открыть вопрос позже."
 	}
 	if len(links) == 0 && notice == "" {
-		notice = "Не удалось подготовить ссылку на полную главу."
+		notice = "Ссылка на полную главу готовится. Она появится автоматически после подготовки."
 	}
 	return links, notice
 }
