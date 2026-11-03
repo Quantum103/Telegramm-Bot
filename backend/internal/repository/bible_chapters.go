@@ -372,8 +372,8 @@ func (r *BibleChapterRepository) ClaimTelegraphChapterJob(
 		UPDATE bible_chapter_telegraph_jobs AS job
 		SET status = 'processing',
 		    attempts = job.attempts + 1,
-		    lease_until = now() + ($2::double precision * INTERVAL '1 millisecond'),
-		    lease_token = $3,
+		    lease_until = now() + ($1::double precision * INTERVAL '1 millisecond'),
+		    lease_token = $2,
 		    updated_at = now()
 		WHERE job.id = (
 		    SELECT candidate.id
