@@ -347,8 +347,8 @@ func TestTelegraphLinkStoreUsesUniqueDigestKeyAcrossRepositoryInstances(t *testi
 
 	chapter := domain.BibleChapter{
 		TranslationCode: translationCode, BookID: bookID, BookName: "Бытие",
-		ChapterNumber: chapterNumber,
-		Verses: []domain.BibleVerse{{Number: 1, Text: "Тестовый стих."}},
+		ChapterNumber:  chapterNumber,
+		Verses:         []domain.BibleVerse{{Number: 1, Text: "Тестовый стих."}},
 		SourceProvider: "midvash", SourceVersion: "synodal",
 		ContentSHA256: contentSHA256, FetchedAt: time.Now().UTC(),
 	}
