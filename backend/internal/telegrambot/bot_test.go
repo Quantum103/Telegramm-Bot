@@ -462,13 +462,21 @@ func newTestBot(api *fakeAPI, students *fakeStudents, catalog *fakeCatalog, lear
 }
 
 type fakeChapterPublisher struct {
-	url        string
-	err        error
-	references []ChapterReference
+	url              string
+	err              error
+	references       []ChapterReference
+	cachedReferences []ChapterReference
+	publishCalls     int
 }
 
 func (f *fakeChapterPublisher) PublishChapter(_ context.Context, reference ChapterReference) (string, error) {
+	f.publishCalls++
 	f.references = append(f.references, reference)
+	return f.url, f.err
+}
+
+func (f *fakeChapterPublisher) CachedChapterURL(_ context.Context, reference ChapterReference) (string, error) {
+	f.cachedReferences = append(f.cachedReferences, reference)
 	return f.url, f.err
 }
 
@@ -719,8 +727,11 @@ func TestOpeningLessonRendersFormattedPassageAndInlineChapterLink(t *testing.T) 
 			}
 		}
 	}
-	if len(publisher.references) != 1 || publisher.references[0].BookID != 40 || publisher.references[0].Chapter != 4 {
-		t.Fatalf("published chapter references = %+v, want Matthew 4", publisher.references)
+	if len(publisher.cachedReferences) != 1 || publisher.cachedReferences[0].BookID != 40 || publisher.cachedReferences[0].Chapter != 4 {
+		t.Fatalf("cached chapter references = %+v, want Matthew 4", publisher.cachedReferences)
+	}
+	if publisher.publishCalls != 0 {
+		t.Fatalf("question rendering called background publisher %d times, want 0", publisher.publishCalls)
 	}
 }
 
