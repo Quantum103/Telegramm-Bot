@@ -143,7 +143,7 @@ func run(logger *slog.Logger) error {
 	appCtx, cancelApp := context.WithCancel(signalCtx)
 	defer cancelApp()
 
-	componentErrors := make(chan error, 3)
+	componentErrors := make(chan error, 4)
 	serverDone := make(chan struct{})
 	go func() {
 		defer close(serverDone)
@@ -155,6 +155,7 @@ func run(logger *slog.Logger) error {
 
 	var botDone chan struct{}
 	var deliveryDone chan struct{}
+	var chapterWorkerDone chan struct{}
 	if cfg.TelegramBotToken == "" {
 		logger.Info("Telegram-бот отключён: переменная TELEGRAM_BOT_TOKEN не задана")
 	} else {
@@ -173,6 +174,17 @@ func run(logger *slog.Logger) error {
 		)
 		if chapterPublisher == nil {
 			logger.Warn("ссылки на полные главы отключены: переменная TELEGRAPH_ACCESS_TOKEN не задана")
+		} else {
+			chapterWorkerDone = make(chan struct{})
+			chapterWorker := telegrambot.NewTelegraphPreparationWorker(
+				bibleChapterRepository, chapterPublisher, logger, 2,
+			)
+			go func() {
+				defer close(chapterWorkerDone)
+				if err := chapterWorker.Run(appCtx); err != nil {
+					componentErrors <- fmt.Errorf("Telegraph preparation worker: %w", err)
+				}
+			}()
 		}
 		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
 			telegramAPI, studentService, catalogService, learningService,
@@ -235,6 +247,15 @@ func run(logger *slog.Logger) error {
 	if deliveryDone != nil {
 		select {
 		case <-deliveryDone:
+		case <-shutdownCtx.Done():
+			if shutdownErr == nil {
+				shutdownErr = shutdownCtx.Err()
+			}
+		}
+	}
+	if chapterWorkerDone != nil {
+		select {
+		case <-chapterWorkerDone:
 		case <-shutdownCtx.Done():
 			if shutdownErr == nil {
 				shutdownErr = shutdownCtx.Err()
