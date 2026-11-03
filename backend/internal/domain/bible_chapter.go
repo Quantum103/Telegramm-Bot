@@ -33,3 +33,15 @@ type TelegraphChapterLink struct {
 	PageURL         string    `json:"page_url"`
 	CreatedAt       time.Time `json:"created_at"`
 }
+
+ 
+// TelegraphChapterJob is a durable request to prepare or refresh a full-chapter
+// Telegraph link. LeaseToken is scoped to one claim attempt and guards completion.
+type TelegraphChapterJob struct {
+	ID              int64
+	TranslationCode string
+	BookID          int
+	ChapterNumber   int
+	Attempts        int
+	LeaseToken      string
+}
