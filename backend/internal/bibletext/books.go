@@ -73,7 +73,6 @@ var bookIDs = map[string]int{
 	"откровение": 66, "откровение иоанна богослова": 66, "откр": 66, "revelation": 66, "rev": 66,
 }
 
-
 // BookID resolves a book name or abbreviation to its canonical Bible book ID.
 func BookID(value string) (int, bool) {
 	value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "ё", "е")))
