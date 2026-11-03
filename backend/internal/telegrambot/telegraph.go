@@ -17,6 +17,7 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
 const (
@@ -140,6 +141,9 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	// UNIQUE (translation, book, chapter, content_sha256) оставляет одну
 	// каноническую ссылку. Сохранение выполняется отдельным коротким SQL-запросом.
 	if err := p.linkStore.SaveTelegraphLink(ctx, link); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return "", fmt.Errorf("%w: глава ещё не сохранена в PostgreSQL", service.ErrBibleChapterUnavailable)
+		}
 		return "", fmt.Errorf("сохранить готовую ссылку Telegraph: %w", err)
 	}
 	saved, err := p.linkStore.GetTelegraphLink(
