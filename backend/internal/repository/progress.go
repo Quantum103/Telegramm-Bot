@@ -164,7 +164,13 @@ func (r *EnrollmentRepository) SetCurrentQuestionFrom(
 	if err != nil {
 		return err
 	}
-	if enrollment.Status == "cancelled" || enrollment.CourseEnrollmentID != nil {
+	if enrollment.Status == "cancelled" {
+		return domain.ErrInvalidState
+	}
+	if enrollment.CurrentQuestionID == nil || *enrollment.CurrentQuestionID != expectedQuestionID {
+		return domain.ErrStaleNavigation
+	}
+	if enrollment.CourseEnrollmentID != nil {
 		return domain.ErrInvalidState
 	}
 	return domain.ErrStaleNavigation
