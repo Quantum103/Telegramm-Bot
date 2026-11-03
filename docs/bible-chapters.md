@@ -112,7 +112,7 @@ Worker забирает задание коротким атомарным SQL-�
 
 ## Ручная проверка Матфея 4 в Docker Compose / PowerShell
 
-Нужны Docker Compose, рабочие токены Telegram и Telegraph и урок, в вопросе которого есть ссылка на Матфея 4. Для первого холодного запроса строка Матфея 4 не должна существовать в выбранной базе.
+Нужны Docker Compose, рабочие токены Telegram и Telegraph и опубликованный урок, в вопросе которого есть ссылка на Матфея 4. После применения миграций worker поставит ссылки из уже опубликованных и архивных версий в очередь автоматически.
 
 ### Запуск
 
@@ -129,7 +129,13 @@ Worker забирает задание коротким атомарным SQL-�
     docker compose ps
     docker compose logs -f backend
 
-Откройте бота в Telegram, зайдите в урок со ссылкой **Матфея 4:4-7**. На экране вопроса должны сохраниться вопрос, ссылка-источник и текст отрывка. Ниже должна появиться подчёркнутая текстовая ссылка «Прочитать всю главу» прямо в сообщении. Нажатие на неё открывает статью Telegraph.
+После запуска backend в логах появится сообщение о запуске worker подготовки полных глав. Он подхватит очередь, которую заполнил backfill опубликованных уроков. До завершения работы worker вопрос открывается сразу и показывает сообщение «Ссылка на полную главу готовится».
+
+Проверьте состояние задания:
+
+    docker compose exec -T postgres psql -U bible_app -d bible_platform -c "SELECT translation_code, book_id, chapter_number, status, attempts, available_at, lease_until, last_error FROM bible_chapter_telegraph_jobs WHERE translation_code = 'synodal' AND book_id = 40 AND chapter_number = 4;"
+
+После того как статус станет **completed**, откройте вопрос в Telegram ещё раз. В нём должна появиться прежняя подчёркнутая текстовая ссылка «Прочитать всю главу»; нажатие на неё открывает статью Telegraph.
 
 ### Проверка строки главы и ссылки
 
@@ -137,7 +143,7 @@ Worker забирает задание коротким атомарным SQL-�
 
     docker compose exec -T postgres psql -U bible_app -d bible_platform -c "SELECT translation_code, book_id, book_name, chapter_number, source_provider, source_version, jsonb_array_length(verses) AS verse_count, content_sha256, fetched_at FROM bible_chapters WHERE translation_code = 'synodal' AND book_id = 40 AND chapter_number = 4;"
 
-Для первого внешнего запроса ожидается одна строка с **book_id = 40**, **chapter_number = 4**, **source_provider = midvash** или **getbible** и положительным **verse_count**.
+После завершения фоновой подготовки ожидается одна строка с **book_id = 40**, **chapter_number = 4**, **source_provider = midvash** или **getbible** и положительным **verse_count**.
 
 Проверьте постоянную ссылку:
 
