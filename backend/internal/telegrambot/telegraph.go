@@ -17,6 +17,7 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
@@ -106,7 +107,9 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 		return "", fmt.Errorf("%w: поддерживается только Синодальный перевод", bibletext.ErrInvalidChapter)
 	}
 
-	chapter, err := p.chapters.GetChapter(ctx, reference.BookID, reference.Chapter)
+	chapter, err := performance.Measure(ctx, "bible.chapter.fetch", func() (bibletext.Chapter, error) {
+		return p.chapters.GetChapter(ctx, reference.BookID, reference.Chapter)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -128,16 +131,20 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	// Репозиторий проверяет ссылку под транзакционной advisory-блокировкой.
 	// Разные главы могут публиковаться параллельно, одинаковая версия главы — только один раз.
 	title := fmt.Sprintf("%s — глава %d", chapter.Book, chapter.Chapter)
-	link, err := p.linkStore.GetOrCreateTelegraphLink(
-		ctx,
-		"synodal",
-		reference.BookID,
-		reference.Chapter,
-		contentSHA256,
-		func(createCtx context.Context) (string, error) {
-			return p.createPage(createCtx, title, content)
-		},
-	)
+	link, err := performance.Measure(ctx, "telegraph.link_cache", func() (domain.TelegraphChapterLink, error) {
+		return p.linkStore.GetOrCreateTelegraphLink(
+			ctx,
+			"synodal",
+			reference.BookID,
+			reference.Chapter,
+			contentSHA256,
+			func(createCtx context.Context) (string, error) {
+				return performance.Measure(createCtx, "telegraph.create_page", func() (string, error) {
+					return p.createPage(createCtx, title, content)
+				})
+			},
+		)
+	})
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return "", fmt.Errorf("%w: глава ещё не сохранена в PostgreSQL", service.ErrBibleChapterUnavailable)

@@ -178,6 +178,7 @@ func run(logger *slog.Logger) error {
 			telegramAPI, studentService, catalogService, learningService,
 			logger, chapterPublisher, conversationService, staffTelegramService, staffReferralService,
 		)
+		bot.SetPerformancePool(pool)
 		go func() {
 			defer close(botDone)
 			if err := bot.Run(appCtx); err != nil {

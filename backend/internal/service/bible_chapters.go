@@ -14,6 +14,7 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -79,7 +80,7 @@ func (s *BibleChapterService) GetChapter(
 	}
 
 	key := chapterKey{bookID: bookID, chapterNumber: chapterNumber}
-	chapter, err := s.loadStoredChapter(ctx, key)
+	chapter, err := s.loadStoredChapterMeasured(ctx, key)
 	if err == nil {
 		return cloneBibleChapter(chapter), nil
 	}
@@ -104,7 +105,7 @@ func (s *BibleChapterService) GetChapter(
 
 func (s *BibleChapterService) loadOrFetchChapter(ctx context.Context, key chapterKey) (bibletext.Chapter, error) {
 	// Повторная проверка закрывает гонку между первоначальным SELECT и созданием flight.
-	chapter, err := s.loadStoredChapter(ctx, key)
+	chapter, err := s.loadStoredChapterMeasured(ctx, key)
 	if err == nil {
 		return chapter, nil
 	}
@@ -122,7 +123,9 @@ func (s *BibleChapterService) loadOrFetchChapter(ctx context.Context, key chapte
 		if source == nil {
 			continue
 		}
-		result, fetchErr := source.FetchChapter(ctx, key.bookID, key.chapterNumber)
+		result, fetchErr := performance.Measure(ctx, "bible.provider."+providers[index], func() (bibletext.SourceChapter, error) {
+			return source.FetchChapter(ctx, key.bookID, key.chapterNumber)
+		})
 		if fetchErr == nil {
 			fetchErr = validateFetchedChapter(result, providers[index], key)
 		}
@@ -181,6 +184,21 @@ func (s *BibleChapterService) loadOrFetchChapter(ctx context.Context, key chapte
 	return bibletext.Chapter{}, fmt.Errorf("%w: книга %d, глава %d", ErrBibleChapterUnavailable, key.bookID, key.chapterNumber)
 }
 
+func (s *BibleChapterService) loadStoredChapterMeasured(ctx context.Context, key chapterKey) (bibletext.Chapter, error) {
+	started := time.Now()
+	chapter, err := s.loadStoredChapter(ctx, key)
+	outcome := "hit"
+	metricErr := err
+	if errors.Is(err, domain.ErrNotFound) {
+		outcome = "miss"
+		metricErr = nil
+	} else if err != nil {
+		outcome = "error"
+	}
+	performance.RecordOutcome(ctx, "bible.chapter.postgres_cache.read", time.Since(started), outcome, metricErr)
+	return chapter, err
+}
+
 func (s *BibleChapterService) loadStoredChapter(ctx context.Context, key chapterKey) (bibletext.Chapter, error) {
 	stored, err := s.store.GetChapter(ctx, synodalTranslationCode, key.bookID, key.chapterNumber)
 	if err != nil {
@@ -229,7 +247,9 @@ func (s *BibleChapterService) persistFetchedChapter(
 		ContentSHA256:   chapterContentSHA256(result.Chapter),
 		FetchedAt:       time.Now().UTC(),
 	}
-	if err := s.store.SaveChapter(ctx, record); err != nil {
+	if err := performance.MeasureErr(ctx, "bible.chapter.postgres_cache.write", func() error {
+		return s.store.SaveChapter(ctx, record)
+	}); err != nil {
 		return bibletext.Chapter{}, fmt.Errorf("сохранить загруженную главу в PostgreSQL: %w", err)
 	}
 	return result.Chapter, nil

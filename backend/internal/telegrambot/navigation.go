@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
@@ -26,7 +28,9 @@ func (b *Bot) leaveStudentInteraction(ctx context.Context, studentID int64) {
 
 func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int64, heading string) {
 	b.leaveStudentInteraction(ctx, studentID)
-	courses, err := b.catalog.ListCourses(ctx)
+	courses, err := performance.Measure(ctx, "catalog.courses.list", func() ([]domain.Course, error) {
+		return b.catalog.ListCourses(ctx)
+	})
 	if err != nil {
 		b.logger.Error("не удалось загрузить каталог курсов", "student_id", studentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить каталог. Попробуйте обновить список позже.", keyboard(button("Обновить список", "courses")))
@@ -51,7 +55,9 @@ func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int6
 
 func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, messageID int64) {
 	b.leaveStudentInteraction(ctx, studentID)
-	course, err := b.catalog.GetCourse(ctx, courseID)
+	course, err := performance.Measure(ctx, "catalog.course.get", func() (domain.Course, error) {
+		return b.catalog.GetCourse(ctx, courseID)
+	})
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Этот курс больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
@@ -62,7 +68,9 @@ func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, mess
 		return
 	}
 
-	lessons, err := b.catalog.ListCourseLessons(ctx, courseID)
+	lessons, err := performance.Measure(ctx, "catalog.course.lessons.list", func() ([]domain.Lesson, error) {
+		return b.catalog.ListCourseLessons(ctx, courseID)
+	})
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Этот курс больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
@@ -90,7 +98,9 @@ func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, mess
 }
 
 func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lessonID, messageID int64) {
-	detail, err := b.catalog.GetLessonDetailInCourse(ctx, courseID, lessonID)
+	detail, err := performance.Measure(ctx, "catalog.lesson.detail", func() (domain.LessonDetail, error) {
+		return b.catalog.GetLessonDetailInCourse(ctx, courseID, lessonID)
+	})
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Этот урок недоступен в выбранном курсе. Откройте список уроков.", keyboard(
@@ -116,7 +126,9 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		StartCourse(context.Context, int64, int64, string) (domain.CourseEnrollmentProgress, error)
 		StartLessonForCourse(context.Context, int64, int64, int64, int64) (domain.Progress, error)
 	}); ok {
-		courseRun, startErr := courseStarter.StartCourse(ctx, studentID, courseID, "ai")
+		courseRun, startErr := performance.Measure(ctx, "learning.course.open", func() (domain.CourseEnrollmentProgress, error) {
+			return courseStarter.StartCourse(ctx, studentID, courseID, "ai")
+		})
 		if errors.Is(startErr, domain.ErrActiveCourse) {
 			active := courseRun.Enrollment
 			message := fmt.Sprintf(
@@ -134,12 +146,16 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		if startErr != nil {
 			err = startErr
 		} else {
-			progress, err = courseStarter.StartLessonForCourse(
-				ctx, studentID, courseRun.Enrollment.ID, courseID, detail.Lesson.ID,
-			)
+			progress, err = performance.Measure(ctx, "learning.lesson.open", func() (domain.Progress, error) {
+				return courseStarter.StartLessonForCourse(
+					ctx, studentID, courseRun.Enrollment.ID, courseID, detail.Lesson.ID,
+				)
+			})
 		}
 	} else {
-		progress, err = b.learning.StartLesson(ctx, studentID, detail.Lesson.ID, "ai")
+		progress, err = performance.Measure(ctx, "learning.lesson.open", func() (domain.Progress, error) {
+			return b.learning.StartLesson(ctx, studentID, detail.Lesson.ID, "ai")
+		})
 	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNoCurator) {
@@ -176,7 +192,9 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		))
 		return
 	}
-	state, err := b.learning.OpenQuestion(ctx, studentID, progress.Enrollment.ID, questionID)
+	state, err := performance.Measure(ctx, "learning.question.fetch", func() (service.NavigationState, error) {
+		return b.learning.OpenQuestion(ctx, studentID, progress.Enrollment.ID, questionID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось открыть текущий вопрос", "student_id", studentID, "enrollment_id", progress.Enrollment.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Вернитесь к списку уроков и попробуйте снова.", keyboard(button("К урокам", fmt.Sprintf("lessons:%d", courseID))))
@@ -186,7 +204,9 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 }
 
 func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, enrollmentID, courseID int64) {
-	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
+	progress, err := performance.Measure(ctx, "learning.progress.check", func() (domain.Progress, error) {
+		return b.learning.GetProgress(ctx, studentID, enrollmentID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось восстановить прогресс вопроса", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось восстановить прогресс. Откройте урок из каталога.", keyboard(button("К курсам", "courses")))
@@ -196,7 +216,9 @@ func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, en
 		b.render(ctx, chatID, messageID, "У текущего прохождения нет сохранённой позиции. Откройте урок из списка.", keyboard(button("К курсам", "courses")))
 		return
 	}
-	nav, err := b.learning.OpenQuestion(ctx, studentID, enrollmentID, *progress.Enrollment.CurrentQuestionID)
+	nav, err := performance.Measure(ctx, "learning.question.fetch", func() (service.NavigationState, error) {
+		return b.learning.OpenQuestion(ctx, studentID, enrollmentID, *progress.Enrollment.CurrentQuestionID)
+	})
 	if err != nil {
 		b.logger.Error("не удалось загрузить сохранённый вопрос", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.render(ctx, chatID, messageID, "Сохранённый вопрос больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
@@ -223,7 +245,9 @@ func (b *Bot) renderQuestionWithNotice(ctx context.Context, chatID, studentID, m
 
 func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64, choiceEditing bool, notice string) {
 	if lesson == nil {
-		detail, err := b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID)
+		detail, err := performance.Measure(ctx, "catalog.lesson.detail", func() (domain.LessonDetail, error) {
+			return b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID)
+		})
 		if err == nil {
 			lesson = &detail.Lesson
 		}
@@ -271,7 +295,13 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 		}
 	}
 
+	chapterStarted := time.Now()
 	chapterLinks, chapterNotice := b.chapterTelegraphLinks(ctx, question.BiblePassages)
+	chapterOutcome := "success"
+	if chapterNotice != "" {
+		chapterOutcome = "partial"
+	}
+	performance.RecordOutcome(ctx, "bible.chapter_links", time.Since(chapterStarted), chapterOutcome, nil)
 	for _, chapterLink := range chapterLinks {
 		message.raw("\n\n")
 		message.raw(chapterLink)
@@ -388,7 +418,9 @@ func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
 
 func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, callback CallbackQuery) {
 	if callback.ID != "" {
-		if err := b.api.AnswerCallbackQuery(ctx, callback.ID, ""); err != nil && ctx.Err() == nil {
+		if err := performance.MeasureErr(ctx, "telegram.answer_callback_query", func() error {
+			return b.api.AnswerCallbackQuery(ctx, callback.ID, "")
+		}); err != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось подтвердить callback Telegram", "error", err)
 		}
 	}
@@ -482,7 +514,9 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 }
 
 func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, enrollmentID int64) {
-	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
+	progress, err := performance.Measure(ctx, "learning.progress.check", func() (domain.Progress, error) {
+		return b.learning.GetProgress(ctx, studentID, enrollmentID)
+	})
 	if err != nil {
 		b.logger.Warn("не удалось проверить прогресс перед завершением урока", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
@@ -500,7 +534,9 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 		b.render(ctx, chatID, messageID, "Сначала сохраните ответы на все вопросы урока.", keyboard(button("К курсам", "courses")))
 		return
 	}
-	completed, err := b.learning.CompleteLesson(ctx, studentID, enrollmentID)
+	completed, err := performance.Measure(ctx, "learning.lesson.complete", func() (domain.Enrollment, error) {
+		return b.learning.CompleteLesson(ctx, studentID, enrollmentID)
+	})
 	if err != nil {
 		b.logger.Warn("не удалось завершить урок", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось завершить урок. Попробуйте ещё раз.", keyboard(button("Повторить завершение", fmt.Sprintf("lesson:finish:%d", enrollmentID)), button("К курсам", "courses")))
@@ -513,14 +549,18 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 	}
 	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
 	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Написать куратору", "chat:start")}}
-	if detail, detailErr := b.catalog.GetLessonDetail(ctx, completed.LessonID); detailErr == nil && detail.Lesson.CourseID > 0 {
+	if detail, detailErr := performance.Measure(ctx, "catalog.lesson.detail", func() (domain.LessonDetail, error) {
+		return b.catalog.GetLessonDetail(ctx, completed.LessonID)
+	}); detailErr == nil && detail.Lesson.CourseID > 0 {
 		rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", detail.Lesson.CourseID))}}, rows...)
 	}
 	b.render(ctx, chatID, messageID, text, markup(rows))
 }
 
 func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID, courseID int64, direction string) {
-	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
+	progress, err := performance.Measure(ctx, "learning.progress.check", func() (domain.Progress, error) {
+		return b.learning.GetProgress(ctx, studentID, enrollmentID)
+	})
 	if err != nil {
 		b.logger.Warn("callback с недоступным прохождением", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
@@ -538,9 +578,13 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 
 	var state service.NavigationState
 	if direction == "prev" {
-		state, err = b.learning.PreviousQuestion(ctx, studentID, enrollmentID)
+		state, err = performance.Measure(ctx, "learning.question.transition", func() (service.NavigationState, error) {
+			return b.learning.PreviousQuestion(ctx, studentID, enrollmentID)
+		})
 	} else {
-		state, err = b.learning.NextQuestion(ctx, studentID, enrollmentID)
+		state, err = performance.Measure(ctx, "learning.question.transition", func() (service.NavigationState, error) {
+			return b.learning.NextQuestion(ctx, studentID, enrollmentID)
+		})
 	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNoPreviousQuestion) || errors.Is(err, domain.ErrNoNextQuestion) {
@@ -560,7 +604,9 @@ func (b *Bot) showStaleCallback(ctx context.Context, chatID, studentID, messageI
 
 func (b *Bot) render(ctx context.Context, chatID, messageID int64, text string, replyMarkup *InlineKeyboardMarkup) {
 	if messageID <= 0 {
-		sentID, err := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		sentID, err := performance.Measure(ctx, "telegram.send_message", func() (int64, error) {
+			return b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		})
 		if err != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить экран Telegram", "chat_id", chatID, "error", err)
 		} else if err == nil {
@@ -568,7 +614,9 @@ func (b *Bot) render(ctx context.Context, chatID, messageID int64, text string, 
 		}
 		return
 	}
-	if err := b.api.EditMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil {
+	if err := performance.MeasureErr(ctx, "telegram.edit_message_text", func() error {
+		return b.api.EditMessageText(ctx, chatID, messageID, text, replyMarkup)
+	}); err == nil {
 		b.rememberMainMessage(chatID, messageID)
 		return
 	} else if isMessageNotModified(err) {
@@ -576,7 +624,9 @@ func (b *Bot) render(ctx context.Context, chatID, messageID int64, text string, 
 		return
 	} else if ctx.Err() == nil {
 		b.logger.Warn("не удалось изменить основное сообщение Telegram; создаём новое", "chat_id", chatID, "message_id", messageID, "error", err)
-		sentID, sendErr := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		sentID, sendErr := performance.Measure(ctx, "telegram.send_message", func() (int64, error) {
+			return b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		})
 		if sendErr != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить новое основное сообщение Telegram", "chat_id", chatID, "error", sendErr)
 		} else if sendErr == nil {
@@ -593,7 +643,9 @@ func (b *Bot) renderHTML(ctx context.Context, chatID, messageID int64, text stri
 		return
 	}
 	if messageID <= 0 {
-		sentID, err := api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		sentID, err := performance.Measure(ctx, "telegram.send_message", func() (int64, error) {
+			return api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		})
 		if err != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить HTML-экран Telegram", "chat_id", chatID, "error", err)
 		} else if err == nil {
@@ -601,7 +653,9 @@ func (b *Bot) renderHTML(ctx context.Context, chatID, messageID int64, text stri
 		}
 		return
 	}
-	if err := api.EditHTMLMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil {
+	if err := performance.MeasureErr(ctx, "telegram.edit_message_text", func() error {
+		return api.EditHTMLMessageText(ctx, chatID, messageID, text, replyMarkup)
+	}); err == nil {
 		b.rememberMainMessage(chatID, messageID)
 		return
 	} else if isMessageNotModified(err) {
@@ -609,7 +663,9 @@ func (b *Bot) renderHTML(ctx context.Context, chatID, messageID int64, text stri
 		return
 	} else if ctx.Err() == nil {
 		b.logger.Warn("не удалось изменить HTML-сообщение Telegram; создаём новое", "chat_id", chatID, "message_id", messageID, "error", err)
-		sentID, sendErr := api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		sentID, sendErr := performance.Measure(ctx, "telegram.send_message", func() (int64, error) {
+			return api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
+		})
 		if sendErr != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось отправить новое HTML-сообщение Telegram", "chat_id", chatID, "error", sendErr)
 		} else if sendErr == nil {

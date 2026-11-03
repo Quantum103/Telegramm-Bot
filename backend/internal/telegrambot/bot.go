@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/performance"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -304,6 +306,7 @@ type Bot struct {
 	conversations    StudentConversationAPI
 	staffTelegram    StaffTelegramBotAPI
 	studentReferrals StudentReferralAssigner
+	performancePool  *pgxpool.Pool
 
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
@@ -357,6 +360,31 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
 	}
 }
+// SetPerformancePool enables lightweight pool-state snapshots in update summaries.
+func (b *Bot) SetPerformancePool(pool *pgxpool.Pool) {
+	b.performancePool = pool
+}
+
+func (b *Bot) postgresPoolStats() map[string]any {
+	if b.performancePool == nil {
+		return nil
+	}
+	stats := b.performancePool.Stat()
+	return map[string]any{
+		"total_conns": stats.TotalConns(),
+		"acquired_conns": stats.AcquiredConns(),
+		"idle_conns": stats.IdleConns(),
+		"constructing_conns": stats.ConstructingConns(),
+		"max_conns": stats.MaxConns(),
+		"empty_acquire_count": stats.EmptyAcquireCount(),
+		"canceled_acquire_count": stats.CanceledAcquireCount(),
+		"acquire_count": stats.AcquireCount(),
+		"acquire_duration_ms": float64(stats.AcquireDuration()) / float64(time.Millisecond),
+		"empty_acquire_wait_time_ms": float64(stats.EmptyAcquireWaitTime()) / float64(time.Millisecond),
+		"new_connections_count": stats.NewConnsCount(),
+	}
+}
+
 func (b *Bot) Run(ctx context.Context) error {
 	me, err := b.waitForAPI(ctx)
 	if err != nil {
@@ -370,15 +398,21 @@ func (b *Bot) Run(ctx context.Context) error {
 	var offset int64
 	backoff := time.Second
 	for {
+		pollStarted := time.Now()
 		updates, err := b.api.GetUpdates(ctx, offset, longPollTimeout)
+		pollDuration := time.Since(pollStarted)
 		if err != nil {
+			if ctx.Err() == nil {
+				b.logger.Warn("ошибка получения обновлений Telegram; будет повторная попытка",
+					"operation", "telegram.get_updates", "duration_ms", float64(pollDuration)/float64(time.Millisecond),
+					"result", "error", "error", err)
+			}
 			if ctx.Err() != nil {
 				return nil
 			}
 			if isFatalAPIError(err) {
 				return fmt.Errorf("long polling Telegram остановлен: %w", err)
 			}
-			b.logger.Warn("ошибка получения обновлений Telegram; будет повторная попытка", "error", err)
 			if !wait(ctx, backoff) {
 				return nil
 			}
@@ -387,6 +421,9 @@ func (b *Bot) Run(ctx context.Context) error {
 		}
 
 		backoff = time.Second
+		b.logger.Info("получены обновления Telegram",
+			"operation", "telegram.get_updates", "duration_ms", float64(pollDuration)/float64(time.Millisecond),
+			"result", "ok", "updates_count", len(updates), "long_poll_timeout_seconds", longPollTimeout)
 		for _, update := range updates {
 			if update.UpdateID < offset {
 				continue
@@ -446,6 +483,34 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 }
 
 func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
+	tracker := performance.NewTracker()
+	ctx = performance.WithTracker(ctx, tracker)
+	started := time.Now()
+	handled := b.handleUpdateTracked(ctx, update)
+	sql := tracker.SQL()
+	result := "ok"
+	if !handled {
+		result = "retry"
+	}
+	kind := "other"
+	if update.CallbackQuery != nil {
+		kind = "callback"
+	} else if update.Message != nil {
+		kind = "message"
+		if fields := strings.Fields(update.Message.Text); len(fields) > 0 && strings.HasPrefix(fields[0], "/") {
+			kind = "command"
+		}
+	}
+	b.logger.Info("производительность Telegram update",
+		"operation", "telegram.update.process", "update_id", update.UpdateID,
+		"update_kind", kind, "duration_ms", float64(time.Since(started))/float64(time.Millisecond),
+		"result", result, "sql_query_count", sql.Count, "sql_duration_ms", sql.DurationMS,
+		"sql_by_command", sql.ByCommand, "stages", tracker.Stages(),
+		"postgres_pool", b.postgresPoolStats())
+	return handled
+}
+
+func (b *Bot) handleUpdateTracked(ctx context.Context, update Update) bool {
 	if update.CallbackQuery != nil {
 		b.handleCallbackWithUpdateID(ctx, update.UpdateID, *update.CallbackQuery)
 		return true
@@ -729,14 +794,18 @@ func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code st
 }
 
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
-	return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
-		TelegramID: user.ID, DisplayName: displayName(user),
-		TelegramUsername: optionalString(user.Username), PreferredName: optionalString(user.FirstName),
+	return performance.Measure(ctx, "student.ensure", func() (domain.Student, error) {
+		return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
+			TelegramID: user.ID, DisplayName: displayName(user),
+			TelegramUsername: optionalString(user.Username), PreferredName: optionalString(user.FirstName),
+		})
 	})
 }
 
 func (b *Bot) send(ctx context.Context, chatID int64, text string) {
-	if err := b.api.SendMessage(ctx, chatID, text); err != nil && ctx.Err() == nil {
+	if err := performance.MeasureErr(ctx, "telegram.send_message", func() error {
+		return b.api.SendMessage(ctx, chatID, text)
+	}); err != nil && ctx.Err() == nil {
 		b.logger.Warn("не удалось отправить сообщение Telegram", "chat_id", chatID, "error", err)
 	}
 }
