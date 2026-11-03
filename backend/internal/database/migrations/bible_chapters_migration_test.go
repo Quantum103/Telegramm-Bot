@@ -45,3 +45,37 @@ func TestBibleChaptersMigrationDefinesStorage(t *testing.T) {
 		t.Fatal("down-миграция не удаляет обе таблицы в корректном порядке")
 	}
 }
+
+func TestTelegraphChapterJobsMigrationDefinesLeasesAndDeduplication(t *testing.T) {
+	directory := filepath.Join("..", "..", "..", "db", "migrations")
+	up, err := os.ReadFile(filepath.Join(directory, "000015_bible_chapter_telegraph_jobs.up.sql"))
+	if err != nil {
+		t.Fatalf("прочитать up-миграцию очереди: %v", err)
+	}
+	down, err := os.ReadFile(filepath.Join(directory, "000015_bible_chapter_telegraph_jobs.down.sql"))
+	if err != nil {
+		t.Fatalf("прочитать down-миграцию очереди: %v", err)
+	}
+
+	required := []string{
+		"CREATE TABLE bible_chapter_telegraph_jobs",
+		"UNIQUE (translation_code, book_id, chapter_number)",
+		"status IN ('queued', 'processing', 'completed')",
+		"available_at TIMESTAMPTZ NOT NULL",
+		"lease_until TIMESTAMPTZ",
+		"lease_token TEXT",
+		"last_error TEXT",
+		"bible_chapter_telegraph_jobs_ready_idx",
+		"WHERE status = 'queued'",
+		"bible_chapter_telegraph_jobs_lease_idx",
+		"WHERE status = 'processing'",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(string(up), fragment) {
+			t.Errorf("up-миграция очереди не содержит %q", fragment)
+		}
+	}
+	if !strings.Contains(string(down), "DROP TABLE IF EXISTS bible_chapter_telegraph_jobs") {
+		t.Fatal("down-миграция не удаляет таблицу очереди")
+	}
+}

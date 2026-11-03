@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -315,7 +314,7 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 	}
 }
 
-func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
+func TestTelegraphLinkStoreUsesUniqueDigestKeyAcrossRepositoryInstances(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -342,68 +341,42 @@ func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
 			DELETE FROM bible_chapters
 			WHERE translation_code = $1 AND book_id = $2 AND chapter_number = $3
 		`, translationCode, bookID, chapterNumber); err != nil {
-			t.Errorf("очистить тестовую главу и ссылку Telegraph: %v", err)
+			t.Errorf("очистить тестовую главу и Telegraph-ссылку: %v", err)
 		}
 	})
 
 	chapter := domain.BibleChapter{
-		TranslationCode: translationCode,
-		BookID:          bookID,
-		BookName:        "Бытие",
-		ChapterNumber:   chapterNumber,
-		Verses:          []domain.BibleVerse{{Number: 1, Text: "Тестовый стих."}},
-		SourceProvider:  "midvash",
-		SourceVersion:   "synodal",
-		ContentSHA256:   contentSHA256,
-		FetchedAt:       time.Now().UTC(),
+		TranslationCode: translationCode, BookID: bookID, BookName: "Бытие",
+		ChapterNumber:  chapterNumber,
+		Verses:         []domain.BibleVerse{{Number: 1, Text: "Тестовый стих."}},
+		SourceProvider: "midvash", SourceVersion: "synodal",
+		ContentSHA256: contentSHA256, FetchedAt: time.Now().UTC(),
 	}
 	chapterRepository := NewBibleChapterRepository(pool)
 	if err := chapterRepository.SaveChapter(ctx, chapter); err != nil {
 		t.Fatalf("сохранить тестовую главу: %v", err)
 	}
 
-	var createCalls atomic.Int32
 	const requestCount = 12
-	type publishResult struct {
-		link domain.TelegraphChapterLink
-		err  error
-	}
-	results := make(chan publishResult, requestCount)
 	var wait sync.WaitGroup
-
-	for index := 0; index < requestCount; index++ {
+	errorsFound := make(chan error, requestCount)
+	for range requestCount {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			link, err := NewBibleChapterRepository(pool).GetOrCreateTelegraphLink(
-				ctx,
-				translationCode,
-				bookID,
-				chapterNumber,
-				contentSHA256,
-				func(context.Context) (string, error) {
-					createCalls.Add(1)
-					time.Sleep(25 * time.Millisecond)
-					return pageURL, nil
-				},
-			)
-			results <- publishResult{link: link, err: err}
+			link := domain.TelegraphChapterLink{
+				TranslationCode: translationCode, BookID: bookID,
+				ChapterNumber: chapterNumber, ContentSHA256: contentSHA256, PageURL: pageURL,
+			}
+			errorsFound <- NewBibleChapterRepository(pool).SaveTelegraphLink(ctx, link)
 		}()
 	}
-
 	wait.Wait()
-	close(results)
-	for result := range results {
-		if result.err != nil {
-			t.Errorf("GetOrCreateTelegraphLink(): %v", result.err)
-			continue
+	close(errorsFound)
+	for err := range errorsFound {
+		if err != nil {
+			t.Errorf("SaveTelegraphLink(): %v", err)
 		}
-		if result.link.PageURL != pageURL || result.link.ContentSHA256 != contentSHA256 {
-			t.Errorf("получена неверная ссылка Telegraph: %+v", result.link)
-		}
-	}
-	if got := createCalls.Load(); got != 1 {
-		t.Fatalf("Telegraph page creation callback calls = %d, want exactly 1", got)
 	}
 
 	var linkCount int
@@ -417,6 +390,15 @@ func TestTelegraphLinkCreationIsSerializedAcrossRepositoryCalls(t *testing.T) {
 	}
 	if linkCount != 1 {
 		t.Fatalf("сохранено ссылок Telegraph = %d, want exactly 1", linkCount)
+	}
+	link, err := NewBibleChapterRepository(pool).GetTelegraphLink(
+		ctx, translationCode, bookID, chapterNumber, contentSHA256,
+	)
+	if err != nil {
+		t.Fatalf("прочитать каноническую ссылку Telegraph: %v", err)
+	}
+	if link.PageURL != pageURL {
+		t.Fatalf("сохранённый URL = %q, want %q", link.PageURL, pageURL)
 	}
 }
 
@@ -478,34 +460,22 @@ func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing
 		t.Fatalf("сохранённая глава отличается от исходной: %+v", storedChapter)
 	}
 
-	var pageCreations atomic.Int32
-	firstLink, err := NewBibleChapterRepository(pool).GetOrCreateTelegraphLink(
-		ctx, translationCode, bookID, chapterNumber, contentSHA256,
-		func(context.Context) (string, error) {
-			pageCreations.Add(1)
-			return pageURL, nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("создать и сохранить Telegraph-ссылку: %v", err)
+	linkToSave := domain.TelegraphChapterLink{
+		TranslationCode: translationCode, BookID: bookID,
+		ChapterNumber: chapterNumber, ContentSHA256: contentSHA256, PageURL: pageURL,
+	}
+	if err := firstRepository.SaveTelegraphLink(ctx, linkToSave); err != nil {
+		t.Fatalf("сохранить Telegraph-ссылку: %v", err)
 	}
 
-	// Ещё один новый экземпляр должен получить сохранённый URL без повторного createPage.
-	restartedLink, err := NewBibleChapterRepository(pool).GetOrCreateTelegraphLink(
+	// Новый экземпляр репозитория должен получить сохранённый URL из PostgreSQL.
+	restartedLink, err := NewBibleChapterRepository(pool).GetTelegraphLink(
 		ctx, translationCode, bookID, chapterNumber, contentSHA256,
-		func(context.Context) (string, error) {
-			pageCreations.Add(1)
-			return "", errors.New("createPage не должен вызываться для сохранённой ссылки")
-		},
 	)
 	if err != nil {
 		t.Fatalf("получить Telegraph-ссылку после пересоздания репозитория: %v", err)
 	}
-	if firstLink.PageURL != pageURL || restartedLink.PageURL != pageURL ||
-		firstLink.ContentSHA256 != contentSHA256 || restartedLink.ContentSHA256 != contentSHA256 {
-		t.Fatalf("ссылки после пересоздания отличаются: first=%+v restarted=%+v", firstLink, restartedLink)
-	}
-	if got := pageCreations.Load(); got != 1 {
-		t.Fatalf("количество вызовов createPage = %d, want 1", got)
+	if restartedLink.PageURL != pageURL || restartedLink.ContentSHA256 != contentSHA256 {
+		t.Fatalf("ссылка после пересоздания отличается: %+v", restartedLink)
 	}
 }

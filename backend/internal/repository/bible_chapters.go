@@ -2,14 +2,17 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -216,83 +219,255 @@ func (r *BibleChapterRepository) SaveTelegraphLink(
 	return err
 }
 
-// GetOrCreateTelegraphLink возвращает сохранённую ссылку или создаёт и сохраняет её.
-// Транзакционная advisory-блокировка защищает публикацию от дублей между экземплярами backend.
-func (r *BibleChapterRepository) GetOrCreateTelegraphLink(
+// EnqueueTelegraphChapter schedules one chapter for preparation. A completed job is
+// re-opened when a newly published lesson references it; queued/processing work is
+// left untouched so concurrent publication cannot reset an active lease.
+func (r *BibleChapterRepository) EnqueueTelegraphChapter(
 	ctx context.Context,
 	translationCode string,
 	bookID, chapterNumber int,
-	contentSHA256 string,
-	createPage func(context.Context) (string, error),
-) (domain.TelegraphChapterLink, error) {
-	if r.pool == nil || createPage == nil {
-		return domain.TelegraphChapterLink{}, ErrInvalidInput
+) error {
+	if r.pool == nil {
+		return ErrInvalidInput
 	}
-	translationCode, contentSHA256, err := normalizeTelegraphLinkKey(
-		translationCode, bookID, chapterNumber, contentSHA256,
-	)
+	translationCode, err := normalizeBibleChapterKey(translationCode, bookID, chapterNumber)
 	if err != nil {
-		return domain.TelegraphChapterLink{}, err
+		return err
 	}
-
-	tx, err := r.pool.Begin(ctx)
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO bible_chapter_telegraph_jobs (translation_code, book_id, chapter_number)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (translation_code, book_id, chapter_number) DO UPDATE
+		SET status = 'queued',
+		    attempts = 0,
+		    available_at = now(),
+		    lease_until = NULL,
+		    lease_token = NULL,
+		    last_error = NULL,
+		    completed_at = NULL,
+		    updated_at = now()
+		WHERE bible_chapter_telegraph_jobs.status = 'completed'
+	`, translationCode, bookID, chapterNumber)
 	if err != nil {
-		return domain.TelegraphChapterLink{}, mapDatabaseError("начать транзакцию публикации Telegraph", err)
+		return mapDatabaseError("поставить главу в очередь подготовки Telegraph", err)
 	}
-	defer func() {
-		_ = tx.Rollback(context.Background())
-	}()
+	return nil
+}
 
-	lockKey := fmt.Sprintf("%s:%d:%d:%s", translationCode, bookID, chapterNumber, contentSHA256)
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lockKey); err != nil {
-		return domain.TelegraphChapterLink{}, mapDatabaseError("заблокировать публикацию главы Telegraph", err)
+// EnqueuePublishedTelegraphChapters backfills references from already-published
+// lesson versions. Existing queue rows, including completed rows, are not reset.
+func (r *BibleChapterRepository) EnqueuePublishedTelegraphChapters(ctx context.Context) error {
+	if r.pool == nil {
+		return ErrInvalidInput
 	}
-
-	lockedRepository := &BibleChapterRepository{db: tx}
-	existing, err := lockedRepository.GetTelegraphLink(
-		ctx, translationCode, bookID, chapterNumber, contentSHA256,
-	)
-	if err == nil {
-		if err := tx.Commit(ctx); err != nil {
-			return domain.TelegraphChapterLink{}, mapDatabaseError("завершить чтение ссылки Telegraph", err)
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT bp.book_name, bp.chapter, COALESCE(bp.translation_name, '')
+		FROM lesson_versions lv
+		JOIN lesson_questions q ON q.lesson_version_id = lv.id
+		JOIN question_bible_passages qbp ON qbp.question_id = q.id
+		JOIN bible_passages bp ON bp.id = qbp.passage_id
+		WHERE lv.status IN ('published', 'archived')
+		ORDER BY bp.book_name, bp.chapter
+	`)
+	if err != nil {
+		return mapDatabaseError("найти опубликованные главы для подготовки Telegraph", err)
+	}
+	type chapterKey struct {
+		bookID  int
+		chapter int
+	}
+	keys := make([]chapterKey, 0)
+	seen := make(map[chapterKey]struct{})
+	for rows.Next() {
+		var bookName, translation string
+		var chapter int
+		if err := rows.Scan(&bookName, &chapter, &translation); err != nil {
+			rows.Close()
+			return mapDatabaseError("прочитать опубликованную ссылку на главу", err)
 		}
-		return existing, nil
+		if chapter <= 0 || !bibletext.IsSynodalTranslation(translation) {
+			continue
+		}
+		bookID, ok := bibletext.BookID(bookName)
+		if !ok {
+			continue
+		}
+		key := chapterKey{bookID: bookID, chapter: chapter}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
 	}
-	if !errors.Is(err, ErrNotFound) {
-		return domain.TelegraphChapterLink{}, err
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return mapDatabaseError("обойти опубликованные ссылки на главы", err)
+	}
+	rows.Close()
+
+	for _, key := range keys {
+		_, err := r.pool.Exec(ctx, `
+			INSERT INTO bible_chapter_telegraph_jobs (translation_code, book_id, chapter_number)
+			VALUES ('synodal', $1, $2)
+			ON CONFLICT (translation_code, book_id, chapter_number) DO NOTHING
+		`, key.bookID, key.chapter)
+		if err != nil {
+			return mapDatabaseError("добавить опубликованную главу в очередь Telegraph", err)
+		}
+	}
+	return nil
+}
+
+// ClaimTelegraphChapterJob atomically leases one available job. The short SQL
+// statement commits before any external HTTP request is made.
+func (r *BibleChapterRepository) ClaimTelegraphChapterJob(
+	ctx context.Context,
+	leaseDuration time.Duration,
+) (domain.TelegraphChapterJob, error) {
+	if r.pool == nil || leaseDuration <= 0 {
+		return domain.TelegraphChapterJob{}, ErrInvalidInput
+	}
+	leaseMilliseconds := leaseDuration.Milliseconds()
+	if leaseMilliseconds < 1 {
+		leaseMilliseconds = 1
 	}
 
-	var chapterExists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM bible_chapters
-			WHERE translation_code = $1 AND book_id = $2 AND chapter_number = $3
-		)
-	`, translationCode, bookID, chapterNumber).Scan(&chapterExists); err != nil {
-		return domain.TelegraphChapterLink{}, mapDatabaseError("проверить наличие главы перед публикацией", err)
+	var tokenBytes [16]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		return domain.TelegraphChapterJob{}, fmt.Errorf("создать токен аренды задания Telegraph: %w", err)
 	}
-	if !chapterExists {
-		return domain.TelegraphChapterLink{}, ErrNotFound
-	}
+	leaseToken := hex.EncodeToString(tokenBytes[:])
 
-	pageURL, err := createPage(ctx)
+	// This advisory lock is held only while counting and leasing a row. The
+	// transaction is committed before the worker starts any external request.
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return domain.TelegraphChapterLink{}, err
+		return domain.TelegraphChapterJob{}, mapDatabaseError("начать получение задания подготовки Telegraph", err)
 	}
-	link := domain.TelegraphChapterLink{
-		TranslationCode: translationCode,
-		BookID:          bookID,
-		ChapterNumber:   chapterNumber,
-		ContentSHA256:   contentSHA256,
-		PageURL:         pageURL,
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	const globalClaimLock = "bible_chapter_telegraph_jobs:global_concurrency"
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", globalClaimLock); err != nil {
+		return domain.TelegraphChapterJob{}, mapDatabaseError("сериализовать получение задания Telegraph", err)
 	}
-	if err := lockedRepository.SaveTelegraphLink(ctx, link); err != nil {
-		return domain.TelegraphChapterLink{}, err
+
+	var activeJobs int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)::INTEGER
+		FROM bible_chapter_telegraph_jobs
+		WHERE status = 'processing' AND lease_until > now()
+	`).Scan(&activeJobs); err != nil {
+		return domain.TelegraphChapterJob{}, mapDatabaseError("проверить число активных заданий Telegraph", err)
+	}
+	if activeJobs >= 2 {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.TelegraphChapterJob{}, mapDatabaseError("завершить проверку лимита worker Telegraph", err)
+		}
+		return domain.TelegraphChapterJob{}, ErrNotFound
+	}
+
+	var job domain.TelegraphChapterJob
+	var bookID, chapterNumber int16
+	err = tx.QueryRow(ctx, `
+		UPDATE bible_chapter_telegraph_jobs AS job
+		SET status = 'processing',
+		    attempts = job.attempts + 1,
+		    lease_until = now() + ($1::double precision * INTERVAL '1 millisecond'),
+		    lease_token = $2,
+		    updated_at = now()
+		WHERE job.id = (
+		    SELECT candidate.id
+		    FROM bible_chapter_telegraph_jobs AS candidate
+		    WHERE (
+		        (candidate.status = 'queued' AND candidate.available_at <= now())
+		        OR
+		        (candidate.status = 'processing' AND candidate.lease_until <= now())
+		    )
+		    ORDER BY candidate.available_at, candidate.id
+		    LIMIT 1
+		    FOR UPDATE SKIP LOCKED
+		)
+		RETURNING job.id, job.translation_code, job.book_id, job.chapter_number,
+		          job.attempts, job.lease_token
+	`, leaseMilliseconds, leaseToken).Scan(
+		&job.ID, &job.TranslationCode, &bookID, &chapterNumber, &job.Attempts, &job.LeaseToken,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return domain.TelegraphChapterJob{}, mapDatabaseError("завершить пустое получение задания Telegraph", commitErr)
+			}
+			return domain.TelegraphChapterJob{}, ErrNotFound
+		}
+		return domain.TelegraphChapterJob{}, mapDatabaseError("забрать задание подготовки Telegraph", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return domain.TelegraphChapterLink{}, mapDatabaseError("сохранить ссылку Telegraph", err)
+		return domain.TelegraphChapterJob{}, mapDatabaseError("зафиксировать lease задания Telegraph", err)
 	}
-	return link, nil
+	job.BookID = int(bookID)
+	job.ChapterNumber = int(chapterNumber)
+	return job, nil
+}
+
+// CompleteTelegraphChapterJob acknowledges only the current lease owner.
+func (r *BibleChapterRepository) CompleteTelegraphChapterJob(ctx context.Context, job domain.TelegraphChapterJob) error {
+	if r.pool == nil || job.ID <= 0 || strings.TrimSpace(job.LeaseToken) == "" {
+		return ErrInvalidInput
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bible_chapter_telegraph_jobs
+		SET status = 'completed',
+		    lease_until = NULL,
+		    lease_token = NULL,
+		    last_error = NULL,
+		    completed_at = now(),
+		    updated_at = now()
+		WHERE id = $1 AND status = 'processing' AND lease_token = $2
+	`, job.ID, job.LeaseToken)
+	if err != nil {
+		return mapDatabaseError("завершить задание подготовки Telegraph", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RetryTelegraphChapterJob reschedules a failed job without retaining its lease.
+func (r *BibleChapterRepository) RetryTelegraphChapterJob(
+	ctx context.Context,
+	job domain.TelegraphChapterJob,
+	delay time.Duration,
+	cause error,
+) error {
+	if r.pool == nil || job.ID <= 0 || strings.TrimSpace(job.LeaseToken) == "" || delay < 0 {
+		return ErrInvalidInput
+	}
+	lastError := "неизвестная ошибка"
+	if cause != nil {
+		lastError = strings.TrimSpace(cause.Error())
+	}
+	if runes := []rune(lastError); len(runes) > 1000 {
+		lastError = string(runes[:1000])
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bible_chapter_telegraph_jobs
+		SET status = 'queued',
+		    available_at = now() + ($3::double precision * INTERVAL '1 millisecond'),
+		    lease_until = NULL,
+		    lease_token = NULL,
+		    last_error = $4,
+		    completed_at = NULL,
+		    updated_at = now()
+		WHERE id = $1 AND status = 'processing' AND lease_token = $2
+	`, job.ID, job.LeaseToken, delay.Milliseconds(), lastError)
+	if err != nil {
+		return mapDatabaseError("повторно поставить задание подготовки Telegraph", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func scanBibleChapter(row pgx.Row) (domain.BibleChapter, error) {

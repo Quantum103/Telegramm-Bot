@@ -41,14 +41,9 @@ type BibleChapterReader interface {
 }
 
 type TelegraphChapterLinkStore interface {
-	GetOrCreateTelegraphLink(
-		context.Context,
-		string,
-		int,
-		int,
-		string,
-		func(context.Context) (string, error),
-	) (domain.TelegraphChapterLink, error)
+	GetChapter(context.Context, string, int, int) (domain.BibleChapter, error)
+	GetTelegraphLink(context.Context, string, int, int, string) (domain.TelegraphChapterLink, error)
+	SaveTelegraphLink(context.Context, domain.TelegraphChapterLink) error
 }
 
 type TelegraphPublisher struct {
@@ -95,21 +90,25 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	if p.chapters == nil || p.linkStore == nil {
 		return "", errors.New("сервис глав Библии или PostgreSQL-кэш Telegraph не настроен")
 	}
-	if reference.BookID < 1 || reference.BookID > 66 || reference.Chapter < 1 {
-		return "", bibletext.ErrInvalidChapter
+	if err := validateChapterReference(reference); err != nil {
+		return "", err
 	}
 
-	translation := strings.ToLower(strings.TrimSpace(reference.Translation))
-	switch translation {
-	case "", "syn", "synodal", "синодальный", "синодальный перевод":
-	default:
-		return "", fmt.Errorf("%w: поддерживается только Синодальный перевод", bibletext.ErrInvalidChapter)
-	}
-
+	// PublishChapter вызывается только фоновым worker. Получение главы и HTTP
+	// публикация выполняются вне транзакций PostgreSQL и без advisory lock.
 	chapter, err := p.chapters.GetChapter(ctx, reference.BookID, reference.Chapter)
 	if err != nil {
 		return "", err
 	}
+	// A local fallback chapter is not persisted and cannot safely back a durable URL.
+	storedChapter, err := p.linkStore.GetChapter(ctx, "synodal", reference.BookID, reference.Chapter)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return "", fmt.Errorf("%w: глава ещё не сохранена в PostgreSQL", service.ErrBibleChapterUnavailable)
+		}
+		return "", fmt.Errorf("проверить сохранённую главу перед публикацией Telegraph: %w", err)
+	}
+	chapter = bibleChapterToTextChapter(storedChapter)
 	if chapter.Chapter != reference.Chapter || strings.TrimSpace(chapter.Book) == "" {
 		return "", fmt.Errorf("%w: книга или номер главы не совпадает со ссылкой вопроса", bibletext.ErrInvalidChapter)
 	}
@@ -118,36 +117,122 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	if err != nil {
 		return "", err
 	}
-	encodedContent, err := json.Marshal(content)
+	contentSHA256, err := telegraphContentSHA256(content)
 	if err != nil {
-		return "", fmt.Errorf("подготовить содержимое Telegraph для вычисления SHA256: %w", err)
+		return "", err
 	}
-	digest := sha256.Sum256(encodedContent)
-	contentSHA256 := hex.EncodeToString(digest[:])
 
-	// Репозиторий проверяет ссылку под транзакционной advisory-блокировкой.
-	// Разные главы могут публиковаться параллельно, одинаковая версия главы — только один раз.
-	title := fmt.Sprintf("%s — глава %d", chapter.Book, chapter.Chapter)
-	link, err := p.linkStore.GetOrCreateTelegraphLink(
-		ctx,
-		"synodal",
-		reference.BookID,
-		reference.Chapter,
-		contentSHA256,
-		func(createCtx context.Context) (string, error) {
-			return p.createPage(createCtx, title, content)
-		},
+	existing, err := p.linkStore.GetTelegraphLink(
+		ctx, "synodal", reference.BookID, reference.Chapter, contentSHA256,
 	)
+	if err == nil {
+		if !isTelegraphPageURL(existing.PageURL) {
+			return "", errors.New("PostgreSQL содержит некорректную ссылку на статью Telegraph")
+		}
+		return existing.PageURL, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return "", fmt.Errorf("проверить готовую ссылку Telegraph: %w", err)
+	}
+
+	title := fmt.Sprintf("%s — глава %d", chapter.Book, chapter.Chapter)
+	pageURL, err := p.createPage(ctx, title, content)
 	if err != nil {
+		return "", err
+	}
+	link := domain.TelegraphChapterLink{
+		TranslationCode: "synodal",
+		BookID:          reference.BookID,
+		ChapterNumber:   reference.Chapter,
+		ContentSHA256:   contentSHA256,
+		PageURL:         pageURL,
+	}
+	// UNIQUE (translation, book, chapter, content_sha256) оставляет одну
+	// каноническую ссылку. Сохранение выполняется отдельным коротким SQL-запросом.
+	if err := p.linkStore.SaveTelegraphLink(ctx, link); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return "", fmt.Errorf("%w: глава ещё не сохранена в PostgreSQL", service.ErrBibleChapterUnavailable)
 		}
-		return "", fmt.Errorf("получить или создать ссылку Telegraph: %w", err)
+		return "", fmt.Errorf("сохранить готовую ссылку Telegraph: %w", err)
+	}
+	saved, err := p.linkStore.GetTelegraphLink(
+		ctx, "synodal", reference.BookID, reference.Chapter, contentSHA256,
+	)
+	if err != nil {
+		return "", fmt.Errorf("прочитать сохранённую ссылку Telegraph: %w", err)
+	}
+	if !isTelegraphPageURL(saved.PageURL) {
+		return "", errors.New("PostgreSQL содержит некорректную ссылку на статью Telegraph")
+	}
+	return saved.PageURL, nil
+}
+
+// CachedChapterURL performs PostgreSQL reads only. It never fetches Bible content
+// or contacts Telegraph, so it is safe to call while rendering a Telegram screen.
+func (p *TelegraphPublisher) CachedChapterURL(ctx context.Context, reference ChapterReference) (string, error) {
+	if p == nil || p.linkStore == nil {
+		return "", domain.ErrInvalidState
+	}
+	if err := validateChapterReference(reference); err != nil {
+		return "", err
+	}
+	chapter, err := p.linkStore.GetChapter(ctx, "synodal", reference.BookID, reference.Chapter)
+	if err != nil {
+		return "", err
+	}
+	content, err := buildTelegraphChapterContent(bibleChapterToTextChapter(chapter))
+	if err != nil {
+		return "", err
+	}
+	contentSHA256, err := telegraphContentSHA256(content)
+	if err != nil {
+		return "", err
+	}
+	link, err := p.linkStore.GetTelegraphLink(
+		ctx, "synodal", reference.BookID, reference.Chapter, contentSHA256,
+	)
+	if err != nil {
+		return "", err
 	}
 	if !isTelegraphPageURL(link.PageURL) {
 		return "", errors.New("PostgreSQL содержит некорректную ссылку на статью Telegraph")
 	}
 	return link.PageURL, nil
+}
+
+func validateChapterReference(reference ChapterReference) error {
+	if reference.BookID < 1 || reference.BookID > 66 || reference.Chapter < 1 {
+		return bibletext.ErrInvalidChapter
+	}
+	translation := strings.ToLower(strings.TrimSpace(reference.Translation))
+	switch translation {
+	case "", "syn", "synodal", "синодальный", "синодальный перевод":
+		return nil
+	default:
+		return fmt.Errorf("%w: поддерживается только Синодальный перевод", bibletext.ErrInvalidChapter)
+	}
+}
+
+func bibleChapterToTextChapter(chapter domain.BibleChapter) bibletext.Chapter {
+	verses := make([]bibletext.Verse, len(chapter.Verses))
+	for index, verse := range chapter.Verses {
+		verses[index] = bibletext.Verse{Number: verse.Number, Text: verse.Text}
+	}
+	return bibletext.Chapter{
+		Book:        chapter.BookName,
+		Chapter:     chapter.ChapterNumber,
+		Translation: "Синодальный перевод",
+		Verses:      verses,
+	}
+}
+
+func telegraphContentSHA256(content []telegraphNode) (string, error) {
+	encodedContent, err := json.Marshal(content)
+	if err != nil {
+		return "", fmt.Errorf("подготовить содержимое Telegraph для вычисления SHA256: %w", err)
+	}
+	digest := sha256.Sum256(encodedContent)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func buildTelegraphChapterContent(chapter bibletext.Chapter) ([]telegraphNode, error) {
@@ -233,45 +318,52 @@ func isTelegraphPageURL(raw string) bool {
 	return host == "telegra.ph" || host == "graph.org"
 }
 
+type cachedChapterLinkReader interface {
+	CachedChapterURL(context.Context, ChapterReference) (string, error)
+}
+
 func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.BiblePassage) ([]string, string) {
 	if len(passages) == 0 {
 		return nil, ""
 	}
 	if b.chapterPublisher == nil {
-		return nil, "⚙️ Ссылка на полную главу появится после настройки TELEGRAPH_ACCESS_TOKEN."
+		return nil, "Ссылка на полную главу пока не настроена."
 	}
-
 	targets := bibleChapterTargets(passages)
 	if len(targets) == 0 {
 		return nil, "Полная глава для указанного перевода пока не подключена."
 	}
+	cachedReader, ok := b.chapterPublisher.(cachedChapterLinkReader)
+	if !ok {
+		b.logger.Error("публикатор Telegraph не поддерживает чтение готовых ссылок")
+		return nil, "Ссылка на полную главу готовится. Откройте вопрос ещё раз позже."
+	}
 
 	links := make([]string, 0, len(targets))
-	unavailableChapter := false
-	publishFailed := false
+	pending := false
+	unavailable := false
 	for _, target := range targets {
 		reference := ChapterReference{
 			BookID: target.bookID, BookName: target.bookName,
 			Chapter: target.chapter, Translation: "synodal",
 		}
-		pageURL, err := b.chapterPublisher.PublishChapter(ctx, reference)
+		pageURL, err := cachedReader.CachedChapterURL(ctx, reference)
 		if err != nil {
-			if errors.Is(err, bibletext.ErrChapterNotFound) || errors.Is(err, service.ErrBibleChapterUnavailable) {
-				unavailableChapter = true
+			if errors.Is(err, domain.ErrNotFound) {
+				pending = true
 			} else {
-				publishFailed = true
-				b.logger.Warn("не удалось создать статью полной главы в Telegraph",
+				unavailable = true
+				b.logger.Warn("не удалось прочитать готовую ссылку полной главы из PostgreSQL",
 					"book", target.bookName, "chapter", target.chapter, "error", err)
 			}
 			continue
 		}
 		if !isTelegraphPageURL(pageURL) {
-			publishFailed = true
-			b.logger.Warn("публикатор вернул ссылку не на статью Telegraph",
+			unavailable = true
+			b.logger.Warn("кэш вернул некорректную ссылку на Telegraph",
 				"book", target.bookName, "chapter", target.chapter)
 			continue
 		}
-
 		label := "📖 Прочитать всю главу"
 		if len(targets) > 1 {
 			label = fmt.Sprintf("📖 %s %d", target.bookName, target.chapter)
@@ -284,17 +376,17 @@ func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.Bible
 	}
 
 	notice := ""
-	if unavailableChapter {
-		notice = "Полная глава временно недоступна. Попробуйте снова позже."
+	if pending {
+		notice = "Ссылка на полную главу готовится. Откройте вопрос ещё раз позже."
 	}
-	if publishFailed {
+	if unavailable {
 		if notice != "" {
 			notice += " "
 		}
-		notice += "Не удалось создать статью Telegraph сейчас. Попробуйте открыть вопрос позже."
+		notice += "Сейчас не удалось получить готовую ссылку на полную главу. Попробуйте открыть вопрос позже."
 	}
 	if len(links) == 0 && notice == "" {
-		notice = "Не удалось подготовить ссылку на полную главу."
+		notice = "Ссылка на полную главу готовится. Откройте вопрос ещё раз позже."
 	}
 	return links, notice
 }
