@@ -90,7 +90,20 @@ func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, mess
 }
 
 func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lessonID, messageID int64) {
-	detail, err := b.catalog.GetLessonDetailInCourse(ctx, courseID, lessonID)
+	var lesson domain.Lesson
+	var err error
+	if metadata, ok := b.catalog.(interface {
+		GetLessonInCourse(context.Context, int64, int64) (domain.Lesson, error)
+	}); ok {
+		lesson, err = metadata.GetLessonInCourse(ctx, courseID, lessonID)
+	} else {
+		detail, detailErr := b.catalog.GetLessonDetailInCourse(ctx, courseID, lessonID)
+		err = detailErr
+		lesson = detail.Lesson
+		if lesson.QuestionCount == 0 {
+			lesson.QuestionCount = len(detail.Questions)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Этот урок недоступен в выбранном курсе. Откройте список уроков.", keyboard(
@@ -103,8 +116,8 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		b.render(ctx, chatID, messageID, "Не удалось открыть урок. Попробуйте позже.", keyboard(button("К урокам", fmt.Sprintf("lessons:%d", courseID))))
 		return
 	}
-	if len(detail.Questions) == 0 {
-		b.render(ctx, chatID, messageID, "Урок «"+truncate(detail.Lesson.Title, 150)+"» пока не содержит вопросов.", keyboard(
+	if lesson.QuestionCount == 0 {
+		b.render(ctx, chatID, messageID, "Урок «"+truncate(lesson.Title, 150)+"» пока не содержит вопросов.", keyboard(
 			button("К урокам", fmt.Sprintf("lessons:%d", courseID)),
 			button("К курсам", "courses"),
 		))
@@ -135,11 +148,11 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 			err = startErr
 		} else {
 			progress, err = courseStarter.StartLessonForCourse(
-				ctx, studentID, courseRun.Enrollment.ID, courseID, detail.Lesson.ID,
+				ctx, studentID, courseRun.Enrollment.ID, courseID, lesson.ID,
 			)
 		}
 	} else {
-		progress, err = b.learning.StartLesson(ctx, studentID, detail.Lesson.ID, "ai")
+		progress, err = b.learning.StartLesson(ctx, studentID, lesson.ID, "ai")
 	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNoCurator) {
@@ -182,10 +195,23 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 		b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Вернитесь к списку уроков и попробуйте снова.", keyboard(button("К урокам", fmt.Sprintf("lessons:%d", courseID))))
 		return
 	}
-	b.renderQuestion(ctx, chatID, studentID, messageID, state, &detail.Lesson, courseID)
+	b.renderQuestion(ctx, chatID, studentID, messageID, state, &lesson, courseID)
 }
 
 func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, enrollmentID, courseID int64) {
+	if current, ok := b.learning.(interface {
+		OpenCurrentQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
+	}); ok {
+		nav, err := current.OpenCurrentQuestion(ctx, studentID, enrollmentID, 0)
+		if err != nil {
+			b.logger.Error("не удалось восстановить сохранённый вопрос", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
+			b.render(ctx, chatID, messageID, "Сохранённый вопрос больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
+			return
+		}
+		b.renderQuestion(ctx, chatID, studentID, messageID, nav, nil, courseID)
+		return
+	}
+
 	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Error("не удалось восстановить прогресс вопроса", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
@@ -202,7 +228,7 @@ func (b *Bot) showQuestion(ctx context.Context, chatID, studentID, messageID, en
 		b.render(ctx, chatID, messageID, "Сохранённый вопрос больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
 		return
 	}
-	b.renderQuestion(ctx, chatID, studentID, messageID, nav, nil, 0)
+	b.renderQuestion(ctx, chatID, studentID, messageID, nav, nil, courseID)
 }
 
 func (b *Bot) renderQuestion(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64) {
@@ -223,8 +249,14 @@ func (b *Bot) renderQuestionWithNotice(ctx context.Context, chatID, studentID, m
 
 func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, messageID int64, state service.NavigationState, lesson *domain.Lesson, contextCourseID int64, choiceEditing bool, notice string) {
 	if lesson == nil {
-		detail, err := b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID)
-		if err == nil {
+		if metadata, ok := b.catalog.(interface {
+			GetLesson(context.Context, int64) (domain.Lesson, error)
+		}); ok {
+			value, err := metadata.GetLesson(ctx, state.Progress.Enrollment.LessonID)
+			if err == nil {
+				lesson = &value
+			}
+		} else if detail, err := b.catalog.GetLessonDetail(ctx, state.Progress.Enrollment.LessonID); err == nil {
 			lesson = &detail.Lesson
 		}
 	}
@@ -513,13 +545,49 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 	}
 	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
 	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Написать куратору", "chat:start")}}
-	if detail, detailErr := b.catalog.GetLessonDetail(ctx, completed.LessonID); detailErr == nil && detail.Lesson.CourseID > 0 {
+	if metadata, ok := b.catalog.(interface {
+		GetLesson(context.Context, int64) (domain.Lesson, error)
+	}); ok {
+		if lesson, lessonErr := metadata.GetLesson(ctx, completed.LessonID); lessonErr == nil && lesson.CourseID > 0 {
+			rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", lesson.CourseID))}}, rows...)
+		}
+	} else if detail, detailErr := b.catalog.GetLessonDetail(ctx, completed.LessonID); detailErr == nil && detail.Lesson.CourseID > 0 {
 		rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", detail.Lesson.CourseID))}}, rows...)
 	}
 	b.render(ctx, chatID, messageID, text, markup(rows))
 }
 
 func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID, courseID int64, direction string) {
+	step := 1
+	if direction == "prev" {
+		step = -1
+	}
+	if navigator, ok := b.learning.(interface {
+		NavigateQuestion(context.Context, int64, int64, int64, int) (service.NavigationState, error)
+	}); ok {
+		state, err := navigator.NavigateQuestion(ctx, studentID, enrollmentID, expectedQuestionID, step)
+		if state.StaleCallback {
+			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
+			return
+		}
+		b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: expectedQuestionID})
+		if err != nil {
+			if errors.Is(err, domain.ErrNoPreviousQuestion) || errors.Is(err, domain.ErrNoNextQuestion) {
+				if state.Question.ID > 0 {
+					b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
+				} else {
+					b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
+				}
+				return
+			}
+			b.logger.Warn("не удалось переместиться между вопросами", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
+			b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Попробуйте снова или вернитесь к каталогу.", keyboard(button("К курсам", "courses")))
+			return
+		}
+		b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
+		return
+	}
+
 	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Warn("callback с недоступным прохождением", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)

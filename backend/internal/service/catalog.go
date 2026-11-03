@@ -39,6 +39,16 @@ func (s *CatalogService) ListCourseLessons(ctx context.Context, courseID int64) 
 	return s.courses.ListPublishedLessonsByCourseID(ctx, courseID)
 }
 
+// GetLessonInCourse возвращает только метаданные опубликованного урока без вопросов.
+func (s *CatalogService) GetLessonInCourse(ctx context.Context, courseID, lessonID int64) (domain.Lesson, error) {
+	return s.courses.GetPublishedLessonInCourse(ctx, courseID, lessonID)
+}
+
+// GetLesson возвращает метаданные опубликованного урока без загрузки его содержимого.
+func (s *CatalogService) GetLesson(ctx context.Context, lessonID int64) (domain.Lesson, error) {
+	return s.courses.GetPublishedLessonByID(ctx, lessonID)
+}
+
 func (s *CatalogService) GetLessonDetailInCourse(ctx context.Context, courseID, lessonID int64) (domain.LessonDetail, error) {
 	lesson, err := s.courses.GetPublishedLessonInCourse(ctx, courseID, lessonID)
 	if err != nil {

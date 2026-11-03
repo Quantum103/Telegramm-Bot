@@ -59,10 +59,20 @@ func NewLearningService(
 }
 
 type NavigationState struct {
-	Question      domain.LessonQuestion
-	SavedAnswer   *domain.SavedAnswer
-	LatestAttempt *domain.AnswerAttempt
-	Progress      domain.Progress
+	Question       domain.LessonQuestion
+	SavedAnswer    *domain.SavedAnswer
+	LatestAttempt  *domain.AnswerAttempt
+	Progress       domain.Progress
+	StaleCallback  bool
+}
+
+type questionPositionStore interface {
+	NavigateQuestion(context.Context, int64, int64, int64, int) (domain.Progress, bool, error)
+	OpenQuestionPosition(context.Context, int64, int64, int64) (domain.Progress, error)
+}
+
+type navigationAnswerStateStore interface {
+	GetNavigationAnswerState(context.Context, int64, int64, int64) (*domain.SavedAnswer, *domain.AnswerAttempt, error)
 }
 
 type SubmissionResult struct {
@@ -299,6 +309,13 @@ func (s *LearningService) OpenQuestion(ctx context.Context, studentID, enrollmen
 	if studentID <= 0 || enrollmentID <= 0 || questionID <= 0 {
 		return NavigationState{}, domain.ErrInvalidInput
 	}
+	if store, ok := s.enrollments.(questionPositionStore); ok {
+		progress, err := store.OpenQuestionPosition(ctx, studentID, enrollmentID, questionID)
+		if err != nil {
+			return NavigationState{}, err
+		}
+		return s.loadNavigationStateForProgress(ctx, studentID, enrollmentID, questionID, progress)
+	}
 	if err := s.requireActiveStudent(ctx, studentID); err != nil {
 		return NavigationState{}, err
 	}
@@ -333,15 +350,79 @@ func (s *LearningService) OpenQuestion(ctx context.Context, studentID, enrollmen
 	return s.loadNavigationState(ctx, studentID, enrollmentID, *selected, progress)
 }
 
+// OpenCurrentQuestion загружает именно текущую позицию, не меняя её. При устаревшем
+// callback возвращает актуальный экран и ErrConflict, не применяя действие к новому вопросу.
+func (s *LearningService) OpenCurrentQuestion(
+	ctx context.Context,
+	studentID, enrollmentID, expectedQuestionID int64,
+) (NavigationState, error) {
+	state, err := s.NavigateQuestion(ctx, studentID, enrollmentID, expectedQuestionID, 0)
+	if state.StaleCallback {
+		return state, domain.ErrConflict
+	}
+	return state, err
+}
+
+func (s *LearningService) loadNavigationStateForProgress(
+	ctx context.Context,
+	studentID, enrollmentID, questionID int64,
+	progress domain.Progress,
+) (NavigationState, error) {
+	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	for _, question := range questions {
+		if question.ID == questionID {
+			return s.loadNavigationState(ctx, studentID, enrollmentID, question, progress)
+		}
+	}
+	return NavigationState{}, domain.ErrNotFound
+}
+
 func (s *LearningService) NextQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
-	return s.navigate(ctx, studentID, enrollmentID, 1)
+	return s.NavigateQuestion(ctx, studentID, enrollmentID, 0, 1)
 }
 
 func (s *LearningService) PreviousQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
-	return s.navigate(ctx, studentID, enrollmentID, -1)
+	return s.NavigateQuestion(ctx, studentID, enrollmentID, 0, -1)
 }
 
-func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID int64, step int) (NavigationState, error) {
+// NavigateQuestion — единый путь callback-навигации. Проверка ожидаемой позиции,
+// смена вопроса и получение прогресса выполняются одной операцией хранилища.
+func (s *LearningService) NavigateQuestion(
+	ctx context.Context,
+	studentID, enrollmentID, expectedQuestionID int64,
+	step int,
+) (NavigationState, error) {
+	if studentID <= 0 || enrollmentID <= 0 || step < -1 || step > 1 {
+		return NavigationState{}, domain.ErrInvalidInput
+	}
+	if store, ok := s.enrollments.(questionPositionStore); ok {
+		progress, stale, navigationErr := store.NavigateQuestion(
+			ctx, studentID, enrollmentID, expectedQuestionID, step,
+		)
+		if navigationErr != nil &&
+			!errors.Is(navigationErr, domain.ErrNoNextQuestion) &&
+			!errors.Is(navigationErr, domain.ErrNoPreviousQuestion) {
+			return NavigationState{}, navigationErr
+		}
+		if progress.Enrollment.CurrentQuestionID == nil {
+			if navigationErr != nil {
+				return NavigationState{}, navigationErr
+			}
+			return NavigationState{}, domain.ErrInvalidState
+		}
+		state, err := s.loadNavigationStateForProgress(
+			ctx, studentID, enrollmentID, *progress.Enrollment.CurrentQuestionID, progress,
+		)
+		if err != nil {
+			return NavigationState{}, err
+		}
+		state.StaleCallback = stale
+		return state, navigationErr
+	}
+
 	if err := s.requireActiveStudent(ctx, studentID); err != nil {
 		return NavigationState{}, err
 	}
@@ -349,6 +430,26 @@ func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID 
 	if err != nil {
 		return NavigationState{}, err
 	}
+	if err := s.ensureCourseRunActive(ctx, progress.Enrollment); err != nil {
+		return NavigationState{}, err
+	}
+	if expectedQuestionID > 0 &&
+		(progress.Enrollment.CurrentQuestionID == nil ||
+			*progress.Enrollment.CurrentQuestionID != expectedQuestionID) {
+		if progress.Enrollment.CurrentQuestionID == nil {
+			return NavigationState{}, domain.ErrInvalidState
+		}
+		state, openErr := s.OpenQuestion(ctx, studentID, enrollmentID, *progress.Enrollment.CurrentQuestionID)
+		state.StaleCallback = true
+		return state, openErr
+	}
+	if step == 0 {
+		if progress.Enrollment.CurrentQuestionID == nil {
+			return NavigationState{}, domain.ErrInvalidState
+		}
+		return s.OpenQuestion(ctx, studentID, enrollmentID, *progress.Enrollment.CurrentQuestionID)
+	}
+
 	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
 	if err != nil {
 		return NavigationState{}, err
@@ -356,7 +457,6 @@ func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID 
 	if len(questions) == 0 {
 		return NavigationState{}, domain.ErrInvalidState
 	}
-
 	target := 0
 	if progress.Enrollment.CurrentQuestionID == nil {
 		if step < 0 {
@@ -391,6 +491,15 @@ func (s *LearningService) loadNavigationState(
 	progress domain.Progress,
 ) (NavigationState, error) {
 	state := NavigationState{Question: question, Progress: progress}
+	if store, ok := s.answers.(navigationAnswerStateStore); ok {
+		answer, latest, err := store.GetNavigationAnswerState(ctx, studentID, enrollmentID, question.ID)
+		if err != nil {
+			return NavigationState{}, err
+		}
+		state.SavedAnswer = answer
+		state.LatestAttempt = latest
+		return state, nil
+	}
 	answer, err := s.answers.GetSavedAnswer(ctx, studentID, enrollmentID, question.ID)
 	if err == nil {
 		state.SavedAnswer = &answer

@@ -111,6 +111,14 @@ func (r *EnrollmentRepository) SetCurrentQuestion(ctx context.Context, studentID
 }
 
 func (r *EnrollmentRepository) GetProgress(ctx context.Context, studentID, enrollmentID int64) (domain.Progress, error) {
+	return getProgress(ctx, r.pool, studentID, enrollmentID)
+}
+
+type progressQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func getProgress(ctx context.Context, queryer progressQueryRower, studentID, enrollmentID int64) (domain.Progress, error) {
 	if studentID <= 0 || enrollmentID <= 0 {
 		return domain.Progress{}, ErrInvalidInput
 	}
@@ -118,7 +126,7 @@ func (r *EnrollmentRepository) GetProgress(ctx context.Context, studentID, enrol
 	var progress domain.Progress
 	var courseEnrollmentID, currentID, firstID, previousID, nextID pgtype.Int8
 	var startedAt, completedAt, lastActivityAt pgtype.Timestamptz
-	err := r.pool.QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		SELECT
 			e.id, e.student_id, e.lesson_id, e.lesson_version_id, e.course_enrollment_id, e.mode,
 			e.current_question_id, e.status, e.started_at, e.completed_at,

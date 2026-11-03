@@ -147,7 +147,15 @@ func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, m
 
 	// Сохранение уже завершено. Ошибка удаления сообщения Telegram не должна отменять ответ.
 	b.deleteIncomingMessage(ctx, message)
-	refreshed, refreshErr := b.learning.OpenQuestion(ctx, student.ID, result.Progress.Enrollment.ID, state.Question.ID)
+	var refreshed service.NavigationState
+	var refreshErr error
+	if current, ok := b.learning.(interface {
+		OpenCurrentQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
+	}); ok {
+		refreshed, refreshErr = current.OpenCurrentQuestion(ctx, student.ID, result.Progress.Enrollment.ID, state.Question.ID)
+	} else {
+		refreshed, refreshErr = b.learning.OpenQuestion(ctx, student.ID, result.Progress.Enrollment.ID, state.Question.ID)
+	}
 	if refreshErr != nil {
 		state.SavedAnswer = &result.Answer
 		state.Progress = result.Progress
@@ -220,18 +228,30 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		}
 	}
 
-	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
-	if err != nil || progress.Enrollment.Status != "in_progress" ||
-		progress.Enrollment.CurrentQuestionID == nil ||
-		*progress.Enrollment.CurrentQuestionID != questionID {
-		if err != nil {
-			b.showStaleCallback(ctx, chatID, studentID, messageID)
-		} else {
-			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, 0)
+	var state service.NavigationState
+	var err error
+	if current, ok := b.learning.(interface {
+		OpenCurrentQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
+	}); ok {
+		state, err = current.OpenCurrentQuestion(ctx, studentID, enrollmentID, questionID)
+		if errors.Is(err, domain.ErrConflict) && state.StaleCallback {
+			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
+			return
 		}
-		return
+	} else {
+		progress, progressErr := b.learning.GetProgress(ctx, studentID, enrollmentID)
+		if progressErr != nil || progress.Enrollment.Status != "in_progress" ||
+			progress.Enrollment.CurrentQuestionID == nil ||
+			*progress.Enrollment.CurrentQuestionID != questionID {
+			if progressErr != nil {
+				b.showStaleCallback(ctx, chatID, studentID, messageID)
+			} else {
+				b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, 0)
+			}
+			return
+		}
+		state, err = b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
 	}
-	state, err := b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
 	if err != nil {
 		b.logger.Warn("не удалось проверить вопрос для ответа кнопкой", "student_id", studentID,
 			"enrollment_id", enrollmentID, "question_id", questionID, "error", err)
@@ -329,7 +349,15 @@ func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID,
 		return
 	}
 	b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: questionID})
-	refreshed, refreshErr := b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
+	var refreshed service.NavigationState
+	var refreshErr error
+	if current, ok := b.learning.(interface {
+		OpenCurrentQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
+	}); ok {
+		refreshed, refreshErr = current.OpenCurrentQuestion(ctx, studentID, enrollmentID, questionID)
+	} else {
+		refreshed, refreshErr = b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
+	}
 	if refreshErr != nil {
 		state.SavedAnswer = &result.Answer
 		state.Progress = result.Progress
