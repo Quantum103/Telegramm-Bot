@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/bibletext"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -998,6 +999,9 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID,
 	`, versionID); err != nil {
 		return mapDatabaseError("опубликовать новую версию урока", err)
 	}
+	if err := enqueueLessonVersionBibleChapters(ctx, tx, versionID); err != nil {
+		return err
+	}
 	if publishedByStaffID > 0 {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
@@ -1009,6 +1013,76 @@ func (r *CatalogRepository) PublishLessonVersion(ctx context.Context, versionID,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return mapDatabaseError("зафиксировать публикацию версии урока", err)
+	}
+	return nil
+}
+
+
+// enqueueLessonVersionBibleChapters records supported full-chapter links in the
+// same transaction as lesson publication. It performs no external network calls.
+func enqueueLessonVersionBibleChapters(ctx context.Context, tx pgx.Tx, versionID int64) error {
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT bp.book_name, bp.chapter, COALESCE(bp.translation_name, '')
+		FROM lesson_questions q
+		JOIN question_bible_passages qbp ON qbp.question_id = q.id
+		JOIN bible_passages bp ON bp.id = qbp.passage_id
+		WHERE q.lesson_version_id = $1
+		ORDER BY bp.book_name, bp.chapter
+	`, versionID)
+	if err != nil {
+		return mapDatabaseError("получить библейские главы опубликованного урока", err)
+	}
+	type chapterKey struct {
+		bookID int
+		chapter int
+	}
+	keys := make([]chapterKey, 0)
+	seen := make(map[chapterKey]struct{})
+	for rows.Next() {
+		var bookName, translation string
+		var chapter int
+		if err := rows.Scan(&bookName, &chapter, &translation); err != nil {
+			rows.Close()
+			return mapDatabaseError("прочитать библейскую ссылку опубликованного урока", err)
+		}
+		if chapter <= 0 || !bibletext.IsSynodalTranslation(translation) {
+			continue
+		}
+		bookID, ok := bibletext.BookID(bookName)
+		if !ok {
+			continue
+		}
+		key := chapterKey{bookID: bookID, chapter: chapter}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return mapDatabaseError("обойти библейские ссылки опубликованного урока", err)
+	}
+	rows.Close()
+
+	for _, key := range keys {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO bible_chapter_telegraph_jobs (translation_code, book_id, chapter_number)
+			VALUES ('synodal', $1, $2)
+			ON CONFLICT (translation_code, book_id, chapter_number) DO UPDATE
+			SET status = 'queued',
+			    attempts = 0,
+			    available_at = now(),
+			    lease_until = NULL,
+			    lease_token = NULL,
+			    last_error = NULL,
+			    completed_at = NULL,
+			    updated_at = now()
+			WHERE bible_chapter_telegraph_jobs.status = 'completed'
+		`, key.bookID, key.chapter)
+		if err != nil {
+			return mapDatabaseError("поставить главу опубликованного урока в очередь Telegraph", err)
+		}
 	}
 	return nil
 }
