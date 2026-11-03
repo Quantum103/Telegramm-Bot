@@ -377,7 +377,7 @@ func (b *Bot) chapterTelegraphLinks(ctx context.Context, passages []domain.Bible
 
 	notice := ""
 	if pending {
-		notice = "Ссылка на полную главу готовится. Она появится автоматически после подготовки."
+		notice = "Ссылка на полную главу готовится. Откройте вопрос ещё раз позже."
 	}
 	if unavailable {
 		if notice != "" {
