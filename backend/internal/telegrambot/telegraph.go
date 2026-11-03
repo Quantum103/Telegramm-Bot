@@ -100,6 +100,15 @@ func (p *TelegraphPublisher) PublishChapter(ctx context.Context, reference Chapt
 	if err != nil {
 		return "", err
 	}
+	// A local fallback chapter is not persisted and cannot safely back a durable URL.
+	storedChapter, err := p.linkStore.GetChapter(ctx, "synodal", reference.BookID, reference.Chapter)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return "", fmt.Errorf("%w: глава ещё не сохранена в PostgreSQL", service.ErrBibleChapterUnavailable)
+		}
+		return "", fmt.Errorf("проверить сохранённую главу перед публикацией Telegraph: %w", err)
+	}
+	chapter = bibleChapterToTextChapter(storedChapter)
 	if chapter.Chapter != reference.Chapter || strings.TrimSpace(chapter.Book) == "" {
 		return "", fmt.Errorf("%w: книга или номер главы не совпадает со ссылкой вопроса", bibletext.ErrInvalidChapter)
 	}
