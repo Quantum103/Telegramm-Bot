@@ -379,7 +379,7 @@ func (r *CourseEnrollmentRepository) ValidateActiveLesson(
 			WHERE ce.id = $1
 			  AND ce.student_id = $2
 			  AND ce.status = 'in_progress'
-			  AND ce.mode = $6
+			  AND ce.mode = $5
 			  AND cel.lesson_id = $3
 			  AND cel.lesson_version_id = $4
 			)
