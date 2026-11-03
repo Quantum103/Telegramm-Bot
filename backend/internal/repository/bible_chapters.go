@@ -447,13 +447,13 @@ func (r *BibleChapterRepository) RetryTelegraphChapterJob(
 	if cause != nil {
 		lastError = strings.TrimSpace(cause.Error())
 	}
-	if len(lastError) > 1000 {
-		lastError = lastError[:1000]
+	if runes := []rune(lastError); len(runes) > 1000 {
+		lastError = string(runes[:1000])
 	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE bible_chapter_telegraph_jobs
 		SET status = 'queued',
-		    available_at = now() + ($3::bigint * INTERVAL '1 millisecond'),
+		    available_at = now() + ($3::double precision * INTERVAL '1 millisecond'),
 		    lease_until = NULL,
 		    lease_token = NULL,
 		    last_error = $4,
