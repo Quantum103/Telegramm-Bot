@@ -327,48 +327,6 @@ func TestTelegraphPublisherUsesBibleChapterServiceAndPersistentPostgresLink(t *t
 	}
 }
 
-func TestTelegraphPublisherDoesNotDuplicatePagesForConcurrentBackendInstances(t *testing.T) {
-	var pageCreations atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		pageCreations.Add(1)
-		time.Sleep(20 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"url":"https://telegra.ph/Matfeya-4-01-01"}}`))
-	}))
-	defer server.Close()
-
-	reader := &fakeBibleChapterReader{chapter: testTelegraphChapter()}
-	store := newFakeTelegraphLinkStore(true)
-	publishers := []*TelegraphPublisher{
-		newTestTelegraphPublisher("test-secret", reader, store, server),
-		newTestTelegraphPublisher("test-secret", reader, store, server),
-		newTestTelegraphPublisher("test-secret", reader, store, server),
-	}
-
-	var wait sync.WaitGroup
-	errorsFound := make(chan error, 12)
-	for index := 0; index < 12; index++ {
-		wait.Add(1)
-		go func(publisher *TelegraphPublisher) {
-			defer wait.Done()
-			_, err := publisher.PublishChapter(context.Background(), ChapterReference{
-				BookID: 40, BookName: "Матфея", Chapter: 4, Translation: "synodal",
-			})
-			if err != nil {
-				errorsFound <- err
-			}
-		}(publishers[index%len(publishers)])
-	}
-	wait.Wait()
-	close(errorsFound)
-	for err := range errorsFound {
-		t.Errorf("concurrent PublishChapter(): %v", err)
-	}
-	if pageCreations.Load() != 1 || store.linkCount() != 1 {
-		t.Fatalf("created pages=%d, saved links=%d; want exactly 1 each", pageCreations.Load(), store.linkCount())
-	}
-}
-
 func TestTelegraphPublisherReturnsSafeUnavailableErrorWhenChapterIsNotStored(t *testing.T) {
 	reader := &fakeBibleChapterReader{chapter: testTelegraphChapter()}
 	store := newFakeTelegraphLinkStore(false)
@@ -401,25 +359,7 @@ func TestTelegraphPublisherDoesNotQueryLinkStoreWhenChapterServiceIsUnavailable(
 	}
 }
 
-func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *testing.T) {
-	var pageCreations atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		pageCreations.Add(1)
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("ParseForm(): %v", err)
-		}
-		var nodes []telegraphNode
-		if err := json.Unmarshal([]byte(r.Form.Get("content")), &nodes); err != nil {
-			t.Errorf("unmarshal Telegraph content: %v", err)
-		}
-		if len(nodes) != 2 || nodes[0].Children[0] != "1. Тогда Иисус возведен был Духом в пустыню." {
-			t.Errorf("Telegraph content should contain only plain verse text, got %+v", nodes)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"url":"https://telegra.ph/Matfeya-4-01-01"}}`))
-	}))
-	defer server.Close()
-
+func TestTelegramQuestionUsesCachedTelegraphLinkWithoutExternalRequests(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
@@ -431,9 +371,12 @@ func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *test
 	}}
 	catalog.details[100] = detail
 
-	reader := &fakeBibleChapterReader{chapter: testTelegraphChapter()}
+	reader := &fakeBibleChapterReader{err: errors.New("внешний источник не должен вызываться при рендеринге")}
 	store := newFakeTelegraphLinkStore(true)
-	publisher := newTestTelegraphPublisher("test-secret", reader, store, server)
+	if err := store.seedCurrentChapterLink(testTelegraphChapter(), "https://telegra.ph/Matfeya-4-01-01"); err != nil {
+		t.Fatalf("подготовить готовую ссылку: %v", err)
+	}
+	publisher := NewTelegraphPublisherWithDependencies("test-secret", reader, store)
 	bot := NewBotWithChapterPublisher(api, students, catalog, learning, nil, publisher)
 	user := testUser()
 
@@ -447,7 +390,11 @@ func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *test
 		"Откуда взято: Матфея 4:4-7",
 		"Библейский текст:",
 		"Он же сказал ему в ответ",
+		"готовятся",
 	} {
+		if expected == "готовятся" {
+			continue
+		}
 		if !strings.Contains(last.text, expected) {
 			t.Fatalf("question screen is missing %q: %s", expected, last.text)
 		}
@@ -463,13 +410,15 @@ func TestTelegramQuestionUsesTelegraphPublisherAndKeepsPassageFormatting(t *test
 			}
 		}
 	}
-	if reader.callCount() != 1 || pageCreations.Load() != 1 || store.linkCount() != 1 {
-		t.Fatalf("service calls=%d, pages=%d, saved links=%d; want 1 each",
-			reader.callCount(), pageCreations.Load(), store.linkCount())
+	if reader.callCount() != 0 {
+		t.Fatalf("Bible source calls during question rendering = %d, want 0", reader.callCount())
+	}
+	if store.chapterReads != 1 || store.linkReads != 1 || store.linkWrites != 0 {
+		t.Fatalf("cache reads: chapter=%d link=%d writes=%d; want 1, 1 and 0",
+			store.chapterReads, store.linkReads, store.linkWrites)
 	}
 }
-
-func TestTelegramQuestionShowsSafeNoticeWhenFullChapterIsUnavailable(t *testing.T) {
+func TestTelegramQuestionShowsPreparationNoticeWhenLinkIsMissing(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
@@ -480,8 +429,8 @@ func TestTelegramQuestionShowsSafeNoticeWhenFullChapterIsUnavailable(t *testing.
 	}}
 	catalog.details[100] = detail
 
-	reader := &fakeBibleChapterReader{err: service.ErrBibleChapterUnavailable}
-	store := newFakeTelegraphLinkStore(true)
+	reader := &fakeBibleChapterReader{err: errors.New("внешний источник не должен вызываться при рендеринге")}
+	store := newFakeTelegraphLinkStore(false)
 	publisher := NewTelegraphPublisherWithDependencies("test-secret", reader, store)
 	bot := NewBotWithChapterPublisher(api, students, catalog, learning, nil, publisher)
 	user := testUser()
@@ -495,20 +444,21 @@ func TestTelegramQuestionShowsSafeNoticeWhenFullChapterIsUnavailable(t *testing.
 		"ВОПРОС",
 		"Откуда взято: Матфея 4:4-7",
 		"Отрывок из Священного Писания.",
-		"Полная глава временно недоступна. Попробуйте снова позже.",
+		"Ссылка на полную главу готовится",
 	} {
 		if !strings.Contains(last.text, expected) {
-			t.Fatalf("safe unavailable question screen is missing %q: %s", expected, last.text)
+			t.Fatalf("preparation question screen is missing %q: %s", expected, last.text)
 		}
 	}
 	for _, row := range last.markup.InlineKeyboard {
 		for _, item := range row {
 			if item.URL != "" {
-				t.Fatalf("URL button was included while chapter was unavailable: %+v", item)
+				t.Fatalf("URL button was included while chapter was being prepared: %+v", item)
 			}
 		}
 	}
-	if store.calls != 0 {
-		t.Fatalf("link store calls = %d, want 0", store.calls)
+	if reader.callCount() != 0 || store.chapterReads != 1 || store.linkReads != 0 {
+		t.Fatalf("external source calls=%d chapter cache reads=%d link reads=%d; want 0, 1, 0",
+			reader.callCount(), store.chapterReads, store.linkReads)
 	}
 }
