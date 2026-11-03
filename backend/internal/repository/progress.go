@@ -110,6 +110,66 @@ func (r *EnrollmentRepository) SetCurrentQuestion(ctx context.Context, studentID
 	return ErrNotFound
 }
 
+// SetCurrentQuestionFrom updates the position only when the callback's expected
+// question is still current. Ownership, course mode and active course membership are
+// checked in the same statement to prevent stale or cross-student navigation.
+func (r *EnrollmentRepository) SetCurrentQuestionFrom(
+	ctx context.Context,
+	studentID, enrollmentID, expectedQuestionID, targetQuestionID int64,
+) error {
+	if studentID <= 0 || enrollmentID <= 0 || expectedQuestionID <= 0 || targetQuestionID <= 0 {
+		return ErrInvalidInput
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE lesson_enrollments e
+		SET current_question_id = $4, last_activity_at = now(), updated_at = now()
+		WHERE e.id = $2
+		  AND e.student_id = $1
+		  AND e.current_question_id = $3
+		  AND e.status <> 'cancelled'
+		  AND EXISTS (
+		      SELECT 1
+		      FROM lesson_questions q
+		      WHERE q.id = $4 AND q.lesson_version_id = e.lesson_version_id
+		  )
+		  AND (
+		      e.course_enrollment_id IS NULL
+		      OR (
+		          EXISTS (
+		              SELECT 1
+		              FROM course_enrollments ce
+		              WHERE ce.id = e.course_enrollment_id
+		                AND ce.student_id = e.student_id
+		                AND ce.status = 'in_progress'
+		                AND ce.mode = e.mode
+		          )
+		          AND EXISTS (
+		              SELECT 1
+		              FROM course_enrollment_lessons cel
+		              WHERE cel.course_enrollment_id = e.course_enrollment_id
+		                AND cel.lesson_id = e.lesson_id
+		                AND cel.lesson_version_id = e.lesson_version_id
+		          )
+		      )
+		  )
+	`, studentID, enrollmentID, expectedQuestionID, targetQuestionID)
+	if err != nil {
+		return mapDatabaseError("условно сохранить позицию прохождения", err)
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+
+	enrollment, err := r.GetByIDForStudent(ctx, studentID, enrollmentID)
+	if err != nil {
+		return err
+	}
+	if enrollment.Status == "cancelled" || enrollment.CourseEnrollmentID != nil {
+		return domain.ErrInvalidState
+	}
+	return domain.ErrStaleNavigation
+}
+
 func (r *EnrollmentRepository) GetProgress(ctx context.Context, studentID, enrollmentID int64) (domain.Progress, error) {
 	if studentID <= 0 || enrollmentID <= 0 {
 		return domain.Progress{}, ErrInvalidInput
