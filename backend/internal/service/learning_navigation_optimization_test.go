@@ -31,12 +31,12 @@ func (s *optimizedNavigationStudentStore) UpdateProfile(context.Context, domain.
 }
 
 type optimizedNavigationEnrollmentStore struct {
-	progress           domain.Progress
-	navigateCalls       int
-	openPositionCalls   int
-	getProgressCalls    int
-	getByIDCalls        int
-	setCurrentCalls     int
+	progress          domain.Progress
+	navigateCalls     int
+	openPositionCalls int
+	getProgressCalls  int
+	getByIDCalls      int
+	setCurrentCalls   int
 }
 
 func (s *optimizedNavigationEnrollmentStore) Start(context.Context, domain.StartEnrollmentParams) (domain.Enrollment, error) {
@@ -59,7 +59,7 @@ func (s *optimizedNavigationEnrollmentStore) Complete(context.Context, int64, in
 	return s.progress.Enrollment, nil
 }
 func (s *optimizedNavigationEnrollmentStore) NavigateQuestion(
-	_ context.Context, _, _ , expectedQuestionID int64, step int,
+	_ context.Context, _, _, expectedQuestionID int64, step int,
 ) (domain.Progress, bool, error) {
 	s.navigateCalls++
 	currentID := int64(0)
@@ -78,7 +78,7 @@ func (s *optimizedNavigationEnrollmentStore) NavigateQuestion(
 	return s.progress, false, nil
 }
 func (s *optimizedNavigationEnrollmentStore) OpenQuestionPosition(
-	_ context.Context, _, _ , questionID int64,
+	_ context.Context, _, _, questionID int64,
 ) (domain.Progress, error) {
 	s.openPositionCalls++
 	s.progress.Enrollment.CurrentQuestionID = int64Pointer(questionID)

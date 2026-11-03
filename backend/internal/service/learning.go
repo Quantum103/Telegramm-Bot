@@ -59,11 +59,11 @@ func NewLearningService(
 }
 
 type NavigationState struct {
-	Question       domain.LessonQuestion
-	SavedAnswer    *domain.SavedAnswer
-	LatestAttempt  *domain.AnswerAttempt
-	Progress       domain.Progress
-	StaleCallback  bool
+	Question      domain.LessonQuestion
+	SavedAnswer   *domain.SavedAnswer
+	LatestAttempt *domain.AnswerAttempt
+	Progress      domain.Progress
+	StaleCallback bool
 }
 
 type questionPositionStore interface {

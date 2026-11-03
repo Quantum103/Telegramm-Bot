@@ -16,7 +16,7 @@ func TestQuestionContentCacheLoadsOnceAndReturnsCopies(t *testing.T) {
 		loads++
 		return []domain.LessonQuestion{{
 			ID: 7, Prompt: "Вопрос",
-			Options: []domain.QuestionOption{{ID: 1, Text: "Вариант"}},
+			Options:       []domain.QuestionOption{{ID: 1, Text: "Вариант"}},
 			BiblePassages: []domain.BiblePassage{{PassageText: &passageText}},
 		}}, nil
 	})

@@ -10,8 +10,8 @@ import (
 )
 
 type ContentRepository struct {
-	pool           *pgxpool.Pool
-	questionCache  *questionContentCache
+	pool          *pgxpool.Pool
+	questionCache *questionContentCache
 }
 
 func NewContentRepository(pool *pgxpool.Pool) *ContentRepository {
