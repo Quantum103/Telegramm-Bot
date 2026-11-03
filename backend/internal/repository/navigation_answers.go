@@ -120,6 +120,9 @@ func (r *AnswerRepository) GetNavigationAnswerState(
 			UpdatedAt:         answerUpdated.Time,
 			ProcessingStatus:  answerStatus.String,
 		}
+		if attemptID.Valid {
+			saved.AttemptID = attemptID.Int64
+		}
 	}
 
 	var latest *domain.AnswerAttempt
