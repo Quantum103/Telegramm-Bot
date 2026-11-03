@@ -282,70 +282,7 @@ func (s *LearningService) GetProgress(ctx context.Context, studentID, enrollment
 }
 
 func (s *LearningService) FirstQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
-	if err := s.requireActiveStudent(ctx, studentID); err != nil {
-		return NavigationState{}, err
-	}
-	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
-	if err != nil {
-		return NavigationState{}, err
-	}
-	if progress.FirstQuestionID == nil {
-		return NavigationState{}, domain.ErrInvalidState
-	}
-	return s.OpenQuestion(ctx, studentID, enrollmentID, *progress.FirstQuestionID)
-}
-
-func (s *LearningService) OpenQuestion(ctx context.Context, studentID, enrollmentID, questionID int64) (NavigationState, error) {
-	if studentID <= 0 || enrollmentID <= 0 || questionID <= 0 {
-		return NavigationState{}, domain.ErrInvalidInput
-	}
-	if err := s.requireActiveStudent(ctx, studentID); err != nil {
-		return NavigationState{}, err
-	}
-	enrollment, err := s.enrollments.GetByIDForStudent(ctx, studentID, enrollmentID)
-	if err != nil {
-		return NavigationState{}, err
-	}
-	if err := s.ensureCourseRunActive(ctx, enrollment); err != nil {
-		return NavigationState{}, err
-	}
-	questions, err := s.questions.ListQuestionsForVersion(ctx, enrollment.LessonVersionID)
-	if err != nil {
-		return NavigationState{}, err
-	}
-	var selected *domain.LessonQuestion
-	for index := range questions {
-		if questions[index].ID == questionID {
-			selected = &questions[index]
-			break
-		}
-	}
-	if selected == nil {
-		return NavigationState{}, domain.ErrNotFound
-	}
-	if err := s.enrollments.SetCurrentQuestion(ctx, studentID, enrollmentID, questionID); err != nil {
-		return NavigationState{}, err
-	}
-	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
-	if err != nil {
-		return NavigationState{}, err
-	}
-	return s.loadNavigationState(ctx, studentID, enrollmentID, *selected, progress)
-}
-
-func (s *LearningService) NextQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
-	return s.navigate(ctx, studentID, enrollmentID, 1)
-}
-
-func (s *LearningService) PreviousQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
-	return s.navigate(ctx, studentID, enrollmentID, -1)
-}
-
-func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID int64, step int) (NavigationState, error) {
-	if err := s.requireActiveStudent(ctx, studentID); err != nil {
-		return NavigationState{}, err
-	}
-	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
+	progress, err := s.navigationProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		return NavigationState{}, err
 	}
@@ -356,32 +293,251 @@ func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID 
 	if len(questions) == 0 {
 		return NavigationState{}, domain.ErrInvalidState
 	}
+	return s.openQuestionFromProgress(ctx, studentID, enrollmentID, progress, questions, 0)
+}
 
-	target := 0
+// OpenCurrentQuestion restores the persisted position without first loading progress
+// in the Telegram layer and then asking OpenQuestion to load it again.
+func (s *LearningService) OpenCurrentQuestion(
+	ctx context.Context,
+	studentID, enrollmentID int64,
+) (NavigationState, error) {
+	progress, err := s.navigationProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	if progress.Enrollment.CurrentQuestionID == nil {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	index := questionIndexByID(questions, *progress.Enrollment.CurrentQuestionID)
+	if index < 0 {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	progress = progressForQuestionIndex(progress, questions, index)
+	return s.loadNavigationState(ctx, studentID, enrollmentID, questions[index], progress)
+}
+
+func (s *LearningService) OpenQuestion(ctx context.Context, studentID, enrollmentID, questionID int64) (NavigationState, error) {
+	if studentID <= 0 || enrollmentID <= 0 || questionID <= 0 {
+		return NavigationState{}, domain.ErrInvalidInput
+	}
+	progress, err := s.navigationProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	index := questionIndexByID(questions, questionID)
+	if index < 0 {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	return s.openQuestionFromProgress(ctx, studentID, enrollmentID, progress, questions, index)
+}
+
+func (s *LearningService) NextQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
+	return s.navigate(ctx, studentID, enrollmentID, 1)
+}
+
+func (s *LearningService) PreviousQuestion(ctx context.Context, studentID, enrollmentID int64) (NavigationState, error) {
+	return s.navigate(ctx, studentID, enrollmentID, -1)
+}
+
+// NavigateFromQuestion performs the callback's expected-position check, resolves the
+// neighbour, conditionally persists the new position and loads the screen state in one
+// service path. On stale/boundary callbacks it returns the current screen state together
+// with the corresponding sentinel error so the Telegram layer can render it without
+// another progress read.
+func (s *LearningService) NavigateFromQuestion(
+	ctx context.Context,
+	studentID, enrollmentID, expectedQuestionID int64,
+	step int,
+) (NavigationState, error) {
+	if studentID <= 0 || enrollmentID <= 0 || expectedQuestionID <= 0 || (step != -1 && step != 1) {
+		return NavigationState{}, domain.ErrInvalidInput
+	}
+	progress, err := s.navigationProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	if progress.Enrollment.CurrentQuestionID == nil {
+		return NavigationState{}, domain.ErrStaleNavigation
+	}
+	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	currentIndex := questionIndexByID(questions, *progress.Enrollment.CurrentQuestionID)
+	if currentIndex < 0 {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	if *progress.Enrollment.CurrentQuestionID != expectedQuestionID {
+		state, stateErr := s.loadQuestionAtIndex(ctx, studentID, enrollmentID, progress, questions, currentIndex)
+		if stateErr != nil {
+			return NavigationState{}, stateErr
+		}
+		return state, domain.ErrStaleNavigation
+	}
+	targetIndex := currentIndex + step
+	if targetIndex < 0 {
+		state, stateErr := s.loadQuestionAtIndex(ctx, studentID, enrollmentID, progress, questions, currentIndex)
+		if stateErr != nil {
+			return NavigationState{}, stateErr
+		}
+		return state, domain.ErrNoPreviousQuestion
+	}
+	if targetIndex >= len(questions) {
+		state, stateErr := s.loadQuestionAtIndex(ctx, studentID, enrollmentID, progress, questions, currentIndex)
+		if stateErr != nil {
+			return NavigationState{}, stateErr
+		}
+		return state, domain.ErrNoNextQuestion
+	}
+	return s.openQuestionFromProgress(ctx, studentID, enrollmentID, progress, questions, targetIndex)
+}
+
+func (s *LearningService) navigate(ctx context.Context, studentID, enrollmentID int64, step int) (NavigationState, error) {
+	if step != -1 && step != 1 {
+		return NavigationState{}, domain.ErrInvalidInput
+	}
+	progress, err := s.navigationProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
+	if err != nil {
+		return NavigationState{}, err
+	}
+	if len(questions) == 0 {
+		return NavigationState{}, domain.ErrInvalidState
+	}
 	if progress.Enrollment.CurrentQuestionID == nil {
 		if step < 0 {
 			return NavigationState{}, domain.ErrNoPreviousQuestion
 		}
-	} else {
-		currentIndex := -1
-		for index := range questions {
-			if questions[index].ID == *progress.Enrollment.CurrentQuestionID {
-				currentIndex = index
-				break
+		return s.openQuestionFromProgress(ctx, studentID, enrollmentID, progress, questions, 0)
+	}
+	currentIndex := questionIndexByID(questions, *progress.Enrollment.CurrentQuestionID)
+	if currentIndex < 0 {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	targetIndex := currentIndex + step
+	if targetIndex < 0 {
+		return NavigationState{}, domain.ErrNoPreviousQuestion
+	}
+	if targetIndex >= len(questions) {
+		return NavigationState{}, domain.ErrNoNextQuestion
+	}
+	return s.openQuestionFromProgress(ctx, studentID, enrollmentID, progress, questions, targetIndex)
+}
+
+func (s *LearningService) navigationProgress(
+	ctx context.Context,
+	studentID, enrollmentID int64,
+) (domain.Progress, error) {
+	if studentID <= 0 || enrollmentID <= 0 {
+		return domain.Progress{}, domain.ErrInvalidInput
+	}
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return domain.Progress{}, err
+	}
+	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		return domain.Progress{}, err
+	}
+	if progress.Enrollment.Status == "cancelled" {
+		return domain.Progress{}, domain.ErrInvalidState
+	}
+	if err := s.ensureCourseRunActive(ctx, progress.Enrollment); err != nil {
+		return domain.Progress{}, err
+	}
+	return progress, nil
+}
+
+func (s *LearningService) openQuestionFromProgress(
+	ctx context.Context,
+	studentID, enrollmentID int64,
+	progress domain.Progress,
+	questions []domain.LessonQuestion,
+	targetIndex int,
+) (NavigationState, error) {
+	if targetIndex < 0 || targetIndex >= len(questions) {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	targetID := questions[targetIndex].ID
+	if progress.Enrollment.CurrentQuestionID == nil {
+		if err := s.enrollments.SetCurrentQuestion(ctx, studentID, enrollmentID, targetID); err != nil {
+			return NavigationState{}, err
+		}
+	} else if *progress.Enrollment.CurrentQuestionID != targetID {
+		if conditional, ok := s.enrollments.(interface {
+			SetCurrentQuestionFrom(context.Context, int64, int64, int64, int64) error
+		}); ok {
+			if err := conditional.SetCurrentQuestionFrom(
+				ctx, studentID, enrollmentID, *progress.Enrollment.CurrentQuestionID, targetID,
+			); err != nil {
+				return NavigationState{}, err
 			}
-		}
-		if currentIndex < 0 {
-			return NavigationState{}, domain.ErrNotFound
-		}
-		target = currentIndex + step
-		if target < 0 {
-			return NavigationState{}, domain.ErrNoPreviousQuestion
-		}
-		if target >= len(questions) {
-			return NavigationState{}, domain.ErrNoNextQuestion
+		} else if err := s.enrollments.SetCurrentQuestion(ctx, studentID, enrollmentID, targetID); err != nil {
+			return NavigationState{}, err
 		}
 	}
-	return s.OpenQuestion(ctx, studentID, enrollmentID, questions[target].ID)
+	return s.loadQuestionAtIndex(ctx, studentID, enrollmentID, progress, questions, targetIndex)
+}
+
+func (s *LearningService) loadQuestionAtIndex(
+	ctx context.Context,
+	studentID, enrollmentID int64,
+	progress domain.Progress,
+	questions []domain.LessonQuestion,
+	index int,
+) (NavigationState, error) {
+	if index < 0 || index >= len(questions) {
+		return NavigationState{}, domain.ErrNotFound
+	}
+	progress = progressForQuestionIndex(progress, questions, index)
+	return s.loadNavigationState(ctx, studentID, enrollmentID, questions[index], progress)
+}
+
+func questionIndexByID(questions []domain.LessonQuestion, questionID int64) int {
+	for index := range questions {
+		if questions[index].ID == questionID {
+			return index
+		}
+	}
+	return -1
+}
+
+func progressForQuestionIndex(
+	progress domain.Progress,
+	questions []domain.LessonQuestion,
+	index int,
+) domain.Progress {
+	currentID := questions[index].ID
+	progress.Enrollment.CurrentQuestionID = &currentID
+	progress.FirstQuestionID = nil
+	progress.PreviousQuestionID = nil
+	progress.NextQuestionID = nil
+	if len(questions) > 0 {
+		firstID := questions[0].ID
+		progress.FirstQuestionID = &firstID
+	}
+	if index > 0 {
+		previousID := questions[index-1].ID
+		progress.PreviousQuestionID = &previousID
+	}
+	if index+1 < len(questions) {
+		nextID := questions[index+1].ID
+		progress.NextQuestionID = &nextID
+	}
+	progress.TotalQuestions = len(questions)
+	progress.RemainingQuestions = progress.TotalQuestions - progress.AnsweredQuestions
+	return progress
 }
 
 func (s *LearningService) loadNavigationState(
