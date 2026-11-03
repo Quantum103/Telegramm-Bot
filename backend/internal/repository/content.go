@@ -10,11 +10,15 @@ import (
 )
 
 type ContentRepository struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	questionCache *publishedQuestionCache
 }
 
 func NewContentRepository(pool *pgxpool.Pool) *ContentRepository {
-	return &ContentRepository{pool: pool}
+	return &ContentRepository{
+		pool:          pool,
+		questionCache: newPublishedQuestionCache(),
+	}
 }
 
 type PublishedLesson = domain.CourseLesson
@@ -63,7 +67,12 @@ func (r *ContentRepository) ListPublishedLessonsByCourse(ctx context.Context, co
 }
 
 func (r *ContentRepository) ListQuestionsForVersion(ctx context.Context, lessonVersionID int64) ([]LessonQuestion, error) {
-	return r.listQuestionsForVersion(ctx, lessonVersionID, false)
+	if lessonVersionID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	return r.questionCache.GetOrLoad(ctx, lessonVersionID, func() ([]domain.LessonQuestion, error) {
+		return r.listQuestionsForVersion(ctx, lessonVersionID, false)
+	})
 }
 
 func (r *ContentRepository) ListQuestionsForStaffVersion(ctx context.Context, lessonVersionID int64) ([]LessonQuestion, error) {
