@@ -2,8 +2,8 @@ package telegrambot
 
 import (
 	"context"
-	"errors"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 
