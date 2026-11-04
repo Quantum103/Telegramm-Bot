@@ -5,6 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
+)
+
+const (
+	defaultUpdateWorkerCount    = 4
+	defaultUpdateQueueCapacity  = 16
+	updateWorkerShutdownTimeout = 30 * time.Second
 )
 
 var ErrUpdateWorkerPoolClosed = errors.New("telegram update worker pool is closed")
@@ -12,12 +19,16 @@ var ErrUpdateWorkerPoolClosed = errors.New("telegram update worker pool is close
 // UpdateWorkerPool processes updates on a fixed number of workers. Updates
 // that belong to the same chat are always sent to the same FIFO queue.
 type UpdateWorkerPool struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	submitContext context.Context
+	submitStop    context.Context
+	stopSubmit    context.CancelFunc
+
+	workerContext context.Context
+	cancelWorkers context.CancelFunc
 
 	queues  []chan updateTask
 	handler func(context.Context, Update) bool
-	workers sync.WaitGroup
+	done    chan struct{}
 
 	submitMu sync.RWMutex
 	closed   bool
@@ -30,6 +41,7 @@ type updateTask struct {
 
 // NewUpdateWorkerPool starts workers with a bounded queue for each worker.
 // The total number of queued updates cannot exceed workers*queueCapacity.
+// Parent cancellation stops submissions; accepted work is drained by Close.
 func NewUpdateWorkerPool(
 	parent context.Context,
 	workerCount int,
@@ -49,18 +61,33 @@ func NewUpdateWorkerPool(
 		return nil, errors.New("worker pool handler must not be nil")
 	}
 
-	ctx, cancel := context.WithCancel(parent)
+	submitStop, stopSubmit := context.WithCancel(context.Background())
+	workerContext, cancelWorkers := context.WithCancel(context.Background())
 	pool := &UpdateWorkerPool{
-		ctx:     ctx,
-		cancel:  cancel,
-		queues:  make([]chan updateTask, workerCount),
-		handler: handler,
+		submitContext: parent,
+		submitStop:    submitStop,
+		stopSubmit:    stopSubmit,
+		workerContext: workerContext,
+		cancelWorkers: cancelWorkers,
+		queues:        make([]chan updateTask, workerCount),
+		handler:       handler,
+		done:          make(chan struct{}),
 	}
+
+	var workers sync.WaitGroup
 	for i := range pool.queues {
 		pool.queues[i] = make(chan updateTask, queueCapacity)
-		pool.workers.Add(1)
-		go pool.run(pool.queues[i])
+		workers.Add(1)
+		go func(queue <-chan updateTask) {
+			defer workers.Done()
+			pool.run(queue)
+		}(pool.queues[i])
 	}
+	go func() {
+		workers.Wait()
+		close(pool.done)
+	}()
+
 	return pool, nil
 }
 
@@ -84,43 +111,60 @@ func (p *UpdateWorkerPool) Submit(ctx context.Context, update Update) (<-chan bo
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-p.ctx.Done():
+	case <-p.submitContext.Done():
+		return nil, p.submitContext.Err()
+	case <-p.submitStop.Done():
 		return nil, ErrUpdateWorkerPoolClosed
 	case queue <- task:
 		return result, nil
 	}
 }
 
-// Close stops accepting submissions and cancels worker contexts. It does not
-// wait for handlers; callers can use Wait when they need to join the workers.
+// Close stops accepting new updates and gracefully drains all accepted work.
+// Use Shutdown when a bounded wait and forced cancellation are required.
 func (p *UpdateWorkerPool) Close() {
-	p.cancel()
+	p.stopSubmit()
 	p.submitMu.Lock()
+	defer p.submitMu.Unlock()
+	if p.closed {
+		return
+	}
 	p.closed = true
-	p.submitMu.Unlock()
+	for _, queue := range p.queues {
+		close(queue)
+	}
 }
 
-// Wait blocks until every worker has exited.
+// Shutdown closes the pool and waits for accepted work to finish. If the
+// shutdown context expires, running handlers receive cancellation.
+func (p *UpdateWorkerPool) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("worker pool shutdown context must not be nil")
+	}
+	p.Close()
+	select {
+	case <-p.done:
+		return nil
+	case <-ctx.Done():
+		p.cancelWorkers()
+		<-p.done
+		return ctx.Err()
+	}
+}
+
+// Wait blocks until every accepted update has been processed or cancelled.
 func (p *UpdateWorkerPool) Wait() {
-	p.workers.Wait()
+	<-p.done
 }
 
 func (p *UpdateWorkerPool) run(queue <-chan updateTask) {
-	defer p.workers.Done()
-	for {
-		if p.ctx.Err() != nil {
-			return
+	for task := range queue {
+		processed := false
+		if p.workerContext.Err() == nil {
+			processed = p.handler(p.workerContext, task.update)
 		}
-		select {
-		case <-p.ctx.Done():
-			return
-		case task := <-queue:
-			if p.ctx.Err() != nil {
-				return
-			}
-			task.result <- p.handler(p.ctx, task.update)
-			close(task.result)
-		}
+		task.result <- processed
+		close(task.result)
 	}
 }
 
