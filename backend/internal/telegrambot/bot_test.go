@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"strconv"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -501,9 +503,11 @@ func testUpdate(updateID int64, command string, user User) Update {
 	}
 }
 
+var testCallbackSequence atomic.Uint64
+
 func testCallback(data string, user User, messageID int64) CallbackQuery {
 	return CallbackQuery{
-		ID:      "callback-test",
+		ID:      "callback-test-" + strconv.FormatUint(testCallbackSequence.Add(1), 10),
 		From:    &user,
 		Message: &Message{MessageID: messageID, Chat: Chat{ID: user.ID, Type: "private"}},
 		Data:    data,
