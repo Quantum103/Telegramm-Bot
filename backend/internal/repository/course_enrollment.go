@@ -428,6 +428,7 @@ func (r *CourseEnrollmentRepository) ListLessons(
 		        LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
 		          AND ce.mode = 'curator'
+		          AND le.status = 'completed'
 		          AND latest.processing_status = 'pending'
 		          AND review.id IS NULL),
 		       (SELECT CASE WHEN EXISTS (
@@ -443,6 +444,7 @@ func (r *CourseEnrollmentRepository) ListLessons(
 		            JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		            WHERE q.lesson_version_id = cel.lesson_version_id
 		              AND ce.mode = 'curator'
+		              AND le.status = 'completed'
 		              AND review.decision = 'needs_revision'
 		        ) THEN 1 ELSE 0 END),
 		       (SELECT count(*)::INTEGER
@@ -457,6 +459,7 @@ func (r *CourseEnrollmentRepository) ListLessons(
 		        JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
 		          AND ce.mode = 'curator'
+		          AND le.status = 'completed'
 		          AND review.decision = 'needs_revision')
 		FROM course_enrollments ce
 		JOIN course_enrollment_lessons cel ON cel.course_enrollment_id = ce.id
