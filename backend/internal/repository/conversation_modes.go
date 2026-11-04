@@ -21,7 +21,11 @@ func (r *ConversationRepository) SetStudentChatMode(ctx context.Context, student
 		),
 		mode_upsert AS (
 			INSERT INTO student_chat_modes (student_id, chat_mode_enabled, lesson_mode_enabled)
-			SELECT id, $2, FALSE FROM eligible_student
+			SELECT id, $2, FALSE
+			FROM eligible_student
+			WHERE $2 OR EXISTS (
+				SELECT 1 FROM student_chat_modes WHERE student_id = eligible_student.id
+			)
 			ON CONFLICT (student_id) DO UPDATE
 			SET chat_mode_enabled = EXCLUDED.chat_mode_enabled,
 			    lesson_mode_enabled = CASE
@@ -76,7 +80,11 @@ func (r *ConversationRepository) SetStudentLessonMode(ctx context.Context, stude
 		),
 		mode_upsert AS (
 			INSERT INTO student_chat_modes (student_id, chat_mode_enabled, lesson_mode_enabled)
-			SELECT id, FALSE, $2 FROM eligible_student
+			SELECT id, FALSE, $2
+			FROM eligible_student
+			WHERE $2 OR EXISTS (
+				SELECT 1 FROM student_chat_modes WHERE student_id = eligible_student.id
+			)
 			ON CONFLICT (student_id) DO UPDATE
 			SET lesson_mode_enabled = EXCLUDED.lesson_mode_enabled,
 			    chat_mode_enabled = CASE
