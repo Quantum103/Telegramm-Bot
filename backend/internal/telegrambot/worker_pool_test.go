@@ -212,6 +212,19 @@ func TestUpdateWorkerPoolRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestUpdateWorkerPoolRejectsAlreadyCancelledSubmission(t *testing.T) {
+	pool := newTestWorkerPool(t, 1, 1, func(context.Context, Update) bool {
+		return true
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := pool.Submit(ctx, workerPoolMessageUpdate(451, 1))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
+	}
+}
+
 func TestUpdateWorkerPoolRejectsSubmissionsAfterClose(t *testing.T) {
 	pool, err := NewUpdateWorkerPool(context.Background(), 1, 1, func(context.Context, Update) bool {
 		return true
