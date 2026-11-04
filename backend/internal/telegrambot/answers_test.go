@@ -470,3 +470,32 @@ func TestMultiChoiceDesiredStateIsIdempotentAndRestoresDraftFromMarkup(t *testin
 	}
 }
 
+func TestMultiChoiceCallbackRedeliveryDoesNotToggleOptionOff(t *testing.T) {
+	options := []domain.QuestionOption{{ID: 6701, Key: "a", Text: "вариант A"}, {ID: 6702, Key: "b", Text: "вариант B"}}
+	api, _, _, _, bot, user, mainID := setupAnswerFlow(t, "multiple_choice", options)
+	initialMarkup := lastEdit(t, api.fakeAPI).markup
+	if !hasButton(initialMarkup, "t:701:1001:6701:1") {
+		t.Fatalf("unselected option must request selected=true: %+v", initialMarkup)
+	}
+
+	callback := testCallback("t:701:1001:6701:1", user, mainID)
+	callback.Message.ReplyMarkup = initialMarkup
+	update := Update{UpdateID: 9052, CallbackQuery: &callback}
+	if !bot.handleUpdate(context.Background(), update) {
+		t.Fatal("first multiple-choice toggle was not processed")
+	}
+	if !bot.handleUpdate(context.Background(), update) {
+		t.Fatal("redelivered multiple-choice toggle was not processed")
+	}
+
+	selected := orderedDraftSelection(options, bot.multiDraftSelection(answerStateKey{
+		studentID: 1, enrollmentID: 701, questionID: 1001,
+	}))
+	if len(selected) != 1 || selected[0] != 6701 {
+		t.Fatalf("selection after callback redelivery = %v, want [6701]", selected)
+	}
+	if len(api.fakeAPI.answered) != 2 {
+		t.Fatalf("callback acknowledgement calls = %d, want 2 for the two deliveries", len(api.fakeAPI.answered))
+	}
+}
+
