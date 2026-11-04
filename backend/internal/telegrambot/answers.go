@@ -147,6 +147,28 @@ func (b *Bot) seedMultiDraftFromMarkup(key answerStateKey, markup *InlineKeyboar
 	}
 	b.multiDrafts[key] = selected
 }
+
+func hasMultiDraftControls(markup *InlineKeyboardMarkup, key answerStateKey) bool {
+	if markup == nil {
+		return false
+	}
+	for _, row := range markup.InlineKeyboard {
+		for _, item := range row {
+			parts := strings.Split(item.CallbackData, ":")
+			if len(parts) < 4 || parts[0] != "t" {
+				continue
+			}
+			enrollmentID, errEnrollment := strconv.ParseInt(parts[1], 10, 64)
+			questionID, errQuestion := strconv.ParseInt(parts[2], 10, 64)
+			if errEnrollment == nil && errQuestion == nil &&
+				enrollmentID == key.enrollmentID && questionID == key.questionID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (b *Bot) multiDraftSelection(key answerStateKey) []int64 {
 	b.choiceMu.Lock()
 	defer b.choiceMu.Unlock()
@@ -333,6 +355,12 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		return !isRetryableUpdateError(err)
 	}
 	key := answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: questionID}
+	if (action == "multi-toggle" || action == "multi-submit") && hasMultiDraftControls(replyMarkup, key) {
+		// A callback received after restart carries the keyboard snapshot from
+		// which it was pressed. Recover edit mode and its selected options.
+		b.setChoiceEditing(key, true)
+		b.seedMultiDraftFromMarkup(key, replyMarkup)
+	}
 	switch action {
 	case "pick-edit":
 		if state.Question.AnswerType != "single_choice" && state.Question.AnswerType != "multiple_choice" {
