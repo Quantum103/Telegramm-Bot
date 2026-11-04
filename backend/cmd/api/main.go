@@ -114,8 +114,8 @@ func run(logger *slog.Logger) error {
 	)
 	staffTelegramService := service.NewStaffTelegramService(repository.NewStaffTelegramRepository(pool))
 	staffManagementRepository := repository.NewStaffManagementRepository(pool)
-	staffManagementService := service.NewStaffManagementService(staffManagementRepository)
-	staffReferralService := service.NewStaffReferralService(staffManagementRepository)
+	staffManagementService := service.NewStaffManagementService(staffManagementRepository, conversationService)
+	staffReferralService := service.NewStaffReferralService(staffManagementRepository, conversationService)
 
 	var telegramAPI *telegrambot.HTTPClient
 	var botUsernameProvider httpserver.TelegramBotUsernameProvider
