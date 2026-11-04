@@ -16,7 +16,11 @@ type staffManagementTestStore struct {
 	email        string
 	passwordHash string
 	roleCode     string
-	createErr    error
+	createErr  error
+	assignCalls int
+	assignErr   error
+	endCalls    int
+	endErr      error
 }
 
 func (s *staffManagementTestStore) ListStaffAccounts(context.Context, int64) ([]domain.StaffAccountSummary, error) {
@@ -37,10 +41,12 @@ func (s *staffManagementTestStore) ListStudentsForStaff(context.Context, int64) 
 	return []domain.AdminStudent{}, nil
 }
 func (s *staffManagementTestStore) AssignStudentCurator(context.Context, int64, int64, int64) error {
-	return nil
+	s.assignCalls++
+	return s.assignErr
 }
 func (s *staffManagementTestStore) EndStudentCuratorAssignment(context.Context, int64, int64) error {
-	return nil
+	s.endCalls++
+	return s.endErr
 }
 
 func (s *staffManagementTestStore) SetStaffAccountStatus(context.Context, int64, int64, string) error {
@@ -98,5 +104,45 @@ func TestCreateStaffAccountRejectsInvalidInputBeforeStore(t *testing.T) {
 				t.Fatal("invalid input unexpectedly reached the store")
 			}
 		})
+	}
+}
+
+type conversationEventPublisherTestStub struct {
+	calls int
+}
+
+func (s *conversationEventPublisherTestStub) PublishConversationChanged() {
+	s.calls++
+}
+
+func TestStaffManagementPublishesConversationChangesAfterAssignmentMutations(t *testing.T) {
+	store := &staffManagementTestStore{}
+	publisher := &conversationEventPublisherTestStub{}
+	management := NewStaffManagementService(store, publisher)
+
+	if err := management.AssignCurator(context.Background(), 1, 2, 3); err != nil {
+		t.Fatalf("AssignCurator() error = %v", err)
+	}
+	if store.assignCalls != 1 || publisher.calls != 1 {
+		t.Fatalf("assignment should publish exactly once after persistence: store=%d events=%d", store.assignCalls, publisher.calls)
+	}
+
+	if err := management.EndCuratorAssignment(context.Background(), 1, 2); err != nil {
+		t.Fatalf("EndCuratorAssignment() error = %v", err)
+	}
+	if store.endCalls != 1 || publisher.calls != 2 {
+		t.Fatalf("ending assignment should publish exactly once: store=%d events=%d", store.endCalls, publisher.calls)
+	}
+
+	store.assignErr = errors.New("database unavailable")
+	if err := management.AssignCurator(context.Background(), 1, 2, 4); err == nil {
+		t.Fatal("expected assignment persistence error")
+	}
+	store.endErr = errors.New("database unavailable")
+	if err := management.EndCuratorAssignment(context.Background(), 1, 2); err == nil {
+		t.Fatal("expected unassignment persistence error")
+	}
+	if publisher.calls != 2 {
+		t.Fatalf("failed assignment mutations must not publish events, got %d", publisher.calls)
 	}
 }
