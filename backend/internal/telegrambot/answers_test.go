@@ -540,7 +540,6 @@ func TestMultiChoiceCallbackRedeliveryDoesNotToggleOptionOff(t *testing.T) {
 	}
 }
 
-
 func TestCuratorLessonIsSentAfterAllAnswersAreSaved(t *testing.T) {
 	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "text", nil)
 
