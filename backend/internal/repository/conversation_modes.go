@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // SetStudentChatMode хранит выбранный учеником режим в PostgreSQL, чтобы перезапуск бота не смешивал ответы уроков и чат.
@@ -40,7 +42,7 @@ func (r *ConversationRepository) SetStudentChatMode(ctx context.Context, student
 			RETURNING student_id
 		)
 		SELECT EXISTS (SELECT 1 FROM eligible_student)
-		   AND (SELECT count(*) >= 0 FROM mode_upsert)
+		FROM (SELECT count(*) FROM mode_upsert) AS applied
 	`, studentID, enabled).Scan(&active)
 	if err != nil {
 		return mapDatabaseError("сохранить режим общения ученика", err)
