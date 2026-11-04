@@ -98,11 +98,23 @@ func (p *UpdateWorkerPool) Submit(ctx context.Context, update Update) (<-chan bo
 	if ctx == nil {
 		return nil, errors.New("update submission context must not be nil")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.submitContext.Err(); err != nil {
+		return nil, err
+	}
 
 	p.submitMu.RLock()
 	defer p.submitMu.RUnlock()
 	if p.closed {
 		return nil, ErrUpdateWorkerPoolClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.submitContext.Err(); err != nil {
+		return nil, err
 	}
 
 	result := make(chan bool, 1)
