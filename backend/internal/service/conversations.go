@@ -28,6 +28,11 @@ type ConversationStore interface {
 	IsStudentChatMode(context.Context, int64) (bool, error)
 }
 
+// ConversationEventPublisher announces persisted changes that should refresh curator dialogs.
+type ConversationEventPublisher interface {
+	PublishConversationChanged()
+}
+
 type ResponseWaitPolicy struct {
 	FirstReminderAfter  time.Duration
 	SecondReminderAfter time.Duration
@@ -104,7 +109,7 @@ func (s *ConversationService) CreateStudentMessage(ctx context.Context, params d
 	if err != nil {
 		return domain.ConversationMessage{}, err
 	}
-	s.events.publish()
+	s.PublishConversationChanged()
 	return message, nil
 }
 
@@ -120,6 +125,13 @@ func (s *ConversationService) SendCuratorMessage(ctx context.Context, curatorSta
 	}
 	s.events.publish()
 	return message, nil
+}
+
+func (s *ConversationService) PublishConversationChanged() {
+	if s == nil || s.events == nil {
+		return
+	}
+	s.events.publish()
 }
 
 func (s *ConversationService) SubscribeConversationEvents() (<-chan struct{}, func()) {
