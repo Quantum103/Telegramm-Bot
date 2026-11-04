@@ -617,19 +617,20 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 		if len(fields) > 1 {
 			referralPayload = strings.Join(fields[1:], " ")
 		}
-		b.handleStart(ctx, message.Chat.ID, *message.From, referralPayload)
+		return b.handleStart(ctx, message.Chat.ID, *message.From, referralPayload)
 	case "/chat":
-		b.handleChatCommand(ctx, message.Chat.ID, *message.From)
+		return b.handleChatCommand(ctx, message.Chat.ID, *message.From)
 	case "/link":
-		b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
+		return b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
 	case "/help":
 		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть каталог курсов\n/chat — написать куратору\n/link КОД — привязать Telegram к учётной записи куратора\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
+		return true
 	case "/cancel":
-		b.handleCancelCommand(ctx, message.Chat.ID, *message.From)
+		return b.handleCancelCommand(ctx, message.Chat.ID, *message.From)
 	default:
 		b.send(ctx, message.Chat.ID, "Пока доступны команды /start, /chat, /help и /cancel.")
+		return true
 	}
-	return true
 }
 
 func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (bool, bool) {
@@ -682,90 +683,93 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 	return true, true
 }
 
-func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user User, fields []string) {
+
+func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user User, fields []string) bool {
 	if b.staffTelegram == nil {
 		b.send(ctx, chatID, "Привязка Telegram сотрудника пока недоступна.")
-		return
+		return true
 	}
 	if chatID != user.ID || len(fields) != 2 {
 		b.send(ctx, chatID, "Для привязки откройте личный чат с ботом и отправьте команду /link КОД из веб-панели.")
-		return
+		return true
 	}
 	account, err := b.staffTelegram.BindTelegramAccount(ctx, user.ID, user.Username, fields[1])
 	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 		b.send(ctx, chatID, "Код привязки недействителен или истёк. Создайте новый код в веб-панели.")
-		return
+		return true
 	}
 	if errors.Is(err, domain.ErrInvalidState) {
 		b.send(ctx, chatID, "Привязка недоступна: учётная запись отключена или у неё больше нет активной роли куратора либо администратора.")
-		return
+		return true
 	}
 	if errors.Is(err, domain.ErrConflict) {
 		b.send(ctx, chatID, "Этот Telegram-аккаунт уже привязан к другой учётной записи.")
-		return
+		return true
 	}
 	if err != nil {
 		b.logger.Error("не удалось привязать Telegram к учётной записи", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось завершить привязку из-за временной ошибки. Создайте новый код позже.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	b.send(ctx, chatID, "Telegram успешно привязан к учётной записи «"+account.DisplayName+"». Уведомления о новых сообщениях будут приходить сюда. Отвечайте ученикам в веб-панели.")
+	return true
 }
 
-func (b *Bot) handleChatCommand(ctx context.Context, chatID int64, user User) {
+func (b *Bot) handleChatCommand(ctx context.Context, chatID int64, user User) bool {
 	student, err := b.ensureStudent(ctx, user)
 	if err != nil {
 		b.logger.Warn("не удалось определить ученика для режима общения", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось проверить регистрацию. Отправьте /start и попробуйте ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
-	b.startStudentChat(ctx, chatID, 0, student)
+	return b.startStudentChat(ctx, chatID, 0, student)
 }
 
-func (b *Bot) startStudentChat(ctx context.Context, chatID, messageID int64, student domain.Student) {
+func (b *Bot) startStudentChat(ctx context.Context, chatID, messageID int64, student domain.Student) bool {
 	if b.conversations == nil {
 		b.render(ctx, chatID, messageID, "Общение с куратором пока недоступно. Попробуйте позже.", keyboard(button("К курсам", "courses")))
-		return
+		return true
 	}
 	if err := b.conversations.SetStudentChatMode(ctx, student.ID, true); err != nil {
 		b.logger.Error("не удалось включить режим общения", "student_id", student.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось включить режим общения. Попробуйте ещё раз.", keyboard(button("Повторить", "chat:start")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	b.render(ctx, chatID, messageID,
 		"Режим общения с куратором включён.\n\nНапишите сообщение следующим сообщением. Оно будет сохранено и появится в диалоге вашего назначенного куратора.\n\nЧтобы вернуться к прохождению курсов, нажмите кнопку ниже или отправьте /cancel.",
 		keyboard(button("Вернуться к прохождению курсов", "chat:cancel")))
+	return true
 }
 
-func (b *Bot) handleCancelCommand(ctx context.Context, chatID int64, user User) {
+func (b *Bot) handleCancelCommand(ctx context.Context, chatID int64, user User) bool {
 	if b.conversations == nil {
 		b.send(ctx, chatID, "Сейчас нет активного действия для отмены.")
-		return
+		return true
 	}
 	student, err := b.ensureStudent(ctx, user)
 	if err != nil {
 		b.logger.Warn("не удалось определить ученика при отмене действия", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось проверить регистрацию. Отправьте /start и попробуйте снова.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	enabled, err := b.conversations.IsStudentChatMode(ctx, student.ID)
 	if err != nil {
 		b.logger.Warn("не удалось проверить режим общения при отмене", "student_id", student.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось отменить действие из-за временной ошибки. Попробуйте ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if !enabled {
 		b.send(ctx, chatID, "Сейчас нет активного действия для отмены.")
-		return
+		return true
 	}
 	if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
 		b.logger.Error("не удалось отключить режим общения", "student_id", student.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось выключить режим общения. Попробуйте ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	b.send(ctx, chatID, "Режим общения выключен. Следующие текстовые сообщения будут обрабатываться как ответы на вопросы уроков.")
+	return true
 }
-
 func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.Student, message Message, bodyText string) bool {
 	saved, err := b.conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: student.ID, TelegramChatID: message.Chat.ID,
@@ -792,16 +796,19 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	return true
 }
 
-func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referralPayload string) {
+
+func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referralPayload string) bool {
 	student, err := b.ensureStudent(ctx, user)
 	if err != nil {
 		b.logger.Error("не удалось зарегистрировать ученика Telegram", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось завершить регистрацию из-за временной ошибки. Попробуйте ещё раз немного позже.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if b.conversations != nil {
 		if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
 			b.logger.Warn("не удалось выключить режим общения при открытии каталога", "student_id", student.ID, "error", err)
+			b.send(ctx, chatID, "Не удалось переключить режим общения из-за временной ошибки. Повторите /start.")
+			return !isRetryableUpdateError(err)
 		}
 	}
 	name := student.DisplayName
@@ -810,43 +817,47 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referral
 	}
 	greeting := "Привет, " + name + "!"
 	if referralPayload != "" {
-		greeting += "\n\n" + b.applyStudentReferral(ctx, student.ID, referralPayload)
+		referralMessage, ok := b.applyStudentReferral(ctx, student.ID, referralPayload)
+		greeting += "\n\n" + referralMessage
+		if !ok {
+			return false
+		}
 	}
 	b.showStudentHome(ctx, chatID, student.ID, 0, greeting)
+	return true
 }
 
-func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code string) string {
+func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code string) (string, bool) {
 	if b.studentReferrals == nil {
 		b.logger.Error("реферальный сервис Telegram-бота не подключён", "student_id", studentID)
-		return "Не удалось применить приглашение куратора. Каталог курсов открыт."
+		return "Не удалось применить приглашение куратора. Каталог курсов открыт.", true
 	}
 
 	result, err := b.studentReferrals.AssignStudentByReferral(ctx, studentID, code)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidInput), errors.Is(err, domain.ErrNotFound):
-			return "Ссылка приглашения недействительна или куратор больше неактивен. Каталог курсов открыт."
+			return "Ссылка приглашения недействительна или куратор больше неактивен. Каталог курсов открыт.", true
 		case errors.Is(err, domain.ErrConflict):
-			return "За вами уже закреплён другой куратор. Текущее назначение не изменено."
+			return "За вами уже закреплён другой куратор. Текущее назначение не изменено.", true
 		case errors.Is(err, domain.ErrInvalidState):
-			return "Не удалось применить приглашение: аккаунт ученика неактивен."
+			return "Не удалось применить приглашение: аккаунт ученика неактивен.", true
 		default:
 			b.logger.Error("не удалось применить реферальное назначение куратора", "student_id", studentID, "error", err)
-			return "Не удалось применить приглашение из-за временной ошибки. Каталог курсов открыт."
+			return "Не удалось применить приглашение из-за временной ошибки. Повторите /start с этой ссылкой.", !isRetryableUpdateError(err)
 		}
 	}
 
 	if result.Assigned {
-		return "Куратор закреплён за вами. Это не меняет способ прохождения курса."
+		return "Куратор закреплён за вами. Это не меняет способ прохождения курса.", true
 	}
 	if result.AlreadyAssigned {
-		return "Вы уже закреплены за этим куратором. Способ прохождения курса не изменён."
+		return "Вы уже закреплены за этим куратором. Способ прохождения курса не изменён.", true
 	}
 
 	b.logger.Warn("реферальный сервис вернул пустой результат назначения", "student_id", studentID)
-	return "Не удалось подтвердить назначение куратора. Каталог курсов открыт."
+	return "Не удалось подтвердить назначение куратора. Каталог курсов открыт.", true
 }
-
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
 	return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
 		TelegramID: user.ID, DisplayName: displayName(user),
