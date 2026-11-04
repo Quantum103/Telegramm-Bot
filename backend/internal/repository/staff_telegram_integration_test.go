@@ -88,6 +88,11 @@ func TestListNotificationsReturnsOnlyUnreadMessages(t *testing.T) {
 	fixture := createConversationFixture(t, pool, true)
 	conversations := NewConversationRepository(pool)
 
+	const staffFacingLabel = "Подпись для сайта"
+	if _, err := pool.Exec(ctx, "UPDATE students SET staff_label = $2 WHERE id = $1", fixture.studentID, staffFacingLabel); err != nil {
+		t.Fatalf("установить внутреннюю подпись ученика: %v", err)
+	}
+
 	message, err := conversations.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 778899, BodyText: "Непрочитанный вопрос ученика",
@@ -102,6 +107,7 @@ func TestListNotificationsReturnsOnlyUnreadMessages(t *testing.T) {
 		t.Fatalf("получить непрочитанные уведомления куратора: %v", err)
 	}
 	if len(curatorItems) != 1 || curatorItems[0].MessageID != message.ID ||
+		curatorItems[0].StudentDisplayName != staffFacingLabel ||
 		(curatorItems[0].Channel != "curator_telegram" && curatorItems[0].Channel != "curator_transfer") {
 		t.Fatalf("журнал должен показывать одно непрочитанное сообщение без строк напоминаний: %+v", curatorItems)
 	}
@@ -114,7 +120,8 @@ func TestListNotificationsReturnsOnlyUnreadMessages(t *testing.T) {
 		t.Fatalf("подготовить адресата эскалации для администратора: rows=%d err=%v", tag.RowsAffected(), err)
 	}
 	adminItems, err := notifications.ListNotifications(ctx, fixture.adminID, 50)
-	if err != nil || len(adminItems) != 1 || adminItems[0].MessageID != message.ID {
+	if err != nil || len(adminItems) != 1 || adminItems[0].MessageID != message.ID ||
+		adminItems[0].StudentDisplayName != staffFacingLabel {
 		t.Fatalf("администратор должен видеть эскалацию по непрочитанному сообщению: items=%+v err=%v", adminItems, err)
 	}
 
