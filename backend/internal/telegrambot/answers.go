@@ -169,6 +169,33 @@ func hasMultiDraftControls(markup *InlineKeyboardMarkup, key answerStateKey) boo
 	return false
 }
 
+
+func multiDraftOptionSelectedInMarkup(markup *InlineKeyboardMarkup, key answerStateKey, optionID int64) bool {
+	if markup == nil {
+		return false
+	}
+	for _, row := range markup.InlineKeyboard {
+		for _, item := range row {
+			parts := strings.Split(item.CallbackData, ":")
+			if len(parts) < 4 || parts[0] != "t" {
+				continue
+			}
+			enrollmentID, errEnrollment := strconv.ParseInt(parts[1], 10, 64)
+			questionID, errQuestion := strconv.ParseInt(parts[2], 10, 64)
+			buttonOptionID, errOption := strconv.ParseInt(parts[3], 10, 64)
+			if errEnrollment != nil || errQuestion != nil || errOption != nil ||
+				enrollmentID != key.enrollmentID || questionID != key.questionID || buttonOptionID != optionID {
+				continue
+			}
+			if len(parts) == 5 {
+				return parts[4] == "0"
+			}
+			return strings.HasPrefix(item.Text, "✅ ")
+		}
+	}
+	return false
+}
+
 func (b *Bot) multiDraftSelection(key answerStateKey) []int64 {
 	b.choiceMu.Lock()
 	defer b.choiceMu.Unlock()
@@ -407,8 +434,14 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		if len(parts) == 5 {
 			b.seedMultiDraftFromMarkup(key, replyMarkup)
 			b.setMultiDraftOption(key, optionID, desiredSelected)
+		} else if hasMultiDraftControls(replyMarkup, key) {
+			// Old keyboards encode a toggle implicitly in the check marker.
+			// Read the previous state from the callback's message snapshot so
+			// a redelivered legacy callback still applies the same target state.
+			b.seedMultiDraftFromMarkup(key, replyMarkup)
+			b.setMultiDraftOption(key, optionID, !multiDraftOptionSelectedInMarkup(replyMarkup, key, optionID))
 		} else {
-			// Compatibility with keyboards rendered before desired-state callbacks.
+			// Compatibility for synthetic callers without a Telegram message snapshot.
 			b.toggleMultiDraft(key, optionID)
 		}
 		b.setChoiceEditing(key, true)
