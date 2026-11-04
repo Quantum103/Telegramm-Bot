@@ -235,9 +235,9 @@ func TestUpdateChatKeyUsesCallbackChatOrActor(t *testing.T) {
 		want   int64
 	}{
 		{
-			name: "message chat",
+			name:   "message chat",
 			update: Update{Message: &Message{Chat: Chat{ID: -1001}}},
-			want: -1001,
+			want:   -1001,
 		},
 		{
 			name: "callback message chat",
