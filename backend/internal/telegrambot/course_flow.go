@@ -265,9 +265,13 @@ func (b *Bot) openFirstIncompleteLesson(
 		}
 		return b.openCourseRunLesson(ctx, nav, chatID, studentID, messageID, run, lesson, notice)
 	}
-	b.render(ctx, chatID, messageID,
-		fmt.Sprintf("Вы завершили все уроки курса „%s“. Теперь можно вернуться в каталог и выбрать следующий курс.", truncate(run.Enrollment.CourseTitle, 180)),
-		keyboard(button("К курсам", "courses")))
+	message := fmt.Sprintf("Вы завершили все уроки курса „%s“. Теперь можно вернуться в каталог и выбрать следующий курс.", truncate(run.Enrollment.CourseTitle, 180))
+	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}}
+	if run.Enrollment.Mode == "curator" {
+		message = fmt.Sprintf("✅ Вы отправили все уроки курса „%s“ куратору. Он проверит ответы и при необходимости свяжется с вами лично.", truncate(run.Enrollment.CourseTitle, 180))
+		rows = append(rows, []InlineKeyboardButton{button("Написать куратору", "chat:start")})
+	}
+	b.render(ctx, chatID, messageID, message, markup(rows))
 	return true
 }
 
