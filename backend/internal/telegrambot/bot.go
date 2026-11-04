@@ -326,8 +326,8 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if requestCtx.Err() != nil {
+			return requestCtx.Err()
 		}
 		// Ошибка net/http может включать URL с токеном, поэтому исходная ошибка не возвращается.
 		return errors.New("сетевой запрос к Telegram Bot API завершился ошибкой")

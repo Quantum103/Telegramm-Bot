@@ -1393,3 +1393,11 @@ func TestHTTPClientClassifiesTelegramAPIResponses(t *testing.T) {
 		})
 	}
 }
+
+
+func TestNewHTTPClientDoesNotUseOneGlobalTimeout(t *testing.T) {
+	client := NewHTTPClient("test-token")
+	if client.httpClient.Timeout != 0 {
+		t.Fatalf("HTTP client global timeout = %s, want no global timeout; per-method contexts own deadlines", client.httpClient.Timeout)
+	}
+}
