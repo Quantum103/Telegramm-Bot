@@ -123,7 +123,7 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 	if err != nil {
 		t.Fatalf("начать курс ученика A: %v", err)
 	}
-	runB, err := courses.Start(ctx, studentB.ID, courseOneID, "curator")
+	runB, err := courses.Start(ctx, studentB.ID, courseTwoID, "curator")
 	if err != nil {
 		t.Fatalf("начать курс ученика B: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 		t.Fatalf("одобрить первый ответ ученика A: %v", err)
 	}
 
-	lessonB := startCuratorTestLesson(t, ctx, pool, studentB.ID, runB, lessonIDs[0], "Ответ B")
+	lessonB := startCuratorTestLesson(t, ctx, pool, studentB.ID, runB, courseTwoLessons[0], "Ответ B")
 	baseTime := time.Now().UTC().Truncate(time.Microsecond).Add(-24 * time.Hour)
 	setCuratorQueueAttemptTime(t, ctx, pool, lessonB.answer.AttemptID, baseTime)
 	if _, err := NewEnrollmentRepository(pool).Complete(ctx, studentB.ID, lessonB.enrollment.ID); err != nil {
