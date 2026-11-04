@@ -476,6 +476,23 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 	b.logger.Info("Telegram-бот авторизован", "telegram_bot_id", me.ID, "username", me.Username)
 
+	pool, err := NewUpdateWorkerPool(
+		ctx,
+		defaultUpdateWorkerCount,
+		defaultUpdateQueueCapacity,
+		b.processUpdate,
+	)
+	if err != nil {
+		return fmt.Errorf("не удалось запустить пул обработки Telegram updates: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), updateWorkerShutdownTimeout)
+		defer cancel()
+		if err := pool.Shutdown(shutdownCtx); err != nil {
+			b.logger.Warn("пул обработки Telegram updates завершил работу с ошибкой", "error", err)
+		}
+	}()
+
 	var offset int64
 	backoff := time.Second
 	for {
@@ -496,18 +513,13 @@ func (b *Bot) Run(ctx context.Context) error {
 		}
 
 		backoff = time.Second
-		for _, update := range updates {
-			if update.UpdateID < offset {
-				continue
-			}
-			if !b.handleUpdate(ctx, update) {
-				// Не подтверждаем offset при временной ошибке сохранения: Telegram повторит update.
-				if !wait(ctx, time.Second) {
-					return nil
-				}
-				break
-			}
-			offset = update.UpdateID + 1
+		var retry bool
+		offset, retry = b.dispatchUpdateBatch(ctx, pool, updates, offset)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if retry && !wait(ctx, time.Second) {
+			return nil
 		}
 	}
 }
