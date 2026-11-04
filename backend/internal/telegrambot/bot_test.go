@@ -1251,3 +1251,147 @@ func TestHTTPClientSlowResponseRespectsEarlierCallerTimeout(t *testing.T) {
 		t.Fatal("HTTP request did not reach the test server")
 	}
 }
+
+
+func TestRenderDoesNotFallbackForAmbiguousOrTransientEditErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "network error", err: errors.New("temporary network failure")},
+		{name: "request timeout", err: context.DeadlineExceeded},
+		{name: "rate limit", err: &APIError{Code: http.StatusTooManyRequests, Description: "Too Many Requests"}},
+		{name: "server error", err: &APIError{Code: http.StatusBadGateway, Description: "Bad Gateway"}},
+		{name: "message unchanged", err: &APIError{Code: http.StatusBadRequest, Description: "message is not modified"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			api := &fakeAPI{editErr: test.err}
+			catalog, learning := fixture()
+			bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+
+			bot.render(context.Background(), 123, 456, "экран", keyboard(button("К курсам", "courses")))
+
+			if len(api.messages) != 0 {
+				t.Fatalf("неоднозначная/временная ошибка редактирования создала новое сообщение: %+v", api.messages)
+			}
+		})
+	}
+}
+
+func TestRenderFallsBackOnlyForExplicitlyUnavailableMessage(t *testing.T) {
+	tests := []struct {
+		name        string
+		description string
+	}{
+		{name: "message not found", description: "Bad Request: message to edit not found"},
+		{name: "message cannot be edited", description: "Bad Request: message can't be edited"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			api := &fakeAPI{editErr: &APIError{Code: http.StatusBadRequest, Description: test.description}}
+			catalog, learning := fixture()
+			bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+
+			bot.render(context.Background(), 123, 456, "замена", keyboard(button("К курсам", "courses")))
+
+			if len(api.messages) != 1 || api.messages[0].text != "замена" ||
+				!hasButton(api.messages[0].markup, "courses") {
+				t.Fatalf("после явного отказа редактирования ожидалось одно сообщение с исходной клавиатурой: %+v", api.messages)
+			}
+		})
+	}
+}
+
+func TestRenderHTMLDoesNotFallbackAfterAmbiguousEditError(t *testing.T) {
+	api := &fakeAPI{editErr: context.DeadlineExceeded}
+	catalog, learning := fixture()
+	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+
+	bot.renderHTML(context.Background(), 123, 456, "<b>вопрос</b>", keyboard(button("К курсам", "courses")))
+
+	if len(api.messages) != 0 {
+		t.Fatalf("timeout HTML-редактирования создал дублирующее сообщение: %+v", api.messages)
+	}
+}
+
+func TestRenderDoesNotFallbackWhenConnectionIsLostAfterEditRequest(t *testing.T) {
+	requests := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.URL.Path
+		_, _ = io.Copy(io.Discard, r.Body)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("test server does not support connection hijacking")
+			return
+		}
+		connection, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack connection: %v", err)
+			return
+		}
+		_ = connection.Close()
+	}))
+	defer server.Close()
+
+	api := newHTTPClient("secret-token", server.URL, server.Client())
+	catalog, learning := fixture()
+	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+	bot.render(context.Background(), 123, 456, "новый экран", keyboard(button("К курсам", "courses")))
+
+	select {
+	case path := <-requests:
+		if path != "/botsecret-token/editMessageText" {
+			t.Fatalf("first request path = %q, want editMessageText", path)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("edit request did not reach test server")
+	}
+
+	select {
+	case path := <-requests:
+		t.Fatalf("after lost edit response an unsafe duplicate request was sent: %q", path)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestHTTPClientClassifiesTelegramAPIResponses(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		code        int
+		description string
+		wantKind    TelegramErrorKind
+	}{
+		{name: "rate limited", status: http.StatusTooManyRequests, code: 429, description: "Too Many Requests", wantKind: TelegramErrorRateLimited},
+		{name: "server failure", status: http.StatusInternalServerError, code: 500, description: "Internal Server Error", wantKind: TelegramErrorServerFailure},
+		{name: "message unchanged", status: http.StatusBadRequest, code: 400, description: "message is not modified", wantKind: TelegramErrorMessageUnchanged},
+		{name: "message not found", status: http.StatusBadRequest, code: 400, description: "message to edit not found", wantKind: TelegramErrorMessageNotFound},
+		{name: "message cannot be edited", status: http.StatusBadRequest, code: 400, description: "message can't be edited", wantKind: TelegramErrorMessageNotEditable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok": false, "error_code": test.code, "description": test.description,
+				})
+			}))
+			defer server.Close()
+
+			client := newHTTPClient("token", server.URL, server.Client())
+			_, err := client.GetMe(context.Background())
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("GetMe error = %v, want *APIError", err)
+			}
+			if apiErr.HTTPStatus != test.status {
+				t.Errorf("HTTP status = %d, want %d", apiErr.HTTPStatus, test.status)
+			}
+			if got := classifyTelegramAPIError(err); got != test.wantKind {
+				t.Errorf("error kind = %q, want %q", got, test.wantKind)
+			}
+		})
+	}
+}
