@@ -129,7 +129,7 @@ func TestSetStudentLabelEnforcesStaffAccessAndPersistsInStaffProjection(t *testi
 		t.Fatalf("administrator should update any active student: %v", err)
 	}
 	var adminLabel string
-	if err := pool.QueryRow(ctx, "SELECT staff_label FROM students WHERE id = $1", unassignedStudentID).Scan(&adminLabel); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT COALESCE(staff_label, '') FROM students WHERE id = $1", unassignedStudentID).Scan(&adminLabel); err != nil {
 		t.Fatalf("read administrator label: %v", err)
 	}
 	if adminLabel != "Набор для администратора" {
@@ -139,10 +139,18 @@ func TestSetStudentLabelEnforcesStaffAccessAndPersistsInStaffProjection(t *testi
 	if err := repo.SetStudentLabel(ctx, curatorID, studentID, "   "); err != nil {
 		t.Fatalf("empty label should clear override: %v", err)
 	}
-	if err := pool.QueryRow(ctx, "SELECT staff_label FROM students WHERE id = $1", studentID).Scan(&adminLabel); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT COALESCE(staff_label, '') FROM students WHERE id = $1", studentID).Scan(&adminLabel); err != nil {
 		t.Fatalf("read cleared label: %v", err)
 	}
 	if adminLabel != "" {
-		t.Fatalf("cleared label should be NULL, got %q", adminLabel)
+		t.Fatalf("cleared label should be empty, got %q", adminLabel)
+	}
+
+	var telegramName, preferredName string
+	if err := pool.QueryRow(ctx, "SELECT display_name, preferred_name FROM students WHERE id = $1", studentID).Scan(&telegramName, &preferredName); err != nil {
+		t.Fatalf("read original student profile names: %v", err)
+	}
+	if telegramName != "Telegram Name" || preferredName != "Профильное имя" {
+		t.Fatalf("staff label changed original profile data: display=%q preferred=%q", telegramName, preferredName)
 	}
 }
