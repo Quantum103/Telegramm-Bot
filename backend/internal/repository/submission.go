@@ -53,7 +53,7 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 		}
 		return SavedAnswer{}, mapDatabaseError("проверить прохождение ученика", err)
 	}
-	if enrollmentStatus == "cancelled" {
+	if enrollmentStatus == "cancelled" || enrollmentStatus == "completed" {
 		return SavedAnswer{}, ErrInvalidState
 	}
 	if courseEnrollmentID.Valid {
