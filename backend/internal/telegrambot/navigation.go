@@ -437,17 +437,13 @@ func optionSummary(options []domain.QuestionOption, selectedIDs []int64) string 
 }
 
 func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
+	b.acknowledgeCallback(ctx, callback)
 	b.handleCallbackWithUpdateID(ctx, 0, callback)
 }
 
+// handleCallbackWithUpdateID performs only the business part. Callback UI
+// acknowledgement must happen at the update intake boundary, before queueing.
 func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, callback CallbackQuery) bool {
-	// Callback acknowledgement is a UI operation. Business processing below
-	// returns independently so a temporary failure does not advance polling offset.
-	if callback.ID != "" {
-		if err := b.api.AnswerCallbackQuery(ctx, callback.ID, ""); err != nil && ctx.Err() == nil {
-			b.logger.Warn("не удалось подтвердить callback Telegram", "error", err)
-		}
-	}
 	if callback.From == nil || callback.From.ID <= 0 || callback.Message == nil ||
 		callback.Message.Chat.ID <= 0 || callback.Message.Chat.ID != callback.From.ID ||
 		(callback.Message.Chat.Type != "" && callback.Message.Chat.Type != "private") {
