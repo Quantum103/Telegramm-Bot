@@ -72,7 +72,8 @@ func TestGetOrCreateReferralCodeRejectsInvalidStaffID(t *testing.T) {
 
 func TestAssignStudentByReferralValidatesCodeAndReturnsStoreResult(t *testing.T) {
 	store := &staffReferralTestStore{assignment: domain.ReferralAssignmentResult{CuratorStaffID: 42, Assigned: true}}
-	service := NewStaffReferralService(store)
+	publisher := &conversationEventPublisherTestStub{}
+	service := NewStaffReferralService(store, publisher)
 	if _, err := service.AssignStudentByReferral(context.Background(), 11, "c_invalid"); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("invalid referral code error = %v, want ErrInvalidInput", err)
 	}
@@ -86,5 +87,20 @@ func TestAssignStudentByReferralValidatesCodeAndReturnsStoreResult(t *testing.T)
 	}
 	if store.assignCalls != 1 || store.assignmentCode != code || !result.Assigned || result.CuratorStaffID != 42 {
 		t.Fatalf("unexpected referral assignment: result=%+v store=%+v", result, store)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("a new referral assignment should publish one conversation event, got %d", publisher.calls)
+	}
+
+	store.assignment = domain.ReferralAssignmentResult{CuratorStaffID: 42, AlreadyAssigned: true}
+	if _, err := service.AssignStudentByReferral(context.Background(), 11, code); err != nil {
+		t.Fatalf("repeat referral assignment: %v", err)
+	}
+	store.assignErr = errors.New("database unavailable")
+	if _, err := service.AssignStudentByReferral(context.Background(), 12, code); err == nil {
+		t.Fatal("expected referral assignment persistence error")
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("idempotent or failed referral assignment must not publish an event, got %d", publisher.calls)
 	}
 }
