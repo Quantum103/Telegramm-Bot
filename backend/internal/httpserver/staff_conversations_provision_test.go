@@ -115,7 +115,7 @@ func TestConversationProvisionEndpointRejectsUnauthorizedRequests(t *testing.T) 
 		},
 		{
 			name: "missing csrf token", roles: []string{"curator"},
-			path: "/api/v1/staff/students/88/conversation",
+			path:       "/api/v1/staff/students/88/conversation",
 			wantStatus: http.StatusForbidden,
 		},
 		{
@@ -138,7 +138,7 @@ func TestConversationProvisionEndpointRejectsUnauthorizedRequests(t *testing.T) 
 			}
 			provisioner := &fakeCuratorConversationProvisioner{
 				fakeRealtimeConversationAPI: &fakeRealtimeConversationAPI{events: make(chan struct{}, 1)},
-				err: errors.New("unused"),
+				err:                         errors.New("unused"),
 			}
 			if tt.name == "student belongs to another curator" {
 				provisioner.err = domain.ErrNotFound
