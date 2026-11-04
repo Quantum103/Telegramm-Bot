@@ -17,6 +17,8 @@ type Config struct {
 	HTTPWriteTimeout           time.Duration
 	HTTPIdleTimeout            time.Duration
 	TelegramBotToken           string
+	TelegramUpdateWorkers      int
+	TelegramUpdateQueueCapacity int
 	CuratorReminderFirstAfter  time.Duration
 	CuratorReminderSecondAfter time.Duration
 	CuratorEscalationAfter     time.Duration
@@ -165,7 +167,37 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	cfg.Database.MaxConns = int32(maxConns)
 	cfg.Database.MinConns = int32(minConns)
 
+	defaultWorkers := defaultTelegramUpdateWorkers(maxConns)
+	if cfg.TelegramUpdateWorkers, err = intValue(lookup, "TELEGRAM_UPDATE_WORKERS", defaultWorkers); err != nil {
+		return Config{}, err
+	}
+	if cfg.TelegramUpdateWorkers < 1 || cfg.TelegramUpdateWorkers > 32 {
+		return Config{}, fmt.Errorf("TELEGRAM_UPDATE_WORKERS must be between 1 and 32")
+	}
+	if cfg.TelegramUpdateWorkers > maxConns {
+		return Config{}, fmt.Errorf("TELEGRAM_UPDATE_WORKERS must not exceed DATABASE_MAX_CONNS")
+	}
+	if cfg.TelegramUpdateQueueCapacity, err = intValue(lookup, "TELEGRAM_UPDATE_QUEUE_CAPACITY", 16); err != nil {
+		return Config{}, err
+	}
+	if cfg.TelegramUpdateQueueCapacity < 1 || cfg.TelegramUpdateQueueCapacity > 256 {
+		return Config{}, fmt.Errorf("TELEGRAM_UPDATE_QUEUE_CAPACITY must be between 1 and 256")
+	}
+
 	return cfg, nil
+}
+
+// defaultTelegramUpdateWorkers leaves at least half the PostgreSQL pool for
+// HTTP requests and background workers, while keeping the default small.
+func defaultTelegramUpdateWorkers(maxDatabaseConnections int) int {
+	workers := maxDatabaseConnections / 2
+	if workers < 1 {
+		return 1
+	}
+	if workers > 4 {
+		return 4
+	}
+	return workers
 }
 
 func stringValue(lookup func(string) (string, bool), key, fallback string) string {
