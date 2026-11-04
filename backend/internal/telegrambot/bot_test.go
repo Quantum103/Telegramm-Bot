@@ -1651,4 +1651,3 @@ func TestCallbackAcknowledgementFailureDoesNotBlockBusinessProcessing(t *testing
 		t.Fatalf("callback acknowledgement attempts = %d, want 1", len(api.answered))
 	}
 }
-
