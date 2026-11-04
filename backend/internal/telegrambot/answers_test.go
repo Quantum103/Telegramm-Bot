@@ -358,7 +358,7 @@ func TestChangingSavedSingleChoiceAnswerCreatesNewAttempt(t *testing.T) {
 	bot.handleCallbackWithUpdateID(context.Background(), 9111, testCallback("e:701:1001", user, mainID))
 	editScreen := lastEdit(t, api.fakeAPI)
 	if !hasButton(editScreen.markup, "p:701:1001:6112") ||
-		!strings.Contains(editScreen.text, "Изменить") {
+		!strings.Contains(editScreen.text, "Выберите один вариант ответа") {
 		t.Fatalf("экран изменения не показывает варианты ответа: %+v", editScreen)
 	}
 
