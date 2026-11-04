@@ -1160,36 +1160,55 @@ func lastEdit(t *testing.T, api *fakeAPI) editedMessage {
 }
 
 func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
-	api := &fakeAPI{}
-	students := &fakeStudents{}
-	catalog, learning := fixture()
-	bot := newTestBot(api, students, catalog, learning)
-	user := testUser()
-	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
-	messageID := api.messages[0].messageID
-	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
+	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "text", nil)
 
-	last := lastEdit(t, api)
-	if hasButtonPrefix(last.markup, "lesson:finish:") {
-		t.Fatal("кнопка завершения не должна появляться до ответов на все вопросы")
+	if hasButtonPrefix(lastEdit(t, api.fakeAPI).markup, "lesson:finish:") {
+		t.Fatal("кнопка завершения не должна появляться до сохранения всех ответов")
 	}
 
-	learning.mu.Lock()
-	progress := learning.progress[701]
-	progress.AnsweredQuestions = progress.TotalQuestions
-	learning.progress[701] = progress
-	learning.mu.Unlock()
-	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
-	last = lastEdit(t, api)
-	if !hasButtonPrefix(last.markup, "lesson:finish:") {
-		t.Fatalf("после сохранения всех ответов должна появиться кнопка завершения: %+v", last.markup)
+	// A forged finish callback must not complete an unanswered lesson.
+	bot.handleCallbackWithUpdateID(context.Background(), 9290, testCallback("lesson:finish:701", user, mainID))
+	if learning.fakeLearning.completeCalls != 0 {
+		t.Fatal("урок завершился до сохранения ответов")
 	}
-	bot.handleCallback(context.Background(), testCallback("lesson:finish:701", user, messageID))
 
-	last = lastEdit(t, api)
-	if learning.completeCalls != 1 || !strings.Contains(last.text, "Урок завершён") ||
+	bot.handleUpdate(context.Background(), answerMessage(9301, 1301, user, "ответ на первый вопрос"))
+	if len(learning.attempts) != 1 {
+		t.Fatalf("первый ответ не был сохранён: attempts=%+v", learning.attempts)
+	}
+
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, mainID))
+	secondQuestion := lastEdit(t, api.fakeAPI)
+	if !strings.Contains(secondQuestion.text, "ВОПРОС 2 / 2") {
+		t.Fatalf("после первого ответа должен открыться второй вопрос: %q", secondQuestion.text)
+	}
+	if hasButtonPrefix(secondQuestion.markup, "lesson:finish:") {
+		t.Fatal("завершение доступно до сохранения ответа на второй вопрос")
+	}
+
+	bot.handleUpdate(context.Background(), answerMessage(9302, 1302, user, "ответ на второй вопрос"))
+	if len(learning.attempts) != 2 {
+		t.Fatalf("оба ответа должны быть сохранены: attempts=%+v", learning.attempts)
+	}
+	progress, err := learning.GetProgress(context.Background(), 1, 701)
+	if err != nil || progress.AnsweredQuestions != progress.TotalQuestions {
+		t.Fatalf("прогресс не отражает два сохранённых ответа: progress=%+v err=%v", progress, err)
+	}
+	if !hasButtonPrefix(lastEdit(t, api.fakeAPI).markup, "lesson:finish:") {
+		t.Fatal("после сохранения всех ответов должна появиться кнопка завершения")
+	}
+
+	bot.handleCallback(context.Background(), testCallback("lesson:finish:701", user, mainID))
+	last := lastEdit(t, api.fakeAPI)
+	completed, err := learning.GetProgress(context.Background(), 1, 701)
+	if err != nil {
+		t.Fatalf("получить завершённый прогресс: %v", err)
+	}
+	if learning.fakeLearning.completeCalls != 1 || completed.Enrollment.Status != "completed" ||
+		!strings.Contains(last.text, "Урок завершён") ||
 		!hasButton(last.markup, "courses") || !hasButton(last.markup, "chat:start") {
-		t.Fatalf("завершение должно вернуть экран с рабочими кнопками: calls=%d edit=%+v", learning.completeCalls, last)
+		t.Fatalf("завершение должно сохранить статус и показать рабочие кнопки: calls=%d progress=%+v edit=%+v",
+			learning.fakeLearning.completeCalls, completed, last)
 	}
 }
 
