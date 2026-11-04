@@ -150,6 +150,9 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 	}
 	answerTwo := submitCuratorQueueAnswer(t, ctx, pool, studentA.ID, lessonA.enrollment.ID, questionTwoID, "Ответ A2")
 	answerThree := submitCuratorQueueAnswer(t, ctx, pool, studentA.ID, lessonA.enrollment.ID, questionThreeID, "Ответ A3")
+	if _, err := NewEnrollmentRepository(pool).Complete(ctx, studentA.ID, lessonA.enrollment.ID); err != nil {
+		t.Fatalf("отправить урок A перед проверкой: %v", err)
+	}
 	if _, err := NewCuratorLearningRepository(pool).ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: firstCuratorID, AttemptID: lessonA.answer.AttemptID,
 		Decision: "approved", Feedback: "Первый ответ принят.",
@@ -157,17 +160,12 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 		t.Fatalf("одобрить первый ответ ученика A: %v", err)
 	}
 
-	lessonB := startCuratorTestLesson(t, ctx, pool, studentB.ID, runB, lessonIDs[0], "Первоначальный ответ B")
+	lessonB := startCuratorTestLesson(t, ctx, pool, studentB.ID, runB, lessonIDs[0], "Ответ B")
 	baseTime := time.Now().UTC().Truncate(time.Microsecond).Add(-24 * time.Hour)
-	setCuratorQueueAttemptTime(t, ctx, pool, lessonB.answer.AttemptID, baseTime.Add(-time.Minute))
-	if _, err := NewCuratorLearningRepository(pool).ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
-		CuratorStaffID: secondCuratorID, AttemptID: lessonB.answer.AttemptID,
-		Decision: "needs_revision", Feedback: "Ответ нужно дополнить.",
-	}); err != nil {
-		t.Fatalf("вернуть ответ B на исправление: %v", err)
+	setCuratorQueueAttemptTime(t, ctx, pool, lessonB.answer.AttemptID, baseTime)
+	if _, err := NewEnrollmentRepository(pool).Complete(ctx, studentB.ID, lessonB.enrollment.ID); err != nil {
+		t.Fatalf("отправить урок B перед очередью: %v", err)
 	}
-	revisedB := submitCuratorQueueAnswer(t, ctx, pool, studentB.ID, lessonB.enrollment.ID, lessonB.questionID, "Исправленный ответ B")
-	setCuratorQueueAttemptTime(t, ctx, pool, revisedB.AttemptID, baseTime)
 
 	lessonC := startCuratorTestLesson(t, ctx, pool, studentC.ID, runC, courseTwoLessons[0], "Устаревшая попытка C")
 	setCuratorQueueAttemptTime(t, ctx, pool, lessonC.answer.AttemptID, baseTime.Add(2*time.Hour))
@@ -175,10 +173,16 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 		t, ctx, pool, studentC.ID, lessonC.enrollment.ID, lessonC.questionID, "Актуальная попытка C",
 	)
 	setCuratorQueueAttemptTime(t, ctx, pool, currentAttemptC.AttemptID, baseTime.Add(3*time.Hour))
+	if _, err := NewEnrollmentRepository(pool).Complete(ctx, studentC.ID, lessonC.enrollment.ID); err != nil {
+		t.Fatalf("отправить урок C перед очередью: %v", err)
+	}
 
 	// Завершённый урок не должен оставаться в очереди, даже если он входит
 	// в тот же активный запуск курса, что и другой ожидающий проверки урок.
 	completedLesson := startCuratorTestLesson(t, ctx, pool, studentA.ID, runA, lessonIDs[1], "Завершённый ответ")
+	if _, err := NewEnrollmentRepository(pool).Complete(ctx, studentA.ID, completedLesson.enrollment.ID); err != nil {
+		t.Fatalf("отправить второй урок A: %v", err)
+	}
 	if _, err := NewCuratorLearningRepository(pool).ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: firstCuratorID, AttemptID: completedLesson.answer.AttemptID,
 		Decision: "approved", Feedback: "Урок принят.",
@@ -204,7 +208,7 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 	if firstQueue[0].StudentID != studentA.ID || firstQueue[0].PendingAnswers != 2 ||
 		firstQueue[0].ReviewedAnswers != 1 || firstQueue[0].TotalQuestions != 3 ||
 		firstQueue[0].CourseID != courseOneID || firstQueue[0].CourseEnrollmentID != runA.Enrollment.ID ||
-		firstQueue[0].LessonID != lessonIDs[0] || firstQueue[0].LessonStatus != "in_progress" ||
+		firstQueue[0].LessonID != lessonIDs[0] || firstQueue[0].LessonStatus != "completed" ||
 		firstQueue[0].StudentName != studentA.DisplayName ||
 		firstQueue[0].CourseTitle != runA.Enrollment.CourseTitle ||
 		firstQueue[0].LessonTitle != lessonA.lesson.Title ||
@@ -277,46 +281,40 @@ func TestCuratorReviewQueueEmptyCorrectionResubmissionAndCompletion(t *testing.T
 
 	empty, err := queueRepo.ListReviewQueue(ctx, curatorID)
 	if err != nil || len(empty) != 0 {
-		t.Fatalf("очередь без отправленных ответов должна быть пустой: queue=%+v err=%v", empty, err)
+		t.Fatalf("очередь без отправленных уроков должна быть пустой: queue=%+v err=%v", empty, err)
+	}
+	lesson := startCuratorTestLesson(t, ctx, pool, student.ID, run, lessonIDs[0], "Ответ ученика")
+	beforeSubmission, err := queueRepo.ListReviewQueue(ctx, curatorID)
+	if err != nil || len(beforeSubmission) != 0 {
+		t.Fatalf("сохранённый, но не отправленный ответ попал в очередь: queue=%+v err=%v", beforeSubmission, err)
+	}
+	if _, err := NewEnrollmentRepository(pool).Complete(ctx, student.ID, lesson.enrollment.ID); err != nil {
+		t.Fatalf("ученик не смог отправить урок без предварительного одобрения: %v", err)
 	}
 
-	lesson := startCuratorTestLesson(t, ctx, pool, student.ID, run, lessonIDs[0], "Первый ответ")
 	pending, err := queueRepo.ListReviewQueue(ctx, curatorID)
-	if err != nil || len(pending) != 1 || pending[0].PendingAnswers != 1 {
-		t.Fatalf("новая отправка не появилась в очереди: queue=%+v err=%v", pending, err)
+	if err != nil || len(pending) != 1 || pending[0].PendingAnswers != 1 ||
+		pending[0].LessonStatus != "completed" {
+		t.Fatalf("отправленный урок не появился в очереди: queue=%+v err=%v", pending, err)
 	}
-
 	if _, err := queueRepo.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: curatorID, AttemptID: lesson.answer.AttemptID,
-		Decision: "needs_revision", Feedback: "Исправьте ответ.",
+		Decision: "needs_revision", Feedback: "При необходимости свяжусь с вами лично.",
 	}); err != nil {
-		t.Fatalf("отправить ответ на исправление: %v", err)
+		t.Fatalf("куратор не смог сохранить замечание по отправленному уроку: %v", err)
 	}
-	afterRevision, err := queueRepo.ListReviewQueue(ctx, curatorID)
-	if err != nil || len(afterRevision) != 0 {
-		t.Fatalf("проверенный ответ на исправление не должен ожидать проверки повторно: queue=%+v err=%v", afterRevision, err)
+	afterReview, err := queueRepo.ListReviewQueue(ctx, curatorID)
+	if err != nil || len(afterReview) != 0 {
+		t.Fatalf("рассмотренный ответ остался в очереди: queue=%+v err=%v", afterReview, err)
 	}
-
-	revised := submitCuratorQueueAnswer(t, ctx, pool, student.ID, lesson.enrollment.ID, lesson.questionID, "Исправленный ответ")
-	afterResubmission, err := queueRepo.ListReviewQueue(ctx, curatorID)
-	if err != nil || len(afterResubmission) != 1 ||
-		afterResubmission[0].PendingAnswers != 1 ||
-		afterResubmission[0].ReviewedAnswers != 0 {
-		t.Fatalf("после исправления новая попытка должна вернуться в очередь без старого решения: queue=%+v err=%v", afterResubmission, err)
-	}
-
-	if _, err := queueRepo.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
-		CuratorStaffID: curatorID, AttemptID: revised.AttemptID,
-		Decision: "approved", Feedback: "Принято.",
-	}); err != nil {
-		t.Fatalf("принять исправленный ответ: %v", err)
-	}
-	afterApproval, err := queueRepo.ListReviewQueue(ctx, curatorID)
-	if err != nil || len(afterApproval) != 0 {
-		t.Fatalf("принятый и завершённый урок остался в очереди: queue=%+v err=%v", afterApproval, err)
+	if _, err := NewAnswerRepository(pool).Submit(ctx, AnswerSubmission{
+		StudentID: student.ID, EnrollmentID: lesson.enrollment.ID,
+		QuestionID: lesson.questionID, AnswerText: "Новая попытка после отправки",
+	}); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("ученик смог изменить урок после отправки: %v", err)
 	}
 	progress, err := NewCourseEnrollmentRepository(pool).GetForStudent(ctx, student.ID, run.Enrollment.ID)
 	if err != nil || progress.Enrollment.Status != "completed" || !progress.IsComplete {
-		t.Fatalf("принятие последней актуальной попытки должно завершить курс: progress=%+v err=%v", progress, err)
+		t.Fatalf("отправка последнего урока должна завершить прохождение курса независимо от решения куратора: progress=%+v err=%v", progress, err)
 	}
 }
