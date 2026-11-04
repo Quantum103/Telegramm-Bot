@@ -114,15 +114,15 @@ func (e *APIError) Error() string {
 type TelegramErrorKind string
 
 const (
-	TelegramErrorAPIFailure       TelegramErrorKind = "telegram_api_error"
-	TelegramErrorMessageUnchanged TelegramErrorKind = "message_not_modified"
-	TelegramErrorMessageNotFound TelegramErrorKind = "message_not_found"
+	TelegramErrorAPIFailure         TelegramErrorKind = "telegram_api_error"
+	TelegramErrorMessageUnchanged   TelegramErrorKind = "message_not_modified"
+	TelegramErrorMessageNotFound    TelegramErrorKind = "message_not_found"
 	TelegramErrorMessageNotEditable TelegramErrorKind = "message_not_editable"
-	TelegramErrorRateLimited      TelegramErrorKind = "rate_limited"
-	TelegramErrorServerFailure   TelegramErrorKind = "telegram_server_error"
-	TelegramErrorTimeout         TelegramErrorKind = "request_timeout"
-	TelegramErrorCancelled       TelegramErrorKind = "request_cancelled"
-	TelegramErrorNetwork         TelegramErrorKind = "network_error"
+	TelegramErrorRateLimited        TelegramErrorKind = "rate_limited"
+	TelegramErrorServerFailure      TelegramErrorKind = "telegram_server_error"
+	TelegramErrorTimeout            TelegramErrorKind = "request_timeout"
+	TelegramErrorCancelled          TelegramErrorKind = "request_cancelled"
+	TelegramErrorNetwork            TelegramErrorKind = "network_error"
 )
 
 // classifyTelegramAPIError provides a stable category for logs and fallback decisions.
