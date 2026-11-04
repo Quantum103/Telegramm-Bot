@@ -46,6 +46,7 @@ type fakeAPI struct {
 	blockUpdates     bool
 	updatesStarted   chan struct{}
 	nextMessageID    int64
+	answerHook       func()
 	mu               sync.Mutex
 }
 
@@ -125,9 +126,14 @@ func (f *fakeAPI) editMessageText(chatID, messageID int64, text string, markup *
 
 func (f *fakeAPI) AnswerCallbackQuery(_ context.Context, callbackID, _ string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.answered = append(f.answered, callbackID)
-	return f.answerErr
+	hook := f.answerHook
+	err := f.answerErr
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return err
 }
 
 type fakeStudents struct {
@@ -1514,3 +1520,90 @@ func TestRunDoesNotAdvanceOffsetAfterTemporaryProcessingFailure(t *testing.T) {
 		t.Fatalf("offsets = %v, want [0 0]: failed update must remain unconfirmed", offsets)
 	}
 }
+
+func TestCallbackIsAcknowledgedBeforeBusinessProcessing(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+	api.answerHook = func() {
+		if students.calls != 0 {
+			t.Errorf("student lookup started before callback acknowledgement")
+		}
+	}
+
+	user := testUser()
+	callback := testCallback("unknown:action", user, 1)
+	callback.ID = "callback-early-ack"
+	update := Update{UpdateID: 9100, CallbackQuery: &callback}
+	if handled := bot.handleUpdate(context.Background(), update); !handled {
+		t.Fatal("unknown callback should be treated as a terminal update")
+	}
+	if len(api.answered) != 1 || api.answered[0] != callback.ID {
+		t.Fatalf("callback acknowledgement calls = %v, want exactly [%q]", api.answered, callback.ID)
+	}
+	if students.calls != 1 {
+		t.Fatalf("business processing did not run after acknowledgement: student lookups=%d", students.calls)
+	}
+}
+
+func TestCallbackAcknowledgementIsNotRepeatedWhenBusinessUpdateRetries(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{err: errors.New("temporary database failure")}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+
+	user := testUser()
+	callback := testCallback("courses", user, 1)
+	callback.ID = "callback-business-retry"
+	update := Update{UpdateID: 9101, CallbackQuery: &callback}
+	for delivery := 0; delivery < 2; delivery++ {
+		if handled := bot.handleUpdate(context.Background(), update); handled {
+			t.Fatalf("delivery %d should remain unconfirmed after temporary registration error", delivery+1)
+		}
+	}
+	if students.calls != 2 {
+		t.Fatalf("business processing attempts = %d, want 2", students.calls)
+	}
+	if len(api.answered) != 1 || api.answered[0] != callback.ID {
+		t.Fatalf("callback was acknowledged more than once: %v", api.answered)
+	}
+}
+
+func TestConcurrentCallbackAcknowledgementIsClaimedOnce(t *testing.T) {
+	api := &fakeAPI{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+	callback := CallbackQuery{ID: "callback-concurrent-ack"}
+
+	const deliveries = 16
+	var wait sync.WaitGroup
+	wait.Add(deliveries)
+	for i := 0; i < deliveries; i++ {
+		go func() {
+			defer wait.Done()
+			bot.acknowledgeCallback(context.Background(), callback)
+		}()
+	}
+	wait.Wait()
+
+	if len(api.answered) != 1 || api.answered[0] != callback.ID {
+		t.Fatalf("concurrent acknowledgement calls = %v, want exactly one", api.answered)
+	}
+}
+
+func TestCallbackAcknowledgementCacheIsBounded(t *testing.T) {
+	api := &fakeAPI{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+	for i := 0; i < callbackAckCacheCapacity+1; i++ {
+		bot.claimCallbackAcknowledgement(fmt.Sprintf("callback-%d", i))
+	}
+	if got := len(bot.callbackAckSeen); got != callbackAckCacheCapacity {
+		t.Fatalf("callback acknowledgement cache size = %d, want %d", got, callbackAckCacheCapacity)
+	}
+	if _, exists := bot.callbackAckSeen["callback-0"]; exists {
+		t.Fatal("oldest callback acknowledgement was not evicted from bounded cache")
+	}
+}
+
