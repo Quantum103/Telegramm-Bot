@@ -21,7 +21,8 @@ import (
 const (
 	apiBaseURL       = "https://api.telegram.org"
 	longPollTimeout  = 30
-	httpRequestLimit = 4 << 20
+	httpRequestLimit       = 4 << 20
+	callbackAckCacheCapacity = 4096
 )
 
 type User struct {
@@ -410,6 +411,13 @@ type Bot struct {
 	choiceMu      sync.Mutex
 	choiceEditing map[answerStateKey]bool
 	multiDrafts   map[answerStateKey]map[int64]struct{}
+
+	// Callback acknowledgements are UI-only and deduplicated independently of
+	// business update retries. The fixed-size ring bounds memory usage.
+	callbackAckMu    sync.Mutex
+	callbackAckSeen  map[string]struct{}
+	callbackAckOrder []string
+	callbackAckNext  int
 }
 
 func NewBot(api TelegramAPI, students StudentRegistrar, catalog CourseCatalog, learning LearningNavigator, logger *slog.Logger) *Bot {
@@ -454,6 +462,8 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 		studentReferrals: studentReferrals,
 		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
+		callbackAckSeen: make(map[string]struct{}),
+		callbackAckOrder: make([]string, 0, callbackAckCacheCapacity),
 	}
 }
 func (b *Bot) Run(ctx context.Context) error {
@@ -566,7 +576,54 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 	}
 }
 
+// handleUpdate acknowledges callback UI immediately, then delegates business
+// work to processUpdate. The worker pool can call acknowledgeUpdate before queueing
+// and processUpdate from a worker without sending the callback acknowledgement twice.
 func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
+	b.acknowledgeUpdate(ctx, update)
+	return b.processUpdate(ctx, update)
+}
+
+func (b *Bot) acknowledgeUpdate(ctx context.Context, update Update) {
+	if update.CallbackQuery != nil {
+		b.acknowledgeCallback(ctx, *update.CallbackQuery)
+	}
+}
+
+func (b *Bot) acknowledgeCallback(ctx context.Context, callback CallbackQuery) {
+	if callback.ID == "" || !b.claimCallbackAcknowledgement(callback.ID) {
+		return
+	}
+	ackCtx, cancel := context.WithTimeout(ctx, telegramCallbackTimeout)
+	defer cancel()
+	if err := b.api.AnswerCallbackQuery(ackCtx, callback.ID, ""); err != nil && ctx.Err() == nil {
+		b.logger.Warn("не удалось подтвердить callback Telegram", "error_kind", classifyTelegramAPIError(err), "error", err)
+	}
+}
+
+func (b *Bot) claimCallbackAcknowledgement(callbackID string) bool {
+	b.callbackAckMu.Lock()
+	defer b.callbackAckMu.Unlock()
+
+	if b.callbackAckSeen == nil {
+		b.callbackAckSeen = make(map[string]struct{})
+	}
+	if _, exists := b.callbackAckSeen[callbackID]; exists {
+		return false
+	}
+	if len(b.callbackAckOrder) < callbackAckCacheCapacity {
+		b.callbackAckOrder = append(b.callbackAckOrder, callbackID)
+	} else {
+		previous := b.callbackAckOrder[b.callbackAckNext]
+		delete(b.callbackAckSeen, previous)
+		b.callbackAckOrder[b.callbackAckNext] = callbackID
+		b.callbackAckNext = (b.callbackAckNext + 1) % callbackAckCacheCapacity
+	}
+	b.callbackAckSeen[callbackID] = struct{}{}
+	return true
+}
+
+func (b *Bot) processUpdate(ctx context.Context, update Update) bool {
 	if update.CallbackQuery != nil {
 		return b.handleCallbackWithUpdateID(ctx, update.UpdateID, *update.CallbackQuery)
 	}
