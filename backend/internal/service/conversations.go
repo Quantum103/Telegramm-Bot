@@ -123,7 +123,7 @@ func (s *ConversationService) SendCuratorMessage(ctx context.Context, curatorSta
 	if err != nil {
 		return domain.ConversationMessage{}, err
 	}
-	s.events.publish()
+	s.PublishConversationChanged()
 	return message, nil
 }
 
