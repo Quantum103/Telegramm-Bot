@@ -1209,6 +1209,9 @@ func TestHTTPClientUsesMethodSpecificTimeouts(t *testing.T) {
 	if err := client.SendMessage(context.Background(), 10, "обычное сообщение"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
+	if err := client.EditMessageText(context.Background(), 10, 20, "изменить сообщение", nil); err != nil {
+		t.Fatalf("EditMessageText: %v", err)
+	}
 	if err := client.AnswerCallbackQuery(context.Background(), "callback-id", ""); err != nil {
 		t.Fatalf("AnswerCallbackQuery: %v", err)
 	}
@@ -1218,6 +1221,9 @@ func TestHTTPClientUsesMethodSpecificTimeouts(t *testing.T) {
 	}
 	if got := deadlines["/bottoken/sendMessage"]; got < 9*time.Second || got > 11*time.Second {
 		t.Errorf("sendMessage deadline = %s, want approximately 10s", got)
+	}
+	if got := deadlines["/bottoken/editMessageText"]; got < 9*time.Second || got > 11*time.Second {
+		t.Errorf("editMessageText deadline = %s, want approximately 10s", got)
 	}
 	if got := deadlines["/bottoken/answerCallbackQuery"]; got < 2*time.Second || got > 4*time.Second {
 		t.Errorf("answerCallbackQuery deadline = %s, want approximately 3s", got)
@@ -1366,6 +1372,7 @@ func TestHTTPClientClassifiesTelegramAPIResponses(t *testing.T) {
 		{name: "message unchanged", status: http.StatusBadRequest, code: 400, description: "message is not modified", wantKind: TelegramErrorMessageUnchanged},
 		{name: "message not found", status: http.StatusBadRequest, code: 400, description: "message to edit not found", wantKind: TelegramErrorMessageNotFound},
 		{name: "message cannot be edited", status: http.StatusBadRequest, code: 400, description: "message can't be edited", wantKind: TelegramErrorMessageNotEditable},
+		{name: "server text cannot authorize fallback", status: http.StatusInternalServerError, code: 500, description: "message to edit not found", wantKind: TelegramErrorServerFailure},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1398,5 +1405,20 @@ func TestNewHTTPClientDoesNotUseOneGlobalTimeout(t *testing.T) {
 	client := NewHTTPClient("test-token")
 	if client.httpClient.Timeout != 0 {
 		t.Fatalf("HTTP client global timeout = %s, want no global timeout; per-method contexts own deadlines", client.httpClient.Timeout)
+	}
+}
+
+func TestRenderHTMLFallsBackWhenTelegramConfirmsMessageCannotBeEdited(t *testing.T) {
+	api := &fakeAPI{editErr: &APIError{
+		Code: http.StatusBadRequest, Description: "Bad Request: message can't be edited",
+	}}
+	catalog, learning := fixture()
+	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+
+	bot.renderHTML(context.Background(), 123, 456, "<b>вопрос</b>", keyboard(button("К курсам", "courses")))
+
+	if len(api.messages) != 1 || api.messages[0].parseMode != "HTML" ||
+		api.messages[0].text != "<b>вопрос</b>" || !hasButton(api.messages[0].markup, "courses") {
+		t.Fatalf("HTML fallback must preserve formatting and keyboard: %+v", api.messages)
 	}
 }
