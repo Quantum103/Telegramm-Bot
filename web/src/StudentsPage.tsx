@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   assignStudentCurator, endStudentCuratorAssignment, getCourseLessonDetail,
   listAdminStudents, listCuratorCourseLessons, listCuratorLessonAnswers, listCuratorReviewQueue,
-  listStaffAccounts, listStaffConversations, reviewCuratorAnswerAttempt,
+  listStaffAccounts, listStaffConversations, reviewCuratorAnswerAttempt, staffConversationEventsURL,
   type AdminStudent, type AnswerAttempt, type CourseEnrollmentLesson, type CourseLessonDetail,
   type CuratorAnswer, type CuratorCourseAccess, type CuratorReviewQueueItem,
   type StaffAccount, type StaffConversationSummary,
@@ -162,6 +162,65 @@ export default function StudentsPage({
     })
     return () => controller.abort()
   }, [isAdmin, isCurator, revision, onSessionExpired])
+
+  useEffect(() => {
+    if (!isCurator) return
+
+    let stopped = false
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+    let retryDelay = 1000
+    let connected = false
+
+    function connect() {
+      if (stopped) return
+      const currentSocket = new WebSocket(staffConversationEventsURL())
+      socket = currentSocket
+
+      currentSocket.onopen = () => {
+        if (stopped || socket !== currentSocket) return
+        retryDelay = 1000
+        connected = true
+        // Сверяем список после подключения: назначение могло произойти до открытия сокета.
+        setRevision((value) => value + 1)
+      }
+      currentSocket.onmessage = (event) => {
+        if (stopped || socket !== currentSocket || typeof event.data !== 'string') return
+        try {
+          const payload: unknown = JSON.parse(event.data)
+          if (typeof payload === 'object' && payload !== null &&
+              (payload as Record<string, unknown>).type === 'conversation_changed') {
+            setRevision((value) => value + 1)
+          }
+        } catch {
+          // Служебные или некорректные события не должны ломать страницу учеников.
+        }
+      }
+      currentSocket.onerror = () => currentSocket.close()
+      currentSocket.onclose = () => {
+        if (stopped || socket !== currentSocket) return
+        socket = null
+        connected = false
+        reconnectTimer = window.setTimeout(connect, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, 30000)
+      }
+    }
+
+    connect()
+    const fallback = window.setInterval(() => {
+      if (!connected && document.visibilityState === 'visible') {
+        setRevision((value) => value + 1)
+      }
+    }, 15000)
+
+    return () => {
+      stopped = true
+      connected = false
+      window.clearInterval(fallback)
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [isCurator])
 
   useEffect(() => {
     if (!isCurator) {
