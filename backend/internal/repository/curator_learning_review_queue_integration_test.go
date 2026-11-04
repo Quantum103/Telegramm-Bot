@@ -259,7 +259,7 @@ func TestCuratorReviewQueueAggregatesCurrentAttemptsAndScopesAssignments(t *test
 	}
 }
 
-func TestCuratorReviewQueueEmptyCorrectionResubmissionAndCompletion(t *testing.T) {
+func TestCuratorReviewQueueRequiresSubmissionAndCompletion(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -296,6 +296,15 @@ func TestCuratorReviewQueueEmptyCorrectionResubmissionAndCompletion(t *testing.T
 	if err != nil || len(pending) != 1 || pending[0].PendingAnswers != 1 ||
 		pending[0].LessonStatus != "completed" {
 		t.Fatalf("отправленный урок не появился в очереди: queue=%+v err=%v", pending, err)
+	}
+	// Завершённый курс с нерассмотренными отправленными ответами должен
+	// оставаться доступным в карточке ученика для открытия задания из очереди.
+	students, err := NewStaffManagementRepository(pool).ListStudentsForStaff(ctx, curatorID)
+	if err != nil || len(students) != 1 || students[0].ActiveCourse == nil ||
+		students[0].ActiveCourse.CourseEnrollmentID != run.Enrollment.ID ||
+		students[0].ActiveCourse.Status != "completed" ||
+		students[0].ActiveCourse.PendingReviews != 1 {
+		t.Fatalf("завершённый курс с ожидающей проверкой исчез из карточки ученика: students=%+v err=%v", students, err)
 	}
 	if _, err := queueRepo.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 		CuratorStaffID: curatorID, AttemptID: lesson.answer.AttemptID,
