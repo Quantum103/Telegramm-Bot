@@ -150,7 +150,7 @@ export default function ConversationsPage({
       const message = await sendStaffConversationMessage(selected.id, draft)
       setMessages((current) => [...current, message])
       setDraft('')
-      setNotice('Ответ сохранён и поставлен в очередь Telegram-доставки.')
+      setNotice('Сообщение сохранено во внутреннем чате и поставлено в очередь Telegram-доставки.')
       setRevision((value) => value + 1)
     } catch (reason: unknown) {
       const message = messageOf(reason, 'Не удалось отправить ответ.')
@@ -209,6 +209,7 @@ export default function ConversationsPage({
           <form className="conversation-compose" onSubmit={(event) => void sendMessage(event)}>
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={4000} rows={3}
               placeholder="Напишите ответ ученику…" aria-label="Текст ответа" />
+            <p className="telegram-help-note">Сообщения сохраняются во внутреннем чате платформы. Для получения сообщений в Telegram ученик должен хотя бы один раз запустить бота командой /start.</p>
             <button className="primary-button" type="submit" disabled={busy || !draft.trim()}>{busy ? 'Сохраняем…' : 'Отправить ответ'}</button>
           </form>
         </>}
