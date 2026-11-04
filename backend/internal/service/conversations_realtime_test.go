@@ -85,6 +85,15 @@ func TestConversationServicePublishesStudentAndCuratorMessages(t *testing.T) {
 	waitForConversationEvent(t, events)
 }
 
+func TestConversationServiceCanPublishExternalAssignmentChanges(t *testing.T) {
+	conversations := NewConversationService(&conversationEventStoreStub{})
+	events, unsubscribe := conversations.SubscribeConversationEvents()
+	defer unsubscribe()
+
+	conversations.PublishConversationChanged()
+	waitForConversationEvent(t, events)
+}
+
 func TestConversationServiceDoesNotPublishFailedMessages(t *testing.T) {
 	store := &conversationEventStoreStub{createErr: errors.New("database unavailable")}
 	conversations := NewConversationService(store)
