@@ -33,13 +33,17 @@ BEGIN
     INSERT INTO course_lessons (course_id, lesson_id, position)
     VALUES (course_id, lesson_id, 1);
 
-    INSERT INTO lesson_versions (lesson_id, version_number, title, status, published_at)
-    VALUES (lesson_id, 1, 'Legacy published lesson', 'published', now())
+    INSERT INTO lesson_versions (lesson_id, version_number, title, status)
+    VALUES (lesson_id, 1, 'Legacy published lesson', 'draft')
     RETURNING id INTO version_id;
 
     INSERT INTO lesson_questions (lesson_version_id, question_number, prompt, expected_answer)
     VALUES (version_id, 1, 'Legacy question', 'Legacy expected answer')
     RETURNING id INTO question_id;
+
+    UPDATE lesson_versions
+    SET status = 'published', published_at = now()
+    WHERE id = version_id;
 
     INSERT INTO lesson_enrollments (
         student_id, lesson_id, lesson_version_id, mode, current_question_id,
@@ -76,13 +80,17 @@ BEGIN
         (shared_course_one, shared_lesson_id, 1),
         (shared_course_two, shared_lesson_id, 1);
 
-    INSERT INTO lesson_versions (lesson_id, version_number, title, status, published_at)
-    VALUES (shared_lesson_id, 1, 'Shared legacy lesson', 'published', now())
+    INSERT INTO lesson_versions (lesson_id, version_number, title, status)
+    VALUES (shared_lesson_id, 1, 'Shared legacy lesson', 'draft')
     RETURNING id INTO shared_version_id;
 
     INSERT INTO lesson_questions (lesson_version_id, question_number, prompt, expected_answer)
     VALUES (shared_version_id, 1, 'Shared legacy question', 'Expected answer')
     RETURNING id INTO shared_question_id;
+
+    UPDATE lesson_versions
+    SET status = 'published', published_at = now()
+    WHERE id = shared_version_id;
 
     INSERT INTO lesson_enrollments (
         student_id, lesson_id, lesson_version_id, mode, current_question_id,
