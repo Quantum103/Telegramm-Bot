@@ -754,6 +754,5 @@ func truncate(value string, maxRunes int) string {
 }
 
 func isMessageNotModified(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && strings.Contains(strings.ToLower(apiErr.Description), "message is not modified")
+	return classifyTelegramAPIError(err) == TelegramErrorMessageUnchanged
 }

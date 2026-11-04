@@ -1374,6 +1374,7 @@ func TestHTTPClientClassifiesTelegramAPIResponses(t *testing.T) {
 		{name: "message cannot be edited", status: http.StatusBadRequest, code: 400, description: "message can't be edited", wantKind: TelegramErrorMessageNotEditable},
 		{name: "server text cannot authorize fallback", status: http.StatusInternalServerError, code: 500, description: "message to edit not found", wantKind: TelegramErrorServerFailure},
 		{name: "5xx status overrides misleading body code", status: http.StatusInternalServerError, code: 400, description: "message to edit not found", wantKind: TelegramErrorServerFailure},
+		{name: "5xx status overrides message unchanged text", status: http.StatusInternalServerError, code: 400, description: "message is not modified", wantKind: TelegramErrorServerFailure},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
