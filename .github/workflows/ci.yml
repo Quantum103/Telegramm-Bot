@@ -86,9 +86,9 @@ jobs:
         working-directory: backend
         run: go test ./...
 
-      - name: Benchmark Telegram question navigation
+      - name: Benchmark Telegram navigation and student interaction
         working-directory: backend
-        run: go test ./internal/repository -run '^$' -bench '^BenchmarkQuestionNavigationPaths$' -benchtime=30x -count=1
+        run: go test ./internal/repository -run '^$' -bench '^(BenchmarkQuestionNavigationPaths|BenchmarkStudentInteractionExitQueries)$' -benchtime=30x -count=1
 
       - name: Run go vet
         working-directory: backend
