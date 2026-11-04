@@ -18,11 +18,16 @@ type StaffReferralStore interface {
 }
 
 type StaffReferralService struct {
-	store StaffReferralStore
+	store  StaffReferralStore
+	events ConversationEventPublisher
 }
 
-func NewStaffReferralService(store StaffReferralStore) *StaffReferralService {
-	return &StaffReferralService{store: store}
+func NewStaffReferralService(store StaffReferralStore, eventPublishers ...ConversationEventPublisher) *StaffReferralService {
+	service := &StaffReferralService{store: store}
+	if len(eventPublishers) > 0 {
+		service.events = eventPublishers[0]
+	}
+	return service
 }
 
 func (s *StaffReferralService) GetOrCreateReferralCode(ctx context.Context, staffID int64) (domain.StaffReferralCode, error) {
@@ -42,7 +47,14 @@ func (s *StaffReferralService) AssignStudentByReferral(
 	if s == nil || s.store == nil || studentID <= 0 || !validStaffReferralCode(code) {
 		return domain.ReferralAssignmentResult{}, domain.ErrInvalidInput
 	}
-	return s.store.AssignStudentByReferral(ctx, studentID, code)
+	result, err := s.store.AssignStudentByReferral(ctx, studentID, code)
+	if err != nil {
+		return domain.ReferralAssignmentResult{}, err
+	}
+	if result.Assigned && s.events != nil {
+		s.events.PublishConversationChanged()
+	}
+	return result, nil
 }
 
 func validStaffReferralCode(code string) bool {
