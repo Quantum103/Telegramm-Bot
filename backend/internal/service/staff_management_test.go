@@ -16,11 +16,11 @@ type staffManagementTestStore struct {
 	email        string
 	passwordHash string
 	roleCode     string
-	createErr  error
-	assignCalls int
-	assignErr   error
-	endCalls    int
-	endErr      error
+	createErr    error
+	assignCalls  int
+	assignErr    error
+	endCalls     int
+	endErr       error
 }
 
 func (s *staffManagementTestStore) ListStaffAccounts(context.Context, int64) ([]domain.StaffAccountSummary, error) {
