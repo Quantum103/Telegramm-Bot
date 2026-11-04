@@ -442,7 +442,8 @@ func (r *StaffTelegramRepository) ListNotifications(ctx context.Context, staffID
 		FROM (
 			SELECT DISTINCT ON (message.id)
 			       delivery.id, message.id AS message_id, conversation.id AS conversation_id,
-			       student.display_name AS student_display_name, delivery.channel,
+			       COALESCE(NULLIF(BTRIM(student.staff_label), ''), NULLIF(BTRIM(student.preferred_name), ''), student.display_name) AS student_display_name,
+			       delivery.channel,
 			       delivery.delivery_status, delivery.attempt_count, delivery.last_error_code,
 			       delivery.last_error_at, delivery.sent_at, delivery.created_at
 			FROM conversation_message_deliveries delivery
