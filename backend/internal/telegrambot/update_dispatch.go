@@ -26,11 +26,17 @@ func (b *Bot) dispatchUpdateBatch(
 	pending := make([]pendingUpdateResult, 0, len(updates))
 	retry := false
 	for _, update := range updates {
+		if ctx.Err() != nil {
+			return offset, true
+		}
 		if update.UpdateID < offset {
 			continue
 		}
 
 		b.acknowledgeUpdate(ctx, update)
+		if ctx.Err() != nil {
+			return offset, true
+		}
 		result, err := pool.Submit(ctx, update)
 		if err != nil {
 			retry = true
