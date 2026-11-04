@@ -509,6 +509,9 @@ func assignStudentCuratorTx(
 		`, studentID, curatorStaffID); err != nil {
 			return mapDatabaseError("синхронизировать назначение куратора в диалогах", err)
 		}
+		if err := ensureStudentConversationTx(ctx, tx, studentID, curatorStaffID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE conversation_participants participant
 			SET left_at = now()
@@ -574,6 +577,9 @@ func assignStudentCuratorTx(
 		WHERE student_id = $1 AND status = 'active'
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("обновить назначение куратора в активных диалогах", err)
+	}
+	if err := ensureStudentConversationTx(ctx, tx, studentID, curatorStaffID); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE course_enrollments
@@ -724,6 +730,41 @@ func assignStudentCuratorTx(
 			locked_at = NULL, last_error_code = NULL, last_error_at = NULL, updated_at = now()
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("создать уведомление о передаче диалога новому куратору", err)
+	}
+	return nil
+}
+
+
+// ensureStudentConversationTx creates the student's chat at assignment time.
+// The student row is already locked by the caller, so concurrent assignment paths
+// cannot create more than one active conversation for the same student.
+func ensureStudentConversationTx(ctx context.Context, tx pgx.Tx, studentID, curatorStaffID int64) error {
+	var conversationID int64
+	err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM conversations
+		WHERE student_id = $1 AND status = 'active'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+		FOR UPDATE
+	`, studentID).Scan(&conversationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO conversations (student_id, assigned_curator_staff_id, status)
+			VALUES ($1, $2, 'active')
+			RETURNING id
+		`, studentID, curatorStaffID).Scan(&conversationID)
+	}
+	if err != nil {
+		return mapDatabaseError("создать диалог при назначении куратора", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO conversation_participants (conversation_id, student_id)
+		VALUES ($1, $2)
+		ON CONFLICT (conversation_id, student_id)
+		WHERE student_id IS NOT NULL DO NOTHING
+	`, conversationID, studentID); err != nil {
+		return mapDatabaseError("добавить ученика в новый диалог", err)
 	}
 	return nil
 }
