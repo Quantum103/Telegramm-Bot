@@ -1181,3 +1181,74 @@ func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
 		t.Fatalf("завершение должно вернуть экран с рабочими кнопками: calls=%d edit=%+v", learning.completeCalls, last)
 	}
 }
+
+
+func TestHTTPClientUsesMethodSpecificTimeouts(t *testing.T) {
+	deadlines := make(map[string]time.Duration)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline, ok := r.Context().Deadline()
+		if !ok {
+			t.Errorf("%s request has no deadline", r.URL.Path)
+		} else {
+			deadlines[r.URL.Path] = time.Until(deadline)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/bottoken/getUpdates":
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+		case "/bottoken/sendMessage":
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+		}
+	}))
+	defer server.Close()
+
+	client := newHTTPClient("token", server.URL, server.Client())
+	if _, err := client.GetUpdates(context.Background(), 0, longPollTimeout); err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if err := client.SendMessage(context.Background(), 10, "обычное сообщение"); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if err := client.AnswerCallbackQuery(context.Background(), "callback-id", ""); err != nil {
+		t.Fatalf("AnswerCallbackQuery: %v", err)
+	}
+
+	if got := deadlines["/bottoken/getUpdates"]; got < 34*time.Second || got > 36*time.Second {
+		t.Errorf("getUpdates deadline = %s, want approximately 35s", got)
+	}
+	if got := deadlines["/bottoken/sendMessage"]; got < 9*time.Second || got > 11*time.Second {
+		t.Errorf("sendMessage deadline = %s, want approximately 10s", got)
+	}
+	if got := deadlines["/bottoken/answerCallbackQuery"]; got < 2*time.Second || got > 4*time.Second {
+		t.Errorf("answerCallbackQuery deadline = %s, want approximately 3s", got)
+	}
+}
+
+func TestHTTPClientSlowResponseRespectsEarlierCallerTimeout(t *testing.T) {
+	requestSeen := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestSeen <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := newHTTPClient("token", server.URL, server.Client())
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	err := client.SendMessage(ctx, 10, "медленный ответ")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SendMessage error = %v, want context deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("caller timeout was not respected promptly: %s", elapsed)
+	}
+	select {
+	case <-requestSeen:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP request did not reach the test server")
+	}
+}

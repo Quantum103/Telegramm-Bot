@@ -116,7 +116,9 @@ type HTTPClient struct {
 }
 
 func NewHTTPClient(token string) *HTTPClient {
-	return newHTTPClient(strings.TrimSpace(token), apiBaseURL, &http.Client{Timeout: 40 * time.Second})
+	// Every Bot API call receives its own context deadline in call(). A zero
+	// client timeout preserves the long-polling window and HTTP keep-alive reuse.
+	return newHTTPClient(strings.TrimSpace(token), apiBaseURL, &http.Client{})
 }
 
 func newHTTPClient(token, baseURL string, client *http.Client) *HTTPClient {
@@ -219,14 +221,39 @@ func (c *HTTPClient) AnswerCallbackQuery(ctx context.Context, callbackQueryID, t
 	return c.call(ctx, "answerCallbackQuery", payload, nil)
 }
 
+const (
+	telegramCallbackTimeout = 3 * time.Second
+	telegramRequestTimeout  = 10 * time.Second
+	telegramLongPollMargin  = 5 * time.Second
+)
+
+func telegramMethodTimeout(method string, payload any) time.Duration {
+	switch method {
+	case "answerCallbackQuery":
+		return telegramCallbackTimeout
+	case "getUpdates":
+		if values, ok := payload.(map[string]any); ok {
+			if seconds, ok := values["timeout"].(int); ok && seconds > 0 {
+				return time.Duration(seconds)*time.Second + telegramLongPollMargin
+			}
+		}
+		return telegramRequestTimeout
+	default:
+		return telegramRequestTimeout
+	}
+}
+
 func (c *HTTPClient) call(ctx context.Context, method string, payload any, result any) error {
+	requestCtx, cancel := context.WithTimeout(ctx, telegramMethodTimeout(method, payload))
+	defer cancel()
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return errors.New("не удалось подготовить запрос к Telegram Bot API")
 	}
 
 	endpoint := c.baseURL + "/bot" + c.token + "/" + method
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return errors.New("не удалось создать запрос к Telegram Bot API")
 	}
