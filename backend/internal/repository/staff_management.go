@@ -1050,7 +1050,6 @@ var _ interface {
 	ResetStaffPassword(context.Context, int64, int64, string) error
 } = (*StaffManagementRepository)(nil)
 
-
 // SetStudentLabel stores a staff-facing label without changing the student's Telegram profile.
 // Administrators may label any active student; curators may label only their current assignments.
 func (r *StaffManagementRepository) SetStudentLabel(ctx context.Context, actorID, studentID int64, label string) error {

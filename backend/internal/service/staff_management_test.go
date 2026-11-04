@@ -11,22 +11,22 @@ import (
 )
 
 type staffManagementTestStore struct {
-	createCalls  int
-	actorID      int64
-	displayName  string
-	email        string
-	passwordHash string
-	roleCode     string
-	createErr    error
-	assignCalls  int
-	assignErr    error
-	endCalls       int
-	endErr         error
-	labelCalls     int
-	labelActorID   int64
-	labelStudentID int64
-	label          string
-	labelErr       error
+	createCalls      int
+	actorID          int64
+	displayName      string
+	email            string
+	passwordHash     string
+	roleCode         string
+	createErr        error
+	assignCalls      int
+	assignErr        error
+	endCalls         int
+	endErr           error
+	labelCalls       int
+	labelActorID     int64
+	labelStudentID   int64
+	label             string
+	labelErr         error
 }
 
 func (s *staffManagementTestStore) ListStaffAccounts(context.Context, int64) ([]domain.StaffAccountSummary, error) {
@@ -157,7 +157,6 @@ func TestStaffManagementPublishesConversationChangesAfterAssignmentMutations(t *
 		t.Fatalf("failed assignment mutations must not publish events, got %d", publisher.calls)
 	}
 }
-
 
 func TestSetStudentLabelTrimsAndPersistsInternalLabel(t *testing.T) {
 	store := &staffManagementTestStore{}

@@ -73,6 +73,17 @@ func TestSetStudentLabelEnforcesStaffAccessAndPersistsInStaffProjection(t *testi
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'student' AND entity_id IN ($1, $2)", studentID, unassignedStudentID); err != nil {
 			t.Errorf("cleanup student label audit events: %v", err)
 		}
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM conversation_participants participant
+			USING conversations conversation
+			WHERE participant.conversation_id = conversation.id
+			  AND conversation.student_id IN ($1, $2)
+		`, studentID, unassignedStudentID); err != nil {
+			t.Errorf("cleanup conversation participants: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM conversations WHERE student_id IN ($1, $2)", studentID, unassignedStudentID); err != nil {
+			t.Errorf("cleanup test conversations: %v", err)
+		}
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM student_curator_assignments WHERE student_id IN ($1, $2)", studentID, unassignedStudentID); err != nil {
 			t.Errorf("cleanup student assignments: %v", err)
 		}

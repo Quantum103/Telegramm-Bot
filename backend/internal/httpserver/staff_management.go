@@ -284,7 +284,6 @@ func writeInvalidAdminRequest(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
 }
 
-
 // staffSetStudentLabel updates the staff-facing label while the repository rechecks
 // that the actor is an administrator or the student's currently assigned curator.
 func (h handlers) staffSetStudentLabel(w http.ResponseWriter, r *http.Request) {
