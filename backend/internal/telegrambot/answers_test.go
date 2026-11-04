@@ -431,7 +431,7 @@ func TestTextAnswerTemporaryPersistenceFailureDoesNotAcknowledgeUpdate(t *testin
 }
 
 func TestTemporaryProgressReadFailureDoesNotAcknowledgeAnswerCallback(t *testing.T) {
-	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", []domain.QuestionOption{
+	_, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", []domain.QuestionOption{
 		{ID: 6501, Key: "a", Text: "вариант"},
 	})
 	learning.fakeLearning.progressErr = errors.New("temporary database connection failure")
