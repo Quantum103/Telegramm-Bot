@@ -37,10 +37,10 @@ type Chat struct {
 }
 
 type Message struct {
-	MessageID   int64                `json:"message_id"`
-	From        *User                `json:"from"`
-	Chat        Chat                 `json:"chat"`
-	Text        string               `json:"text"`
+	MessageID   int64                 `json:"message_id"`
+	From        *User                 `json:"from"`
+	Chat        Chat                  `json:"chat"`
+	Text        string                `json:"text"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
@@ -683,7 +683,6 @@ func (b *Bot) handleLinkedStaffUpdate(ctx context.Context, message Message) (boo
 	return true, true
 }
 
-
 func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user User, fields []string) bool {
 	if b.staffTelegram == nil {
 		b.send(ctx, chatID, "Привязка Telegram сотрудника пока недоступна.")
@@ -795,7 +794,6 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	}
 	return true
 }
-
 
 func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referralPayload string) bool {
 	student, err := b.ensureStudent(ctx, user)
