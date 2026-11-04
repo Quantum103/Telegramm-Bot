@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"strconv"
 	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
