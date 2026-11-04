@@ -1182,7 +1182,6 @@ func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
 	}
 }
 
-
 func TestHTTPClientUsesMethodSpecificTimeouts(t *testing.T) {
 	deadlines := make(map[string]time.Duration)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
