@@ -146,7 +146,6 @@ func scanStudentWithActivityDue(row pgx.Row) (Student, bool, error) {
 	return student, activityDue, nil
 }
 
-
 func sameOptionalString(left, right *string) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
