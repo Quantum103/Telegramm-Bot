@@ -246,14 +246,14 @@ func TestUpdateWorkerPoolLoadProfiles(t *testing.T) {
 				students, len(latencies), students*operationsPerStudent)
 		}
 		report := map[string]any{
-			"students":                       students,
-			"workers":                        4,
-			"queue_capacity_per_worker":      16,
-			"updates":                        len(latencies),
-			"simulated_handler_work_ms":      1,
-			"elapsed_ms":                     float64(elapsed) / float64(time.Millisecond),
-			"throughput_updates_per_second":  float64(len(latencies)) / elapsed.Seconds(),
-			"queue_and_handler_latency_ms":   telegramLatencyPercentiles(latencies),
+			"students":                      students,
+			"workers":                       4,
+			"queue_capacity_per_worker":     16,
+			"updates":                       len(latencies),
+			"simulated_handler_work_ms":     1,
+			"elapsed_ms":                    float64(elapsed) / float64(time.Millisecond),
+			"throughput_updates_per_second": float64(len(latencies)) / elapsed.Seconds(),
+			"queue_and_handler_latency_ms": telegramLatencyPercentiles(latencies),
 		}
 		encoded, err := json.Marshal(report)
 		if err != nil {
