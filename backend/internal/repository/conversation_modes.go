@@ -97,7 +97,7 @@ func (r *ConversationRepository) SetStudentLessonMode(ctx context.Context, stude
 			RETURNING student_id
 		)
 		SELECT EXISTS (SELECT 1 FROM eligible_student)
-		   AND (SELECT count(*) >= 0 FROM mode_upsert)
+		FROM (SELECT count(*) FROM mode_upsert) AS applied
 	`, studentID, enabled).Scan(&active)
 	if err != nil {
 		return mapDatabaseError("сохранить режим прохождения урока ученика", err)
