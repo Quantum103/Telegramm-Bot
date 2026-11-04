@@ -715,7 +715,7 @@ export default function StudentsPage({
         <div className="student-label-editor-row">
           <input id="student-staff-label" type="text" maxLength={120}
             value={labelDraft} onChange={(event) => setLabelDraft(event.target.value)}
-            placeholder="Например, Иван — Ростов" />
+            placeholder="Например, Имя - город" />
           <button className="secondary-button" type="button"
             disabled={savingStudentLabel || labelDraft === (selectedStudent.staff_label ?? '')}
             onClick={() => void saveStudentLabel(selectedStudent)}>
