@@ -112,3 +112,57 @@ func TestConversationServiceDoesNotPublishFailedMessages(t *testing.T) {
 	default:
 	}
 }
+
+type provisionableConversationEventStoreStub struct {
+	*conversationEventStoreStub
+	conversation        domain.Conversation
+	provisionErr        error
+	provisionCalls      int
+	provisionCuratorID  int64
+	provisionStudentID  int64
+}
+
+func (s *provisionableConversationEventStoreStub) GetOrCreateForCurator(
+	_ context.Context, curatorStaffID, studentID int64,
+) (domain.Conversation, error) {
+	s.provisionCalls++
+	s.provisionCuratorID = curatorStaffID
+	s.provisionStudentID = studentID
+	return s.conversation, s.provisionErr
+}
+
+func TestConversationServiceEnsuresConversationAndPublishesOnlyOnSuccess(t *testing.T) {
+	store := &provisionableConversationEventStoreStub{
+		conversationEventStoreStub: &conversationEventStoreStub{},
+		conversation: domain.Conversation{
+			ID: 301, StudentID: 42, AssignedCuratorStaffID: 17, Status: "active",
+		},
+	}
+	conversations := NewConversationService(store)
+	events, unsubscribe := conversations.SubscribeConversationEvents()
+	defer unsubscribe()
+
+	got, err := conversations.EnsureForCurator(context.Background(), 17, 42)
+	if err != nil || got.ID != 301 {
+		t.Fatalf("ensure curator conversation: conversation=%+v err=%v", got, err)
+	}
+	if store.provisionCalls != 1 || store.provisionCuratorID != 17 || store.provisionStudentID != 42 {
+		t.Fatalf("provision call mismatch: calls=%d curator=%d student=%d",
+			store.provisionCalls, store.provisionCuratorID, store.provisionStudentID)
+	}
+	waitForConversationEvent(t, events)
+
+	store.provisionErr = domain.ErrNotFound
+	if _, err := conversations.EnsureForCurator(context.Background(), 17, 43); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("wrong assignment should be rejected: %v", err)
+	}
+	select {
+	case <-events:
+		t.Fatal("failed provisioning unexpectedly published a conversation event")
+	default:
+	}
+
+	if _, err := conversations.EnsureForCurator(context.Background(), 0, 42); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("invalid curator ID should be rejected: %v", err)
+	}
+}
