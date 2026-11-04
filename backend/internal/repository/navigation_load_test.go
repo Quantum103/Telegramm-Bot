@@ -317,7 +317,7 @@ func createNavigationLoadLearners(t *testing.T, ctx context.Context, pool *pgxpo
 	enrollments := NewEnrollmentRepository(pool)
 	for index := 0; index < 10; index++ {
 		student, err := students.Create(ctx, CreateStudentParams{
-			TelegramID: time.Now().UnixNano() + int64(index),
+			TelegramID:  time.Now().UnixNano() + int64(index),
 			DisplayName: fmt.Sprintf("navigation-load-%s-%d", suffix, index+1),
 		})
 		if err != nil {
