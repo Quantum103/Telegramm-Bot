@@ -1184,26 +1184,25 @@ func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
 
 func TestHTTPClientUsesMethodSpecificTimeouts(t *testing.T) {
 	deadlines := make(map[string]time.Duration)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deadline, ok := r.Context().Deadline()
+	transport := workerRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		deadline, ok := req.Context().Deadline()
 		if !ok {
-			t.Errorf("%s request has no deadline", r.URL.Path)
+			t.Errorf("%s request has no deadline", req.URL.Path)
 		} else {
-			deadlines[r.URL.Path] = time.Until(deadline)
+			deadlines[req.URL.Path] = time.Until(deadline)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/bottoken/getUpdates":
-			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
-		case "/bottoken/sendMessage":
-			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
-		default:
-			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+		body := `{"ok":true,"result":true}`
+		if req.URL.Path == "/bottoken/getUpdates" {
+			body = `{"ok":true,"result":[]}`
 		}
-	}))
-	defer server.Close()
-
-	client := newHTTPClient("token", server.URL, server.Client())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	client := newHTTPClient("token", "http://telegram.test", &http.Client{Transport: transport})
 	if _, err := client.GetUpdates(context.Background(), 0, longPollTimeout); err != nil {
 		t.Fatalf("GetUpdates: %v", err)
 	}
