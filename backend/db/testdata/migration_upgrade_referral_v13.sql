@@ -8,8 +8,8 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM staff_referral_codes
-        WHERE legacy_code = 'c_' || repeat('A', 43)
+        WHERE code = 'c_' || repeat('A', 43)
     ) THEN
-        RAISE EXCEPTION 'migration 000014 did not preserve the legacy referral code';
+        RAISE EXCEPTION 'migration 000013 did not accept the legacy referral code';
     END IF;
 END $$;
