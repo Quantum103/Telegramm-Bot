@@ -49,6 +49,14 @@ type assignStudentCuratorRequest struct {
 	CuratorStaffID int64 `json:"curator_staff_id"`
 }
 
+type setStudentLabelRequest struct {
+	Label *string `json:"label"`
+}
+
+type studentLabelUpdater interface {
+	SetStudentLabel(context.Context, int64, int64, string) error
+}
+
 type changeStaffPasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
@@ -274,4 +282,44 @@ func writeInvalidAdminRequest(w http.ResponseWriter, err error) {
 		return
 	}
 	writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+}
+
+
+// staffSetStudentLabel updates the staff-facing label while the repository rechecks
+// that the actor is an administrator or the student's currently assigned curator.
+func (h handlers) staffSetStudentLabel(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity := staffIdentityFromRequest(r)
+	if identity.StaffID <= 0 {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+		return
+	}
+	studentID, ok := parsePositiveID(w, r.PathValue("studentID"))
+	if !ok {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, apiErrorResponse{Error: "content_type_must_be_json"})
+		return
+	}
+	var input setStudentLabelRequest
+	if err := decodeJSONBodyWithLimit(w, r, &input, maxStaffAdminBodyBytes); err != nil {
+		writeInvalidAdminRequest(w, err)
+		return
+	}
+	if input.Label == nil {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_input"})
+		return
+	}
+	updater, ok := h.management.(studentLabelUpdater)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "student_label_unavailable"})
+		return
+	}
+	if err := updater.SetStudentLabel(r.Context(), identity.StaffID, studentID, *input.Label); err != nil {
+		h.writeAPIError(w, err, "изменить внутреннюю подпись ученика")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

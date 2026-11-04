@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
@@ -19,8 +20,13 @@ type staffManagementTestStore struct {
 	createErr    error
 	assignCalls  int
 	assignErr    error
-	endCalls     int
-	endErr       error
+	endCalls       int
+	endErr         error
+	labelCalls     int
+	labelActorID   int64
+	labelStudentID int64
+	label          string
+	labelErr       error
 }
 
 func (s *staffManagementTestStore) ListStaffAccounts(context.Context, int64) ([]domain.StaffAccountSummary, error) {
@@ -47,6 +53,11 @@ func (s *staffManagementTestStore) AssignStudentCurator(context.Context, int64, 
 func (s *staffManagementTestStore) EndStudentCuratorAssignment(context.Context, int64, int64) error {
 	s.endCalls++
 	return s.endErr
+}
+func (s *staffManagementTestStore) SetStudentLabel(_ context.Context, actorID, studentID int64, label string) error {
+	s.labelCalls++
+	s.labelActorID, s.labelStudentID, s.label = actorID, studentID, label
+	return s.labelErr
 }
 
 func (s *staffManagementTestStore) SetStaffAccountStatus(context.Context, int64, int64, string) error {
@@ -144,5 +155,48 @@ func TestStaffManagementPublishesConversationChangesAfterAssignmentMutations(t *
 	}
 	if publisher.calls != 2 {
 		t.Fatalf("failed assignment mutations must not publish events, got %d", publisher.calls)
+	}
+}
+
+
+func TestSetStudentLabelTrimsAndPersistsInternalLabel(t *testing.T) {
+	store := &staffManagementTestStore{}
+	management := NewStaffManagementService(store)
+	if err := management.SetStudentLabel(context.Background(), 7, 19, "  Ученик из Ростова  "); err != nil {
+		t.Fatalf("SetStudentLabel() error = %v", err)
+	}
+	if store.labelCalls != 1 || store.labelActorID != 7 || store.labelStudentID != 19 || store.label != "Ученик из Ростова" {
+		t.Fatalf("unexpected persisted label arguments: %+v", store)
+	}
+	if err := management.SetStudentLabel(context.Background(), 7, 19, "   "); err != nil {
+		t.Fatalf("empty label should clear the override: %v", err)
+	}
+	if store.label != "" {
+		t.Fatalf("blank label should be normalized to empty string, got %q", store.label)
+	}
+}
+
+func TestSetStudentLabelRejectsInvalidInputBeforeStore(t *testing.T) {
+	store := &staffManagementTestStore{}
+	management := NewStaffManagementService(store)
+	tests := []struct {
+		name               string
+		actorID, studentID int64
+		label              string
+	}{
+		{name: "missing actor", actorID: 0, studentID: 1, label: "Имя"},
+		{name: "missing student", actorID: 1, studentID: 0, label: "Имя"},
+		{name: "too long", actorID: 1, studentID: 1, label: strings.Repeat("я", 121)},
+		{name: "multiline", actorID: 1, studentID: 1, label: "Имя\nвторая строка"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := management.SetStudentLabel(context.Background(), tt.actorID, tt.studentID, tt.label); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("SetStudentLabel() error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+	if store.labelCalls != 0 {
+		t.Fatalf("invalid labels unexpectedly reached store %d times", store.labelCalls)
 	}
 }

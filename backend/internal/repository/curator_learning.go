@@ -62,7 +62,8 @@ func (r *CuratorLearningRepository) ListReviewQueue(
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT student.id, student.display_name,
+		SELECT student.id,
+		       COALESCE(NULLIF(BTRIM(student.staff_label), ''), NULLIF(BTRIM(student.preferred_name), ''), student.display_name),
 		       ce.course_id, course.title, ce.id,
 		       cel.lesson_id, lesson_version.title,
 		       min(latest.created_at) FILTER (
@@ -143,8 +144,9 @@ func (r *CuratorLearningRepository) ListReviewQueue(
 		          )
 		      )
 		  )
-		GROUP BY student.id, student.display_name, ce.course_id, course.title,
-		         ce.id, cel.lesson_id, lesson_version.title, lesson.status
+		GROUP BY student.id,
+		         COALESCE(NULLIF(BTRIM(student.staff_label), ''), NULLIF(BTRIM(student.preferred_name), ''), student.display_name),
+		         ce.course_id, course.title, ce.id, cel.lesson_id, lesson_version.title, lesson.status
 		HAVING count(*) FILTER (
 		    WHERE latest.id IS NOT NULL
 		      AND latest.processing_status = 'pending'

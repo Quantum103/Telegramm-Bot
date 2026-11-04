@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -184,7 +185,8 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT student.id, student.telegram_id, student.display_name, student.telegram_username,
-		       student.preferred_name, student.account_status, student.registered_at, student.last_active_at,
+		       student.preferred_name, student.staff_label,
+		       student.account_status, student.registered_at, student.last_active_at,
 		       current_assignment.curator_staff_id, current_assignment.curator_display_name,
 		       COALESCE(progress.total_enrollments, 0)::INTEGER,
 		       COALESCE(progress.in_progress_enrollments, 0)::INTEGER,
@@ -297,7 +299,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 	students := make([]domain.AdminStudent, 0)
 	for rows.Next() {
 		var student domain.AdminStudent
-		var username, preferredName, curatorName pgtype.Text
+		var username, preferredName, staffLabel, curatorName pgtype.Text
 		var activeCourseTitle, activeCourseMode, activeCourseStatus pgtype.Text
 		var lastActiveAt, lastLearningAt pgtype.Timestamptz
 		var curatorID, activeCourseEnrollmentID, activeCourseID pgtype.Int8
@@ -306,7 +308,7 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		var activeCourseNeedsRevision, activeCourseNeedsRevisionAnswers pgtype.Int4
 		if err := rows.Scan(
 			&student.ID, &student.TelegramID, &student.DisplayName, &username,
-			&preferredName, &student.AccountStatus, &student.RegisteredAt, &lastActiveAt,
+			&preferredName, &staffLabel, &student.AccountStatus, &student.RegisteredAt, &lastActiveAt,
 			&curatorID, &curatorName, &student.TotalEnrollments,
 			&student.InProgressEnrollments, &student.CompletedEnrollments, &lastLearningAt,
 			&activeCourseEnrollmentID, &activeCourseID, &activeCourseTitle,
@@ -324,6 +326,10 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 		if preferredName.Valid {
 			value := preferredName.String
 			student.PreferredName = &value
+		}
+		if staffLabel.Valid {
+			value := staffLabel.String
+			student.StaffLabel = &value
 		}
 		if lastActiveAt.Valid {
 			value := lastActiveAt.Time
@@ -1043,3 +1049,81 @@ var _ interface {
 	SetStaffAccountStatus(context.Context, int64, int64, string) error
 	ResetStaffPassword(context.Context, int64, int64, string) error
 } = (*StaffManagementRepository)(nil)
+
+
+// SetStudentLabel stores a staff-facing label without changing the student's Telegram profile.
+// Administrators may label any active student; curators may label only their current assignments.
+func (r *StaffManagementRepository) SetStudentLabel(ctx context.Context, actorID, studentID int64, label string) error {
+	label = strings.TrimSpace(label)
+	if actorID <= 0 || studentID <= 0 || !utf8.ValidString(label) ||
+		utf8.RuneCountInString(label) > 120 || strings.ContainsAny(label, "\r\n\t") {
+		return ErrInvalidInput
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return mapDatabaseError("начать изменение подписи ученика", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var studentStatus string
+	err = tx.QueryRow(ctx, "SELECT account_status FROM students WHERE id = $1 FOR UPDATE", studentID).Scan(&studentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return mapDatabaseError("проверить ученика перед изменением подписи", err)
+	}
+	if studentStatus != "active" {
+		return ErrInvalidState
+	}
+
+	var allowed bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM staff_accounts actor
+			JOIN staff_role_assignments actor_role
+			  ON actor_role.staff_id = actor.id AND actor_role.revoked_at IS NULL
+			JOIN staff_roles role ON role.id = actor_role.role_id
+			WHERE actor.id = $1 AND actor.account_status = 'active'
+			  AND (
+			    role.role_code = 'administrator'
+			    OR (
+			      role.role_code = 'curator'
+			      AND EXISTS (
+			        SELECT 1
+			        FROM student_curator_assignments assignment
+			        WHERE assignment.student_id = $2
+			          AND assignment.curator_staff_id = actor.id
+			          AND assignment.status = 'active'
+			      )
+			    )
+			  )
+		)
+	`, actorID, studentID).Scan(&allowed); err != nil {
+		return mapDatabaseError("проверить доступ к изменению подписи ученика", err)
+	}
+	if !allowed {
+		return ErrNotFound
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE students
+		SET staff_label = NULLIF($2, ''), updated_at = now()
+		WHERE id = $1
+	`, studentID, label); err != nil {
+		return mapDatabaseError("сохранить внутреннюю подпись ученика", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (actor_staff_id, action, entity_type, entity_id, details)
+		VALUES ($1, 'student.staff_label.update', 'student', $2,
+		        jsonb_build_object('staff_label_set', $3::boolean))
+	`, actorID, studentID, label != ""); err != nil {
+		return mapDatabaseError("записать аудит изменения подписи ученика", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать подпись ученика", err)
+	}
+	return nil
+}

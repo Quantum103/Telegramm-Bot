@@ -333,3 +333,48 @@
   .review-lesson-summary-heading { align-items: flex-start; flex-direction: column; }
   .review-lesson-summary-stats { flex-direction: column; gap: 6px; }
 }
+
+
+.student-label-editor {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #edf1ee;
+  border-radius: 10px;
+  background: #fbfcfb;
+}
+.student-label-editor > label {
+  color: #59685e;
+  font-size: 11px;
+  font-weight: 650;
+}
+.student-label-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.student-label-editor-row input {
+  flex: 1 1 240px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 9px 11px;
+  border: 1px solid #dfe8e2;
+  border-radius: 8px;
+  background: #fff;
+  color: #405047;
+  font: inherit;
+  font-size: 12px;
+}
+.student-label-editor-row input:focus {
+  outline: 2px solid #9bb8a2;
+  outline-offset: 1px;
+}
+.student-label-editor small {
+  color: #87948b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+@media (max-width: 620px) {
+  .student-label-editor-row { align-items: stretch; flex-direction: column; }
+  .student-label-editor-row .secondary-button { width: 100%; }
+}

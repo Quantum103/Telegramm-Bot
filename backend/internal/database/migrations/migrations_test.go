@@ -66,6 +66,12 @@ func TestMigrationsHaveMatchingDirections(t *testing.T) {
 				"created_at TIMESTAMPTZ NOT NULL DEFAULT now()",
 				"CHECK (code ~ '^c_[A-Za-z0-9_-]{43}$')",
 			}
+		case strings.HasPrefix(filepath.Base(upPath), "000016_"):
+			required = []string{
+				"ADD COLUMN staff_label TEXT",
+				"students_staff_label_length_chk",
+				"length(btrim(staff_label)) BETWEEN 1 AND 120",
+			}
 		case strings.HasPrefix(filepath.Base(upPath), "000012_"):
 			required = []string{
 				"CREATE TABLE course_enrollments",

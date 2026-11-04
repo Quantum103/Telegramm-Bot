@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   assignStudentCurator, endStudentCuratorAssignment, getCourseLessonDetail,
   listAdminStudents, listCuratorCourseLessons, listCuratorLessonAnswers, listCuratorReviewQueue,
-  ensureStaffConversationForStudent, listStaffAccounts, reviewCuratorAnswerAttempt, staffConversationEventsURL,
+  ensureStaffConversationForStudent, listStaffAccounts, reviewCuratorAnswerAttempt, setStudentLabel, staffConversationEventsURL,
   type AdminStudent, type AnswerAttempt, type CourseEnrollmentLesson, type CourseLessonDetail,
   type CuratorAnswer, type CuratorCourseAccess, type CuratorReviewQueueItem,
   type StaffAccount, type StaffIdentity,
@@ -11,6 +11,8 @@ import './management.css'
 
 const messageOf = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 const dateText = (value?: string) => value ? new Date(value).toLocaleString('ru-RU') : 'Пока нет активности'
+const studentDisplayLabel = (student: AdminStudent) =>
+  student.staff_label?.trim() || student.preferred_name?.trim() || student.display_name
 
 function reviewLabel(decision?: string, status?: string, attempts = 1): string {
   if (decision === 'approved') return 'Принят'
@@ -104,6 +106,8 @@ export default function StudentsPage({
   const [loading, setLoading] = useState(true)
   const [busyStudentID, setBusyStudentID] = useState<number | null>(null)
   const [openingChatStudentID, setOpeningChatStudentID] = useState<number | null>(null)
+  const [labelDraft, setLabelDraft] = useState('')
+  const [savingStudentLabel, setSavingStudentLabel] = useState(false)
   const [selectedCurator, setSelectedCurator] = useState<Record<number, string>>({})
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -270,13 +274,16 @@ export default function StudentsPage({
   }
 
   const sortedStudents = useMemo(
-    () => [...students].sort((a, b) => (a.preferred_name || a.display_name).localeCompare(b.preferred_name || b.display_name, 'ru')),
+    () => [...students].sort((a, b) => studentDisplayLabel(a).localeCompare(studentDisplayLabel(b), 'ru')),
     [students],
   )
   const selectedStudent = useMemo(
     () => students.find((student) => student.id === selectedStudentID) ?? null,
     [students, selectedStudentID],
   )
+  useEffect(() => {
+    setLabelDraft(selectedStudent?.staff_label ?? '')
+  }, [selectedStudentID, selectedStudent?.staff_label])
   const retainedCompletedCourse = selectedStudent && courseAccess?.enrollment.student_id === selectedStudent.id &&
     courseAccess.enrollment.status === 'completed' ? courseAccess : null
   const activeCourse = selectedStudent?.active_course ?? (retainedCompletedCourse ? {
@@ -445,6 +452,29 @@ export default function StudentsPage({
       if (message.includes('Сессия завершена')) onSessionExpired()
     } finally {
       setBusyStudentID(null)
+    }
+  }
+
+  async function saveStudentLabel(student: AdminStudent) {
+    if (savingStudentLabel) return
+    setSavingStudentLabel(true)
+    setError('')
+    setNotice('')
+    try {
+      const normalizedLabel = labelDraft.trim()
+      await setStudentLabel(student.id, normalizedLabel)
+      setStudents((current) => current.map((item) => item.id === student.id
+        ? { ...item, staff_label: normalizedLabel || undefined }
+        : item))
+      setNotice(normalizedLabel
+        ? `Внутренняя подпись для «${normalizedLabel}» сохранена.`
+        : `Внутренняя подпись ученика «${student.display_name}» очищена.`)
+    } catch (reason: unknown) {
+      const message = messageOf(reason, 'Не удалось сохранить подпись ученика.')
+      setError(message)
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    } finally {
+      setSavingStudentLabel(false)
     }
   }
 
@@ -640,7 +670,7 @@ export default function StudentsPage({
             ? Math.round(course.completed_lessons / course.total_lessons * 100) : 0
           const lastActivity = student.last_learning_activity_at || student.last_active_at
           return <tr key={student.id} className={selectedStudentID === student.id ? 'students-table-row--selected' : ''}>
-            <td><div className="management-person"><strong>{student.preferred_name || student.display_name}</strong><span>{student.telegram_username ? '@' + student.telegram_username : 'Telegram ID: ' + student.telegram_id}</span></div></td>
+            <td><div className="management-person"><strong>{studentDisplayLabel(student)}</strong><span>{student.telegram_username ? '@' + student.telegram_username : 'Telegram ID: ' + student.telegram_id}</span></div></td>
             <td>{course?.course_title || 'Нет активного курса'}</td>
             <td><div className="students-progress-cell"><strong>{course ? `${course.completed_lessons} из ${course.total_lessons}` : '—'}</strong>
               {course && <div className="students-progress-track" role="progressbar" aria-label="Прогресс курса" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: progress + '%' }} /></div>}
@@ -654,7 +684,7 @@ export default function StudentsPage({
               {selectedStudentID === student.id ? 'Открыта' : 'Открыть'}
             </button></td>
             {isAdmin && <td><div className="management-actions">
-              <select aria-label={'Куратор для ' + student.display_name}
+              <select aria-label={'Куратор для ' + studentDisplayLabel(student)}
                 value={selectedCurator[student.id] ?? (student.curator_staff_id ? String(student.curator_staff_id) : '')}
                 onChange={(event) => setSelectedCurator((current) => ({ ...current, [student.id]: event.target.value }))}>
                 <option value="">Выберите куратора</option>
@@ -671,13 +701,28 @@ export default function StudentsPage({
 
     {selectedStudent && <section ref={studentDetailRef} className="panel student-detail-panel" aria-labelledby="student-detail-title">
       <div className="student-detail-heading">
-        <div><p className="eyebrow">КАРТОЧКА УЧЕНИКА</p><h2 id="student-detail-title">{selectedStudent.preferred_name || selectedStudent.display_name}</h2>
+        <div><p className="eyebrow">КАРТОЧКА УЧЕНИКА</p><h2 id="student-detail-title">{studentDisplayLabel(selectedStudent)}</h2>
+          <p>Имя в Telegram: {selectedStudent.display_name}{selectedStudent.telegram_username ? ` · @${selectedStudent.telegram_username}` : ''}</p>
           <p>{activeCourse?.course_title || 'Нет активного курса'}{activeCourse ? ` · ${activeCourse.mode === 'curator' ? 'С куратором' : 'С ИИ'}` : ''}</p>
         </div>
         <div className="student-detail-actions">
           {chatButton(selectedStudent)}
           <button className="icon-button" type="button" aria-label="Закрыть карточку ученика" onClick={() => { setSelectedStudentID(null); setCourseAccess(null) }}>×</button>
         </div>
+      </div>
+      <div className="student-label-editor">
+        <label htmlFor="student-staff-label">Внутренняя подпись ученика</label>
+        <div className="student-label-editor-row">
+          <input id="student-staff-label" type="text" maxLength={120}
+            value={labelDraft} onChange={(event) => setLabelDraft(event.target.value)}
+            placeholder="Например, Иван — Ростов" />
+          <button className="secondary-button" type="button"
+            disabled={savingStudentLabel || labelDraft === (selectedStudent.staff_label ?? '')}
+            onClick={() => void saveStudentLabel(selectedStudent)}>
+            {savingStudentLabel ? 'Сохраняем…' : 'Сохранить подпись'}
+          </button>
+        </div>
+        <small>Это имя увидят сотрудники на сайте. В Telegram имя ученика не изменится. Оставьте поле пустым, чтобы использовать имя из профиля.</small>
       </div>
       {activeCourse && <div className="student-course-summary">
         <div><span>Прогресс курса</span><strong>{activeCourse.completed_lessons} / {activeCourse.total_lessons} уроков</strong></div>

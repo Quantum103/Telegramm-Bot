@@ -138,6 +138,22 @@ func (h handlers) staffNotificationMiddleware(next http.Handler) http.Handler {
 	return h.staffSessionMiddleware(roleChecked)
 }
 
+func (h handlers) staffCuratorOrAdminMiddleware(next http.Handler) http.Handler {
+	roleChecked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity := staffIdentityFromRequest(r)
+		if identity.StaffID <= 0 {
+			writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
+			return
+		}
+		if !staffHasRole(identity, "curator") && !staffHasRole(identity, "administrator") {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return h.staffSessionMiddleware(roleChecked)
+}
+
 func (h handlers) staffCuratorMiddleware(next http.Handler) http.Handler {
 	roleChecked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := staffIdentityFromRequest(r)
@@ -161,6 +177,10 @@ type curatorConversationEnsurer interface {
 func (h handlers) staffEnsureStudentConversation(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
 	identity := staffIdentityFromRequest(r)
+	if !staffHasRole(identity, "curator") {
+		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+		return
+	}
 	studentID, ok := parsePositiveID(w, r.PathValue("studentID"))
 	if !ok {
 		return

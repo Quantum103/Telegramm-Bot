@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net/mail"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/auth"
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -72,6 +73,22 @@ func (s *StaffManagementService) ListStudents(ctx context.Context, actorID int64
 		return nil, domain.ErrInvalidInput
 	}
 	return s.store.ListStudentsForStaff(ctx, actorID)
+}
+
+// SetStudentLabel changes only the internal staff-facing name. An empty label clears the override.
+func (s *StaffManagementService) SetStudentLabel(ctx context.Context, actorID, studentID int64, label string) error {
+	label = strings.TrimSpace(label)
+	if actorID <= 0 || studentID <= 0 || !utf8.ValidString(label) ||
+		utf8.RuneCountInString(label) > 120 || strings.ContainsAny(label, "\r\n\t") {
+		return domain.ErrInvalidInput
+	}
+	updater, ok := s.store.(interface {
+		SetStudentLabel(context.Context, int64, int64, string) error
+	})
+	if !ok {
+		return domain.ErrInvalidState
+	}
+	return updater.SetStudentLabel(ctx, actorID, studentID, label)
 }
 
 func (s *StaffManagementService) AssignCurator(ctx context.Context, actorID, studentID, curatorStaffID int64) error {

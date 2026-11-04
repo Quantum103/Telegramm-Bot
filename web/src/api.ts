@@ -70,6 +70,7 @@ export type AdminStudent = {
   id: number
   telegram_id: number
   display_name: string
+  staff_label?: string
   telegram_username?: string
   preferred_name?: string
   account_status: string
@@ -544,6 +545,18 @@ export async function reviewCuratorAnswerAttempt(
     body: JSON.stringify({ decision, feedback: feedback.trim() }),
   })
   return readJSONResponse<CuratorReviewResult>(response)
+}
+
+export async function setStudentLabel(studentID: number, label: string): Promise<void> {
+  if (!Number.isSafeInteger(studentID) || studentID <= 0) throw new Error('Некорректный идентификатор ученика.')
+  if (label.length > 120 || /[\r\n\t]/.test(label)) throw new Error('Подпись должна содержать не более 120 символов в одну строку.')
+  const response = await fetch(`/api/v1/staff/students/${studentID}/label`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin',
+    body: JSON.stringify({ label }),
+  })
+  await readJSONResponse<unknown>(response)
 }
 
 export async function assignStudentCurator(studentID: number, curatorStaffID: number): Promise<void> {

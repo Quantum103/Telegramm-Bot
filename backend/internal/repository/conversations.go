@@ -375,7 +375,9 @@ func (r *ConversationRepository) ListForCurator(ctx context.Context, curatorStaf
 		return nil, ErrInvalidInput
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, c.student_id, student.display_name, c.status, c.updated_at,
+		SELECT c.id, c.student_id,
+		       COALESCE(NULLIF(BTRIM(student.staff_label), ''), NULLIF(BTRIM(student.preferred_name), ''), student.display_name),
+		       c.status, c.updated_at,
 		       last_message.id, last_message.sender_participant_id,
 		       CASE WHEN last_sender.student_id IS NOT NULL THEN 'student' ELSE 'curator' END,
 		       last_message.message_type, last_message.body_text, last_message.created_at,

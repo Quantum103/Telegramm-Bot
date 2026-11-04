@@ -39,6 +39,7 @@ type AdminStudent struct {
 	ID                     int64                `json:"id"`
 	TelegramID             int64                `json:"telegram_id"`
 	DisplayName            string               `json:"display_name"`
+	StaffLabel             *string              `json:"staff_label,omitempty"`
 	TelegramUsername       *string              `json:"telegram_username,omitempty"`
 	PreferredName          *string              `json:"preferred_name,omitempty"`
 	AccountStatus          string               `json:"account_status"`
