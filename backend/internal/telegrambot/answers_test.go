@@ -413,3 +413,60 @@ func TestMultipleChoiceDraftsAreIsolatedBetweenStudents(t *testing.T) {
 		t.Fatalf("second student's draft is not isolated, selected options=%d", got)
 	}
 }
+
+func TestTextAnswerTemporaryPersistenceFailureDoesNotAcknowledgeUpdate(t *testing.T) {
+	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "text", nil)
+	learning.submitErr = errors.New("temporary database connection failure")
+
+	update := answerMessage(9050, mainID+100, user, "Мой ответ")
+	if handled := bot.handleUpdate(context.Background(), update); handled {
+		t.Fatal("temporary answer persistence failure was acknowledged")
+	}
+	if len(learning.attempts) != 0 {
+		t.Fatalf("failed answer unexpectedly created an attempt: %+v", learning.attempts)
+	}
+	if len(api.messages) == 0 || !strings.Contains(api.messages[len(api.messages)-1].text, "Не удалось сохранить ответ") {
+		t.Fatalf("student did not receive a safe retry message: %+v", api.messages)
+	}
+}
+
+func TestTemporaryProgressReadFailureDoesNotAcknowledgeAnswerCallback(t *testing.T) {
+	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", []domain.QuestionOption{
+		{ID: 6501, Key: "a", Text: "вариант"},
+	})
+	learning.fakeLearning.progressErr = errors.New("temporary database connection failure")
+
+	callback := testCallback("p:701:1001:6501", user, mainID)
+	update := Update{UpdateID: 9051, CallbackQuery: &callback}
+	if handled := bot.handleUpdate(context.Background(), update); handled {
+		t.Fatal("temporary progress read failure was acknowledged")
+	}
+	if len(learning.attempts) != 0 {
+		t.Fatalf("answer callback was saved despite unavailable progress: %+v", learning.attempts)
+	}
+}
+
+func TestMultiChoiceDesiredStateIsIdempotentAndRestoresDraftFromMarkup(t *testing.T) {
+	api := &fakeAPI{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+	key := answerStateKey{studentID: 7, enrollmentID: 701, questionID: 1001}
+	markup := keyboard(
+		button("☐ вариант A", "t:701:1001:6601:1"),
+		button("✅ вариант B", "t:701:1001:6602:0"),
+	)
+
+	// Simulate a new process: no in-memory selection state exists.
+	bot.seedMultiDraftFromMarkup(key, markup)
+	// The same click is applied twice because Telegram redelivered one update.
+	bot.setMultiDraftOption(key, 6601, true)
+	bot.setMultiDraftOption(key, 6601, true)
+
+	got := orderedDraftSelection([]domain.QuestionOption{
+		{ID: 6601}, {ID: 6602},
+	}, bot.multiDraftSelection(key))
+	if len(got) != 2 || got[0] != 6601 || got[1] != 6602 {
+		t.Fatalf("restored selection = %v, want [6601 6602]", got)
+	}
+}
+
