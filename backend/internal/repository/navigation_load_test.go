@@ -239,23 +239,23 @@ func TestQuestionNavigationLoadProfiles(t *testing.T) {
 
 		afterPool := pool.Stat()
 		report := map[string]any{
-			"profile": profile.name,
-			"students": profile.students,
-			"operations_per_student": iterations,
-			"operation_count": len(operationDurations),
-			"elapsed_ms": float64(elapsed) / float64(time.Millisecond),
+			"profile":                   profile.name,
+			"students":                  profile.students,
+			"operations_per_student":    iterations,
+			"operation_count":           len(operationDurations),
+			"elapsed_ms":                float64(elapsed) / float64(time.Millisecond),
 			"throughput_ops_per_second": float64(len(operationDurations)) / elapsed.Seconds(),
-			"operation_latency_ms": navigationLatencyPercentiles(operationDurations),
-			"sql_query_count": len(sqlDurations),
+			"operation_latency_ms":      navigationLatencyPercentiles(operationDurations),
+			"sql_query_count":           len(sqlDurations),
 			"sql_queries_per_operation": float64(len(sqlDurations)) / float64(len(operationDurations)),
-			"sql_latency_ms": navigationLatencyPercentiles(sqlDurations),
+			"sql_latency_ms":            navigationLatencyPercentiles(sqlDurations),
 			"pool": map[string]any{
-				"max_connections": afterPool.MaxConns(),
-				"acquire_count_delta": afterPool.AcquireCount() - beforePool.AcquireCount(),
-				"acquire_wait_ms_delta": float64(afterPool.AcquireDuration()-beforePool.AcquireDuration()) / float64(time.Millisecond),
-				"empty_acquire_count_delta": afterPool.EmptyAcquireCount() - beforePool.EmptyAcquireCount(),
+				"max_connections":              afterPool.MaxConns(),
+				"acquire_count_delta":          afterPool.AcquireCount() - beforePool.AcquireCount(),
+				"acquire_wait_ms_delta":        float64(afterPool.AcquireDuration()-beforePool.AcquireDuration()) / float64(time.Millisecond),
+				"empty_acquire_count_delta":    afterPool.EmptyAcquireCount() - beforePool.EmptyAcquireCount(),
 				"canceled_acquire_count_delta": afterPool.CanceledAcquireCount() - beforePool.CanceledAcquireCount(),
-				"peaks": peaks.snapshot(),
+				"peaks":                        peaks.snapshot(),
 			},
 		}
 		encoded, err := json.Marshal(report)
