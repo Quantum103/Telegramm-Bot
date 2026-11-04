@@ -115,11 +115,11 @@ func TestConversationServiceDoesNotPublishFailedMessages(t *testing.T) {
 
 type provisionableConversationEventStoreStub struct {
 	*conversationEventStoreStub
-	conversation        domain.Conversation
-	provisionErr        error
-	provisionCalls      int
-	provisionCuratorID  int64
-	provisionStudentID  int64
+	conversation       domain.Conversation
+	provisionErr       error
+	provisionCalls     int
+	provisionCuratorID int64
+	provisionStudentID int64
 }
 
 func (s *provisionableConversationEventStoreStub) GetOrCreateForCurator(
