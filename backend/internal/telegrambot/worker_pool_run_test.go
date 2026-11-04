@@ -2,6 +2,7 @@ package telegrambot
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -196,5 +197,49 @@ func TestBotRunDrainsAcceptedUpdateDuringGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not finish after accepted update was released")
+	}
+}
+
+func TestBotConcurrentSharedStateAccess(t *testing.T) {
+	bot := NewBot(nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	key := answerStateKey{studentID: 700, enrollmentID: 800, questionID: 900}
+	markup := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{{
+			{Text: "Вариант", CallbackData: "t:800:900:1000:1"},
+		}},
+	}
+
+	const (
+		goroutines = 16
+		iterations = 100
+	)
+	var workers sync.WaitGroup
+	workers.Add(goroutines)
+	for worker := 0; worker < goroutines; worker++ {
+		worker := worker
+		go func() {
+			defer workers.Done()
+			for iteration := 0; iteration < iterations; iteration++ {
+				chatID := int64(worker%4 + 1)
+				messageID := int64(worker*iterations + iteration + 1)
+				bot.rememberMainMessage(chatID, messageID)
+				_ = bot.knownMainMessage(chatID)
+
+				bot.setChoiceEditing(key, true)
+				bot.seedMultiDraft(key, []int64{int64(worker + 1)})
+				bot.setMultiDraftOption(key, int64(worker+1), true)
+				bot.seedMultiDraftFromMarkup(key, markup)
+				_ = bot.isChoiceEditing(key)
+				_ = bot.multiDraftSelection(key)
+				bot.clearChoiceState(key)
+
+				_ = bot.claimCallbackAcknowledgement(fmt.Sprintf("race-%d-%d", worker, iteration))
+			}
+		}()
+	}
+	workers.Wait()
+
+	if got := bot.knownMainMessage(1); got <= 0 {
+		t.Fatalf("knownMainMessage(1) = %d, want a positive message ID", got)
 	}
 }
