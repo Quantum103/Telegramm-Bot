@@ -652,17 +652,23 @@ func (b *Bot) render(ctx context.Context, chatID, messageID int64, text string, 
 		}
 		return
 	}
-	if err := b.api.EditMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil {
-		b.rememberMainMessage(chatID, messageID)
-		return
-	} else if isMessageNotModified(err) {
+	if err := b.api.EditMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil || isMessageNotModified(err) {
 		b.rememberMainMessage(chatID, messageID)
 		return
 	} else if ctx.Err() == nil {
-		b.logger.Warn("не удалось изменить основное сообщение Telegram; создаём новое", "chat_id", chatID, "message_id", messageID, "error", err)
+		if !isMessageEditUnavailable(err) {
+			b.logger.Warn("результат редактирования основного сообщения неоднозначен; повторная отправка подавлена",
+				"chat_id", chatID, "message_id", messageID,
+				"error_kind", classifyTelegramAPIError(err), "error", err)
+			return
+		}
+		b.logger.Warn("сообщение Telegram нельзя отредактировать; отправляем замену",
+			"chat_id", chatID, "message_id", messageID,
+			"error_kind", classifyTelegramAPIError(err), "error", err)
 		sentID, sendErr := b.api.SendMessageWithKeyboard(ctx, chatID, text, replyMarkup)
 		if sendErr != nil && ctx.Err() == nil {
-			b.logger.Warn("не удалось отправить новое основное сообщение Telegram", "chat_id", chatID, "error", sendErr)
+			b.logger.Warn("не удалось отправить новое основное сообщение Telegram",
+				"chat_id", chatID, "error_kind", classifyTelegramAPIError(sendErr), "error", sendErr)
 		} else if sendErr == nil {
 			b.rememberMainMessage(chatID, sentID)
 		}
@@ -685,17 +691,23 @@ func (b *Bot) renderHTML(ctx context.Context, chatID, messageID int64, text stri
 		}
 		return
 	}
-	if err := api.EditHTMLMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil {
-		b.rememberMainMessage(chatID, messageID)
-		return
-	} else if isMessageNotModified(err) {
+	if err := api.EditHTMLMessageText(ctx, chatID, messageID, text, replyMarkup); err == nil || isMessageNotModified(err) {
 		b.rememberMainMessage(chatID, messageID)
 		return
 	} else if ctx.Err() == nil {
-		b.logger.Warn("не удалось изменить HTML-сообщение Telegram; создаём новое", "chat_id", chatID, "message_id", messageID, "error", err)
+		if !isMessageEditUnavailable(err) {
+			b.logger.Warn("результат редактирования HTML-сообщения неоднозначен; повторная отправка подавлена",
+				"chat_id", chatID, "message_id", messageID,
+				"error_kind", classifyTelegramAPIError(err), "error", err)
+			return
+		}
+		b.logger.Warn("HTML-сообщение Telegram нельзя отредактировать; отправляем замену",
+			"chat_id", chatID, "message_id", messageID,
+			"error_kind", classifyTelegramAPIError(err), "error", err)
 		sentID, sendErr := api.SendHTMLMessageWithKeyboard(ctx, chatID, text, replyMarkup)
 		if sendErr != nil && ctx.Err() == nil {
-			b.logger.Warn("не удалось отправить новое HTML-сообщение Telegram", "chat_id", chatID, "error", sendErr)
+			b.logger.Warn("не удалось отправить новое HTML-сообщение Telegram",
+				"chat_id", chatID, "error_kind", classifyTelegramAPIError(sendErr), "error", sendErr)
 		} else if sendErr == nil {
 			b.rememberMainMessage(chatID, sentID)
 		}

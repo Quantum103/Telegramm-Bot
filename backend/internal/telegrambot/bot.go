@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -98,6 +99,7 @@ type LearningNavigator interface {
 
 type APIError struct {
 	Code        int
+	HTTPStatus  int
 	Description string
 	RetryAfter  time.Duration
 }
@@ -107,6 +109,66 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("Telegram Bot API вернул ошибку %d", e.Code)
 	}
 	return fmt.Sprintf("Telegram Bot API, ошибка %d: %s", e.Code, e.Description)
+}
+
+type TelegramErrorKind string
+
+const (
+	TelegramErrorAPIFailure       TelegramErrorKind = "telegram_api_error"
+	TelegramErrorMessageUnchanged TelegramErrorKind = "message_not_modified"
+	TelegramErrorMessageNotFound TelegramErrorKind = "message_not_found"
+	TelegramErrorMessageNotEditable TelegramErrorKind = "message_not_editable"
+	TelegramErrorRateLimited      TelegramErrorKind = "rate_limited"
+	TelegramErrorServerFailure   TelegramErrorKind = "telegram_server_error"
+	TelegramErrorTimeout         TelegramErrorKind = "request_timeout"
+	TelegramErrorCancelled       TelegramErrorKind = "request_cancelled"
+	TelegramErrorNetwork         TelegramErrorKind = "network_error"
+)
+
+// classifyTelegramAPIError provides a stable category for logs and fallback decisions.
+// It never includes the bot token or the raw request URL.
+func classifyTelegramAPIError(err error) TelegramErrorKind {
+	if err == nil {
+		return ""
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		description := strings.ToLower(apiErr.Description)
+		switch {
+		case strings.Contains(description, "message is not modified"):
+			return TelegramErrorMessageUnchanged
+		case strings.Contains(description, "message to edit not found"),
+			strings.Contains(description, "message not found"):
+			return TelegramErrorMessageNotFound
+		case strings.Contains(description, "message can't be edited"),
+			strings.Contains(description, "message can not be edited"):
+			return TelegramErrorMessageNotEditable
+		case apiErr.Code == http.StatusTooManyRequests || apiErr.HTTPStatus == http.StatusTooManyRequests:
+			return TelegramErrorRateLimited
+		case apiErr.Code >= http.StatusInternalServerError || apiErr.HTTPStatus >= http.StatusInternalServerError:
+			return TelegramErrorServerFailure
+		default:
+			return TelegramErrorAPIFailure
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return TelegramErrorTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return TelegramErrorCancelled
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && networkErr.Timeout() {
+		return TelegramErrorTimeout
+	}
+	return TelegramErrorNetwork
+}
+
+// isMessageEditUnavailable is true only for an explicit Telegram rejection proving
+// that the target message cannot be edited. Transport and server errors are ambiguous.
+func isMessageEditUnavailable(err error) bool {
+	kind := classifyTelegramAPIError(err)
+	return kind == TelegramErrorMessageNotFound || kind == TelegramErrorMessageNotEditable
 }
 
 type HTTPClient struct {
@@ -292,7 +354,7 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 			code = resp.StatusCode
 		}
 		return &APIError{
-			Code: code, Description: envelope.Description,
+			Code: code, HTTPStatus: resp.StatusCode, Description: envelope.Description,
 			RetryAfter: time.Duration(envelope.Parameters.RetryAfter) * time.Second,
 		}
 	}
@@ -405,7 +467,7 @@ func (b *Bot) Run(ctx context.Context) error {
 			if isFatalAPIError(err) {
 				return fmt.Errorf("long polling Telegram остановлен: %w", err)
 			}
-			b.logger.Warn("ошибка получения обновлений Telegram; будет повторная попытка", "error", err)
+			b.logger.Warn("ошибка получения обновлений Telegram; будет повторная попытка", "error_kind", classifyTelegramAPIError(err), "error", err)
 			if !wait(ctx, backoff) {
 				return nil
 			}
@@ -445,7 +507,7 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 		if isFatalAPIError(err) {
 			return User{}, fmt.Errorf("проверка токена Telegram не пройдена: %w", err)
 		}
-		b.logger.Warn("Telegram API временно недоступен при запуске; будет повторная попытка", "error", err)
+		b.logger.Warn("Telegram API временно недоступен при запуске; будет повторная попытка", "error_kind", classifyTelegramAPIError(err), "error", err)
 		if !wait(ctx, backoff) {
 			return User{}, nil
 		}
@@ -464,7 +526,7 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 		if isFatalAPIError(err) {
 			return User{}, fmt.Errorf("не удалось подготовить long polling Telegram: %w", err)
 		}
-		b.logger.Warn("не удалось подготовить long polling Telegram; будет повторная попытка", "error", err)
+		b.logger.Warn("не удалось подготовить long polling Telegram; будет повторная попытка", "error_kind", classifyTelegramAPIError(err), "error", err)
 		if !wait(ctx, backoff) {
 			return User{}, nil
 		}

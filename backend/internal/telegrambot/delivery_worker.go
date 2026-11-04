@@ -231,7 +231,8 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 			w.logger.Error("не удалось сохранить окончательную ошибку Telegram", "delivery_id", delivery.ID, "error", markErr)
 		}
 		w.logger.Warn("Telegram не принял сообщение; повторная доставка не планируется",
-			"delivery_id", delivery.ID, "error_code", errorCode)
+			"delivery_id", delivery.ID, "error_code", errorCode,
+			"error_kind", classifyTelegramAPIError(err), "error", err)
 		return
 	}
 	if delivery.AttemptCount >= maxDeliveryAttempts {
@@ -244,7 +245,9 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 		retryAfter = deliveryBackoff(delivery.AttemptCount)
 	}
 	if markErr := w.queue.ScheduleDeliveryRetry(ctx, delivery.ID, errorCode, retryAfter); markErr != nil {
-		w.logger.Error("не удалось запланировать повтор Telegram-доставки", "delivery_id", delivery.ID, "error", markErr)
+		w.logger.Error("не удалось запланировать повтор Telegram-доставки",
+			"delivery_id", delivery.ID, "error_code", errorCode,
+			"error_kind", classifyTelegramAPIError(err), "error", markErr)
 	}
 }
 
