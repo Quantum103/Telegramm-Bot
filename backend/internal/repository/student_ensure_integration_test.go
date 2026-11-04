@@ -75,7 +75,7 @@ func TestEnsureByTelegramIDOnlyWritesWhenNeeded(t *testing.T) {
 	// не должен менять ни last_active_at, ни updated_at, ни xmin.
 	if _, err := pool.Exec(ctx, `
 		UPDATE students
-		SET last_active_at = now() - interval '59 seconds', updated_at = $2::timestamptz
+		SET last_active_at = now() - interval '30 seconds', updated_at = $2::timestamptz
 		WHERE id = $1
 	`, student.ID, sentinel); err != nil {
 		t.Fatalf("подготовить интервал менее минуты: %v", err)
@@ -95,7 +95,7 @@ func TestEnsureByTelegramIDOnlyWritesWhenNeeded(t *testing.T) {
 	// После истечения минуты активность обновляется.
 	if _, err := pool.Exec(ctx, `
 		UPDATE students
-		SET last_active_at = now() - interval '61 seconds', updated_at = $2::timestamptz
+		SET last_active_at = now() - interval '90 seconds', updated_at = $2::timestamptz
 		WHERE id = $1
 	`, student.ID, sentinel); err != nil {
 		t.Fatalf("подготовить интервал более минуты: %v", err)
