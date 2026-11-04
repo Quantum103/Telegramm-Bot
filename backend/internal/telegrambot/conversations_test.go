@@ -426,3 +426,35 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 			conversations.chatModeOffCalls-chatOffBeforeCatalog, conversations.lessonModeOffCalls-lessonOffBeforeCatalog)
 	}
 }
+
+func TestReplayedStaffLinkAfterCommittedBindingIsReportedAsAlreadyLinked(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	staffTelegram := &fakeStaffTelegramAPIForBinding{
+		account: domain.StaffTelegramAccount{
+			StaffID: 78, DisplayName: "Уже привязанный куратор",
+			AccountStatus: "active", IsCurator: true,
+		},
+		bindErr: domain.ErrNotFound, // the one-time token was consumed by the first delivery
+	}
+	bot := NewBotWithChapterPublisherAndConversationsAndStaffTelegram(
+		api, students, catalog, learning, nil, nil, nil, staffTelegram,
+	)
+	user := User{ID: 987655, Username: "curator"}
+	update := Update{UpdateID: 2, Message: &Message{
+		MessageID: 6, From: &user, Chat: Chat{ID: user.ID, Type: "private"},
+		Text: "/link consumed-one-time-token",
+	}}
+
+	if handled := bot.handleUpdate(context.Background(), update); !handled {
+		t.Fatal("a replay of an already committed staff binding must be terminal")
+	}
+	if staffTelegram.bindCalls != 1 {
+		t.Fatalf("binding attempts = %d, want exactly one attempt for this delivery", staffTelegram.bindCalls)
+	}
+	if len(api.messages) == 0 || !strings.Contains(api.messages[len(api.messages)-1].text, "уже привязан") {
+		t.Fatalf("bot should report the committed binding instead of an expired token: %+v", api.messages)
+	}
+}
+
