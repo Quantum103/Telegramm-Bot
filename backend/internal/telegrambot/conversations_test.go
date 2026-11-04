@@ -457,4 +457,3 @@ func TestReplayedStaffLinkAfterCommittedBindingIsReportedAsAlreadyLinked(t *test
 		t.Fatalf("bot should report the committed binding instead of an expired token: %+v", api.messages)
 	}
 }
-
