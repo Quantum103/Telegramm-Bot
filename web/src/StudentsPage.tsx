@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   assignStudentCurator, endStudentCuratorAssignment, getCourseLessonDetail,
   listAdminStudents, listCuratorCourseLessons, listCuratorLessonAnswers, listCuratorReviewQueue,
-  listStaffAccounts, listStaffConversations, reviewCuratorAnswerAttempt, staffConversationEventsURL,
+  ensureStaffConversationForStudent, listStaffAccounts, reviewCuratorAnswerAttempt, staffConversationEventsURL,
   type AdminStudent, type AnswerAttempt, type CourseEnrollmentLesson, type CourseLessonDetail,
   type CuratorAnswer, type CuratorCourseAccess, type CuratorReviewQueueItem,
-  type StaffAccount, type StaffConversationSummary,
-  type StaffIdentity,
+  type StaffAccount, type StaffIdentity,
 } from './api'
 import './management.css'
 
@@ -102,9 +101,9 @@ export default function StudentsPage({
   const isCurator = staff.roles.includes('curator')
   const [students, setStudents] = useState<AdminStudent[]>([])
   const [curators, setCurators] = useState<StaffAccount[]>([])
-  const [conversations, setConversations] = useState<StaffConversationSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [busyStudentID, setBusyStudentID] = useState<number | null>(null)
+  const [openingChatStudentID, setOpeningChatStudentID] = useState<number | null>(null)
   const [selectedCurator, setSelectedCurator] = useState<Record<number, string>>({})
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -138,19 +137,15 @@ export default function StudentsPage({
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    const conversationsRequest = isCurator
-      ? listStaffConversations(controller.signal)
-      : Promise.resolve<StaffConversationSummary[]>([])
     const curatorsRequest = isAdmin
       ? listStaffAccounts(controller.signal).then((accounts) =>
         accounts.filter((account) => account.account_status === 'active' && account.roles.includes('curator')))
       : Promise.resolve<StaffAccount[]>([])
     void Promise.all([
-      listAdminStudents(controller.signal), conversationsRequest, curatorsRequest,
-    ]).then(([items, dialogs, accounts]) => {
+      listAdminStudents(controller.signal), curatorsRequest,
+    ]).then(([items, accounts]) => {
       if (controller.signal.aborted) return
       setStudents(items)
-      setConversations(dialogs)
       setCurators(accounts)
       setLoading(false)
     }).catch((reason: unknown) => {
@@ -470,24 +465,32 @@ export default function StudentsPage({
     }
   }
 
-  function openChat(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer, selectedOptionText = '') {
-    if (!isCurator) return
-    const conversation = conversations.find((item) => item.student_id === student.id)
-    if (!conversation) {
-      setNotice('У ученика пока нет активного диалога. Новый чат здесь не создаётся.')
-      return
+  async function openChat(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer, selectedOptionText = '') {
+    if (!isCurator || openingChatStudentID === student.id) return
+    setOpeningChatStudentID(student.id)
+    setError('')
+    setNotice('')
+    try {
+      // The endpoint is idempotent and also repairs conversations for older assignments.
+      const conversation = await ensureStaffConversationForStudent(student.id)
+      const lines = [
+        'Здравствуйте!',
+        '',
+        `Курс: ${student.active_course?.course_title ?? 'не указан'}`,
+        ...(lesson ? [`Урок: ${lesson.title}`] : []),
+        ...(answer ? [`Вопрос: ${answer.prompt}`, `Ответ ученика: ${answer.submitted_answer || selectedOptionText || 'выбран вариант ответа'}`] : []),
+        ...(answer?.review_feedback ? [`Предыдущее замечание: ${answer.review_feedback}`] : []),
+        '',
+        'Давайте обсудим это в чате.',
+      ]
+      onOpenConversation(conversation.id, lines.join('\\n').slice(0, 3800))
+    } catch (reason: unknown) {
+      const message = messageOf(reason, 'Не удалось открыть диалог с учеником.')
+      setError(message)
+      if (message.includes('Сессия завершена')) onSessionExpired()
+    } finally {
+      setOpeningChatStudentID(null)
     }
-    const lines = [
-      'Здравствуйте!',
-      '',
-      `Курс: ${student.active_course?.course_title ?? 'не указан'}`,
-      ...(lesson ? [`Урок: ${lesson.title}`] : []),
-      ...(answer ? [`Вопрос: ${answer.prompt}`, `Ответ ученика: ${answer.submitted_answer || selectedOptionText || 'выбран вариант ответа'}`] : []),
-      ...(answer?.review_feedback ? [`Предыдущее замечание: ${answer.review_feedback}`] : []),
-      '',
-      'Давайте обсудим это в чате.',
-    ]
-    onOpenConversation(conversation.id, lines.join('\n').slice(0, 3800))
   }
 
   async function submitReview(
@@ -556,10 +559,12 @@ export default function StudentsPage({
 
   function chatButton(student: AdminStudent, lesson?: CourseEnrollmentLesson, answer?: CuratorAnswer, selectedOptionText = '') {
     if (!isCurator) return null
-    const hasConversation = conversations.some((item) => item.student_id === student.id)
-    return <button className="text-button" type="button" disabled={!hasConversation}
-      title={hasConversation ? 'Открыть существующий диалог с учеником' : 'У ученика пока нет активного диалога'}
-      onClick={() => openChat(student, lesson, answer, selectedOptionText)}>Написать ученику</button>
+    const opening = openingChatStudentID === student.id
+    return <button className="text-button" type="button" disabled={opening}
+      title="Открыть или восстановить внутренний диалог с назначенным учеником"
+      onClick={() => void openChat(student, lesson, answer, selectedOptionText)}>
+      {opening ? 'Открываем чат…' : 'Написать ученику'}
+    </button>
   }
 
   return <section className="section-page section-page--students">
