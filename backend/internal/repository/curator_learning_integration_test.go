@@ -110,9 +110,12 @@ func TestCuratorLearningReadScopeActiveCourseAndAdminAIRead(t *testing.T) {
 	}
 	firstLesson := startCuratorTestLesson(t, ctx, pool, firstStudent.ID, firstRun, lessonIDs[0], "Ответ первого ученика")
 	secondLesson := startCuratorTestLesson(t, ctx, pool, secondStudent.ID, secondRun, lessonIDs[0], "Ответ второго ученика")
+	if _, err := NewEnrollmentRepository(pool).Complete(ctx, firstStudent.ID, firstLesson.enrollment.ID); err != nil {
+		t.Fatalf("отправить урок первого ученика до получения списка: %v", err)
+	}
 
 	// Список, используемый новым API, должен ограничивать куратора текущим
-	// назначением, а администратору показывать всех учеников и активные курсы.
+	// назначением и сохранять доступ к завершённому, но ожидающему проверки уроку.
 	firstCuratorStudents, err := staff.ListStudentsForStaff(ctx, firstCuratorID)
 	if err != nil || len(firstCuratorStudents) != 1 || firstCuratorStudents[0].ID != firstStudent.ID {
 		t.Fatalf("куратор получил чужих учеников: students=%+v err=%v", firstCuratorStudents, err)
@@ -120,7 +123,7 @@ func TestCuratorLearningReadScopeActiveCourseAndAdminAIRead(t *testing.T) {
 	if active := firstCuratorStudents[0].ActiveCourse; active == nil ||
 		active.CourseEnrollmentID != firstRun.Enrollment.ID ||
 		active.CourseTitle != firstRun.Enrollment.CourseTitle ||
-		active.Mode != "curator" || active.TotalLessons != 1 || active.CompletedLessons != 0 ||
+		active.Mode != "curator" || active.Status != "completed" || active.TotalLessons != 1 || active.CompletedLessons != 1 ||
 		active.PendingReviews != 1 || active.NeedsRevision != 0 {
 		t.Fatalf("активный курс или счётчики проверки не включены в список закреплённых учеников: %+v", firstCuratorStudents[0])
 	}
