@@ -163,7 +163,6 @@ func assertStudentModeStateUnchanged(t *testing.T, before, after studentModeStat
 	}
 }
 
-
 func TestDisablingUnsetStudentModesDoesNotInsertRow(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
