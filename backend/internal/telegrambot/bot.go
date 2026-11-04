@@ -405,6 +405,9 @@ type Bot struct {
 	staffTelegram    StaffTelegramBotAPI
 	studentReferrals StudentReferralAssigner
 
+	updateWorkerCount   int
+	updateQueueCapacity int
+
 	// ID основного сообщения — только кэш Telegram UI, не источник состояния обучения.
 	messageMu     sync.RWMutex
 	mainMessages  map[int64]int64
@@ -460,12 +463,27 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
 		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
 		studentReferrals: studentReferrals,
-		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
+		updateWorkerCount: defaultUpdateWorkerCount, updateQueueCapacity: defaultUpdateQueueCapacity,
+		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts:      make(map[answerStateKey]map[int64]struct{}),
 		callbackAckSeen:  make(map[string]struct{}),
 		callbackAckOrder: make([]string, 0, callbackAckCacheCapacity),
 	}
 }
+// ConfigureUpdateWorkerPool sets worker and per-worker queue limits. Configure
+// the pool before calling Run; the values are read once when Run starts.
+func (b *Bot) ConfigureUpdateWorkerPool(workerCount, queueCapacity int) error {
+	if workerCount < 1 || workerCount > 32 {
+		return fmt.Errorf("Telegram update worker count must be between 1 and 32")
+	}
+	if queueCapacity < 1 || queueCapacity > 256 {
+		return fmt.Errorf("Telegram update queue capacity must be between 1 and 256")
+	}
+	b.updateWorkerCount = workerCount
+	b.updateQueueCapacity = queueCapacity
+	return nil
+}
+
 func (b *Bot) Run(ctx context.Context) error {
 	me, err := b.waitForAPI(ctx)
 	if err != nil {
@@ -476,15 +494,28 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 	b.logger.Info("Telegram-бот авторизован", "telegram_bot_id", me.ID, "username", me.Username)
 
+	workerCount := b.updateWorkerCount
+	if workerCount < 1 {
+		workerCount = defaultUpdateWorkerCount
+	}
+	queueCapacity := b.updateQueueCapacity
+	if queueCapacity < 1 {
+		queueCapacity = defaultUpdateQueueCapacity
+	}
 	pool, err := NewUpdateWorkerPool(
 		ctx,
-		defaultUpdateWorkerCount,
-		defaultUpdateQueueCapacity,
+		workerCount,
+		queueCapacity,
 		b.processUpdate,
 	)
 	if err != nil {
 		return fmt.Errorf("не удалось запустить пул обработки Telegram updates: %w", err)
 	}
+	b.logger.Info("пул обработки Telegram updates запущен",
+		"workers", workerCount,
+		"queue_capacity_per_worker", queueCapacity,
+		"queue_capacity_total", workerCount*queueCapacity,
+	)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), updateWorkerShutdownTimeout)
 		defer cancel()
