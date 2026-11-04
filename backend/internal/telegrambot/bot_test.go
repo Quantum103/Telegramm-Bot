@@ -1234,7 +1234,9 @@ func TestHTTPClientSlowResponseRespectsEarlierCallerTimeout(t *testing.T) {
 	requestSeen := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestSeen <- struct{}{}
-		<-r.Context().Done()
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
 	}))
 	defer server.Close()
 
