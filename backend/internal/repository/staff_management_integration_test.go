@@ -155,7 +155,7 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 	`, firstReply.ID).Scan(&deliveryStatus, &recipientChatID); err != nil {
 		t.Fatalf("получить Telegram-доставку первого сообщения куратора: %v", err)
 	}
-	if deliveryStatus != "pending" || recipientChatID != studentTelegramID { 
+	if deliveryStatus != "pending" || recipientChatID != studentTelegramID {
 		t.Fatalf("первое сообщение куратора должно быть поставлено в Telegram outbox: status=%s recipient=%d", deliveryStatus, recipientChatID)
 	}
 	firstView, err := repo.ListStudentsForStaff(ctx, firstCuratorID)
