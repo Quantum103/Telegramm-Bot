@@ -190,15 +190,19 @@ func run(logger *slog.Logger) error {
 		}
 		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
 			telegramAPI, studentService, catalogService, learningService,
-			logger, chapterPublisher, conversationService, staffTelegramService, staffReferralService,
+			logger, chapterPublisher, conversationService, staffTelegramService, studentReferralService,
 		)
-		go func() {
-			defer close(botDone)
-			if err := bot.Run(appCtx); err != nil {
-				componentErrors <- fmt.Errorf("Telegram-бот: %w", err)
-			}
-		}()
-
+		if err := bot.ConfigureUpdateWorkerPool(cfg.TelegramUpdateWorkers, cfg.TelegramUpdateQueueCapacity); err != nil {
+			close(botDone)
+			componentErrors <- fmt.Errorf("конфигурация пула Telegram updates: %w", err)
+		} else {
+			go func() {
+				defer close(botDone)
+				if err := bot.Run(appCtx); err != nil {
+					componentErrors <- fmt.Errorf("Telegram-бот: %w", err)
+				}
+			}()
+		}
 		deliveryDone = make(chan struct{})
 		deliveryWorker := telegrambot.NewDeliveryWorker(
 			repository.NewConversationDeliveryRepository(pool), telegramAPI, logger,
