@@ -24,11 +24,16 @@ type StaffManagementStore interface {
 // StaffManagementService содержит операции управления сотрудниками и назначениями.
 // Проверка ролей повторяется в репозитории и HTTP middleware: UI не является границей безопасности.
 type StaffManagementService struct {
-	store StaffManagementStore
+	store  StaffManagementStore
+	events ConversationEventPublisher
 }
 
-func NewStaffManagementService(store StaffManagementStore) *StaffManagementService {
-	return &StaffManagementService{store: store}
+func NewStaffManagementService(store StaffManagementStore, eventPublishers ...ConversationEventPublisher) *StaffManagementService {
+	service := &StaffManagementService{store: store}
+	if len(eventPublishers) > 0 {
+		service.events = eventPublishers[0]
+	}
+	return service
 }
 
 func (s *StaffManagementService) ListStaffAccounts(ctx context.Context, actorID int64) ([]domain.StaffAccountSummary, error) {
@@ -73,7 +78,13 @@ func (s *StaffManagementService) AssignCurator(ctx context.Context, actorID, stu
 	if actorID <= 0 || studentID <= 0 || curatorStaffID <= 0 {
 		return domain.ErrInvalidInput
 	}
-	return s.store.AssignStudentCurator(ctx, actorID, studentID, curatorStaffID)
+	if err := s.store.AssignStudentCurator(ctx, actorID, studentID, curatorStaffID); err != nil {
+		return err
+	}
+	if s.events != nil {
+		s.events.PublishConversationChanged()
+	}
+	return nil
 }
 
 func (s *StaffManagementService) SetAccountStatus(ctx context.Context, actorID, targetID int64, status string) error {
@@ -106,7 +117,13 @@ func (s *StaffManagementService) EndCuratorAssignment(ctx context.Context, actor
 	if actorID <= 0 || studentID <= 0 {
 		return domain.ErrInvalidInput
 	}
-	return s.store.EndStudentCuratorAssignment(ctx, actorID, studentID)
+	if err := s.store.EndStudentCuratorAssignment(ctx, actorID, studentID); err != nil {
+		return err
+	}
+	if s.events != nil {
+		s.events.PublishConversationChanged()
+	}
+	return nil
 }
 
 func validStaffEmail(value string) bool {
