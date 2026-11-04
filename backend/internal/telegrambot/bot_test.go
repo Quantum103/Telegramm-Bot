@@ -839,7 +839,7 @@ func TestInvalidCallbackIsAcknowledgedAndShowsCatalog(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("course:not-an-id", user, api.messages[0].messageID))
 
-	if len(api.answered) != 1 || api.answered[0] != "callback-test" {
+	if len(api.answered) != 1 || !strings.HasPrefix(api.answered[0], "callback-test-") {
 		t.Fatalf("callback was not acknowledged: %+v", api.answered)
 	}
 	if !strings.Contains(lastEdit(t, api).text, "Выберите курс") {
@@ -1608,6 +1608,47 @@ func TestCallbackAcknowledgementCacheIsBounded(t *testing.T) {
 	}
 	if _, exists := bot.callbackAckSeen["callback-0"]; exists {
 		t.Fatal("oldest callback acknowledgement was not evicted from bounded cache")
+	}
+}
+
+func TestBusinessProcessorDoesNotAcknowledgeCallbackAgain(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+
+	user := testUser()
+	callback := testCallback("courses", user, 1)
+	update := Update{UpdateID: 9102, CallbackQuery: &callback}
+	bot.acknowledgeUpdate(context.Background(), update)
+	if len(api.answered) != 1 {
+		t.Fatalf("intake acknowledgement calls = %d, want 1", len(api.answered))
+	}
+	if handled := bot.processUpdate(context.Background(), update); !handled {
+		t.Fatal("business processor failed an otherwise valid callback")
+	}
+	if len(api.answered) != 1 {
+		t.Fatalf("business processing acknowledged callback again: %v", api.answered)
+	}
+}
+
+func TestCallbackAcknowledgementFailureDoesNotBlockBusinessProcessing(t *testing.T) {
+	api := &fakeAPI{answerErr: errors.New("temporary Telegram API failure")}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := newTestBot(api, students, catalog, learning)
+
+	user := testUser()
+	callback := testCallback("courses", user, 1)
+	update := Update{UpdateID: 9103, CallbackQuery: &callback}
+	if handled := bot.handleUpdate(context.Background(), update); !handled {
+		t.Fatal("callback acknowledgement failure must not fail business processing")
+	}
+	if students.calls != 1 {
+		t.Fatalf("business processing did not run after acknowledgement failure: student lookups=%d", students.calls)
+	}
+	if len(api.answered) != 1 {
+		t.Fatalf("callback acknowledgement attempts = %d, want 1", len(api.answered))
 	}
 }
 
