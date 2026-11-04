@@ -75,7 +75,6 @@ func (b *Bot) seedMultiDraft(key answerStateKey, optionIDs []int64) {
 	b.multiDrafts[key] = selected
 }
 
-
 func (b *Bot) toggleMultiDraft(key answerStateKey, optionID int64) {
 	b.choiceMu.Lock()
 	defer b.choiceMu.Unlock()
@@ -169,7 +168,6 @@ func hasMultiDraftControls(markup *InlineKeyboardMarkup, key answerStateKey) boo
 	return false
 }
 
-
 func multiDraftOptionSelectedInMarkup(markup *InlineKeyboardMarkup, key answerStateKey, optionID int64) bool {
 	if markup == nil {
 		return false
@@ -206,7 +204,6 @@ func (b *Bot) multiDraftSelection(key answerStateKey) []int64 {
 	}
 	return result
 }
-
 
 func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, message Message, text string) bool {
 	student, err := b.ensureStudent(ctx, user)
@@ -292,7 +289,6 @@ func telegramUpdateIdempotencyKey(updateID int64) string {
 	value[8] = (value[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16])
 }
-
 
 func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studentID, messageID int64, parts []string, replyMarkup *InlineKeyboardMarkup) bool {
 	action := parts[0]
