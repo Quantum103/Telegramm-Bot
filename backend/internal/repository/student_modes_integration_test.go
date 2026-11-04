@@ -163,3 +163,32 @@ func assertStudentModeStateUnchanged(t *testing.T, before, after studentModeStat
 	}
 }
 
+
+func TestDisablingUnsetStudentModesDoesNotInsertRow(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, false)
+	repo := NewConversationRepository(pool)
+
+	if err := repo.SetStudentChatMode(ctx, fixture.studentID, false); err != nil {
+		t.Fatalf("выключить отсутствующий режим общения: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM student_chat_modes WHERE student_id = $1", fixture.studentID).Scan(&count); err != nil {
+		t.Fatalf("проверить отсутствие строки режима после выключения общения: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("выключение уже выключенного режима общения создало строку: count=%d", count)
+	}
+
+	if err := repo.SetStudentLessonMode(ctx, fixture.studentID, false); err != nil {
+		t.Fatalf("выключить отсутствующий режим урока: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM student_chat_modes WHERE student_id = $1", fixture.studentID).Scan(&count); err != nil {
+		t.Fatalf("проверить отсутствие строки режима после выключения урока: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("выключение уже выключенного режима урока создало строку: count=%d", count)
+	}
+}
