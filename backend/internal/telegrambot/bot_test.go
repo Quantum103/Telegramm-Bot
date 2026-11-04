@@ -1426,3 +1426,92 @@ func TestRenderHTMLFallsBackWhenTelegramConfirmsMessageCannotBeEdited(t *testing
 		t.Fatalf("HTML fallback must preserve formatting and keyboard: %+v", api.messages)
 	}
 }
+
+type temporaryChatModeFailure struct{}
+
+func (temporaryChatModeFailure) CreateStudentMessage(context.Context, domain.CreateStudentConversationMessageParams) (domain.ConversationMessage, error) {
+	return domain.ConversationMessage{}, errors.New("temporary database failure")
+}
+
+func (temporaryChatModeFailure) SetStudentChatMode(context.Context, int64, bool) error {
+	return nil
+}
+
+func (temporaryChatModeFailure) SetStudentLessonMode(context.Context, int64, bool) error {
+	return nil
+}
+
+func (temporaryChatModeFailure) IsStudentChatMode(context.Context, int64) (bool, error) {
+	return false, errors.New("temporary database failure")
+}
+
+type replayPollingAPI struct {
+	*fakeAPI
+
+	pollMu     sync.Mutex
+	offsets    []int64
+	secondPoll chan struct{}
+	update     Update
+}
+
+func (a *replayPollingAPI) GetUpdates(ctx context.Context, offset int64, _ int) ([]Update, error) {
+	a.pollMu.Lock()
+	a.offsets = append(a.offsets, offset)
+	pollNumber := len(a.offsets)
+	a.pollMu.Unlock()
+
+	if pollNumber == 1 {
+		return []Update{a.update}, nil
+	}
+	if pollNumber == 2 {
+		close(a.secondPoll)
+	}
+
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRunDoesNotAdvanceOffsetAfterTemporaryProcessingFailure(t *testing.T) {
+	api := &replayPollingAPI{
+		fakeAPI:    &fakeAPI{},
+		secondPoll: make(chan struct{}),
+		update:     testUpdate(41, "обычное сообщение", testUser()),
+	}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	bot := NewBotWithChapterPublisherAndConversations(api, students, catalog, learning, nil, nil, temporaryChatModeFailure{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- bot.Run(ctx)
+	}()
+
+	select {
+	case <-api.secondPoll:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("Run did not retry polling after the temporary processing failure")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error during cancellation: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop after context cancellation")
+	}
+
+	api.pollMu.Lock()
+	offsets := append([]int64(nil), api.offsets...)
+	api.pollMu.Unlock()
+	if len(offsets) != 2 {
+		t.Fatalf("getUpdates calls = %d, want 2; offsets=%v", len(offsets), offsets)
+	}
+	if offsets[0] != 0 || offsets[1] != 0 {
+		t.Fatalf("offsets = %v, want [0 0]: failed update must remain unconfirmed", offsets)
+	}
+}
+
