@@ -390,9 +390,15 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 		t.Fatalf("на экране чата должна быть кнопка возврата к прохождению курсов: %+v", last.markup)
 	}
 
+	chatOffBeforeReturn := conversations.chatModeOffCalls
+	lessonOffBeforeReturn := conversations.lessonModeOffCalls
 	bot.handleCallback(context.Background(), testCallback("chat:cancel", user, messageID))
 	if conversations.leaveCalls != leaveCallsBefore+1 {
 		t.Fatalf("возврат из чата должен выполнить одну объединённую очистку режимов: calls=%d before=%d", conversations.leaveCalls, leaveCallsBefore)
+	}
+	if conversations.chatModeOffCalls != chatOffBeforeReturn || conversations.lessonModeOffCalls != lessonOffBeforeReturn {
+		t.Fatalf("возврат из чата использовал отдельные операции выключения: chat_off=%d lesson_off=%d",
+			conversations.chatModeOffCalls-chatOffBeforeReturn, conversations.lessonModeOffCalls-lessonOffBeforeReturn)
 	}
 	if conversations.chatMode[student.ID] || conversations.lessonMode[student.ID] {
 		t.Fatalf("возврат из чата должен закрыть оба режима: chat=%v lesson=%v",
@@ -406,6 +412,8 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 	if !conversations.lessonMode[student.ID] {
 		t.Fatal("повторное открытие урока должно снова включать режим прохождения")
 	}
+	chatOffBeforeCatalog := conversations.chatModeOffCalls
+	lessonOffBeforeCatalog := conversations.lessonModeOffCalls
 	bot.handleCallback(context.Background(), testCallback("courses", user, messageID))
 	if conversations.lessonMode[student.ID] {
 		t.Fatal("переход к курсам должен выключать режим прохождения даже при незавершённом enrollment")
@@ -413,8 +421,8 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 	if conversations.leaveCalls != leaveCallsBefore+2 {
 		t.Fatalf("каждый переход в каталог должен использовать одну объединённую операцию: calls=%d before=%d", conversations.leaveCalls, leaveCallsBefore)
 	}
-	if conversations.chatModeOffCalls != 0 || conversations.lessonModeOffCalls != 0 {
-		t.Fatalf("переходы в каталог всё ещё выключают режимы отдельными вызовами: chat_off=%d lesson_off=%d",
-			conversations.chatModeOffCalls, conversations.lessonModeOffCalls)
+	if conversations.chatModeOffCalls != chatOffBeforeCatalog || conversations.lessonModeOffCalls != lessonOffBeforeCatalog {
+		t.Fatalf("переход к каталогу использовал отдельные операции выключения: chat_off=%d lesson_off=%d",
+			conversations.chatModeOffCalls-chatOffBeforeCatalog, conversations.lessonModeOffCalls-lessonOffBeforeCatalog)
 	}
 }
