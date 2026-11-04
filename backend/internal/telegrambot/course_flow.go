@@ -92,20 +92,21 @@ func (b *Bot) renderActiveCourseBlocked(
 }
 
 // selectCourse shows the one-time mode choice only when no course run exists.
-func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, messageID int64) {
+
+func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, messageID int64) bool {
 	nav, ok := b.learning.(CourseEnrollmentNavigator)
 	if !ok {
 		b.showLessons(ctx, chatID, studentID, courseID, messageID)
-		return
+		return true
 	}
 	active, err := nav.ActiveCourse(ctx, studentID)
 	if err == nil {
 		if active.Enrollment.CourseID != courseID {
 			b.renderActiveCourseBlocked(ctx, chatID, messageID, active)
-			return
+			return true
 		}
 		b.renderActiveCourse(ctx, chatID, messageID, active, "")
-		return
+		return true
 	}
 	if !errors.Is(err, domain.ErrNotFound) {
 		b.logger.Error("не удалось проверить активный курс перед выбором режима", "student_id", studentID, "course_id", courseID, "error", err)
@@ -113,30 +114,30 @@ func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, mes
 			button("Повторить", fmt.Sprintf("course:%d", courseID)),
 			button("К каталогу курсов", "courses"),
 		))
-		return
+		return !isRetryableUpdateError(err)
 	}
 
 	course, err := b.catalog.GetCourse(ctx, courseID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
 			b.render(ctx, chatID, messageID, "Этот курс больше недоступен. Откройте каталог курсов.", keyboard(button("К курсам", "courses")))
-			return
+			return true
 		}
 		b.logger.Error("не удалось получить курс перед выбором режима", "student_id", studentID, "course_id", courseID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось открыть курс. Попробуйте позже.", keyboard(button("К курсам", "courses")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	lessons, err := b.catalog.ListCourseLessons(ctx, courseID)
 	if err != nil {
 		b.logger.Error("не удалось проверить уроки перед выбором режима", "student_id", studentID, "course_id", courseID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить уроки курса. Попробуйте позже.", keyboard(button("К курсам", "courses")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if len(lessons) == 0 {
 		b.render(ctx, chatID, messageID,
 			"Курс: "+truncate(course.Title, 180)+"\n\nВ этом курсе пока нет опубликованных уроков.",
 			keyboard(button("К курсам", "courses")))
-		return
+		return true
 	}
 
 	message := fmt.Sprintf(
@@ -148,52 +149,54 @@ func (b *Bot) selectCourse(ctx context.Context, chatID, studentID, courseID, mes
 		{button("С ИИ", fmt.Sprintf("course:start:ai:%d", courseID))},
 		{button("К курсам", "courses")},
 	}))
+	return true
 }
 
-// startCourseWithMode sends the selection to the backend. The mode displayed
-// afterwards always comes from the saved enrollment, never from callback data.
 func (b *Bot) startCourseWithMode(
 	ctx context.Context,
 	chatID, studentID, courseID, messageID int64,
 	requestedMode string,
-) {
+) bool {
 	nav, ok := b.learning.(CourseEnrollmentNavigator)
 	if !ok {
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return true
 	}
 	if requestedMode != "ai" && requestedMode != "curator" {
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return true
 	}
 
 	run, err := nav.StartCourse(ctx, studentID, courseID, requestedMode)
 	if errors.Is(err, domain.ErrNoCurator) {
 		// A concurrent AI selection may have won the race. In that case the
 		// persisted mode is authoritative and must not be overwritten.
-		if current, currentErr := nav.ActiveCourse(ctx, studentID); currentErr == nil &&
-			current.Enrollment.CourseID == courseID &&
+		current, currentErr := nav.ActiveCourse(ctx, studentID)
+		if currentErr == nil && current.Enrollment.CourseID == courseID &&
 			current.Enrollment.Status == "in_progress" {
 			run, err = current, nil
 		} else {
+			if currentErr != nil && !errors.Is(currentErr, domain.ErrNotFound) {
+				return !isRetryableUpdateError(currentErr)
+			}
 			b.render(ctx, chatID, messageID,
 				"Пока не удалось начать курс с куратором: вам ещё не назначен активный куратор. Администратор платформы должен назначить его. Ваш выбор не изменён — после назначения можно будет повторить попытку.",
 				markup([][]InlineKeyboardButton{
 					{button("Повторить выбор способа", fmt.Sprintf("course:%d", courseID))},
 					{button("К курсам", "courses")},
 				}))
-			return
+			return true
 		}
 	}
 	if errors.Is(err, domain.ErrActiveCourse) {
 		b.renderActiveCourseBlocked(ctx, chatID, messageID, run)
-		return
+		return true
 	}
 	if errors.Is(err, domain.ErrLegacyProgress) {
 		b.render(ctx, chatID, messageID,
 			"Найдено старое незавершённое прохождение, которое нельзя безопасно связать с курсом автоматически. Обратитесь к администратору, чтобы сохранить и восстановить ваш прогресс.",
 			keyboard(button("К курсам", "courses")))
-		return
+		return true
 	}
 	if err != nil {
 		b.logger.Error("не удалось сохранить способ прохождения курса", "student_id", studentID, "course_id", courseID, "error", err)
@@ -201,48 +204,46 @@ func (b *Bot) startCourseWithMode(
 			button("Повторить выбор", fmt.Sprintf("course:%d", courseID)),
 			button("К курсам", "courses"),
 		))
-		return
+		return !isRetryableUpdateError(err)
 	}
 
 	notice := "✅ Вы выбрали прохождение курса с ИИ. Искусственный интеллект будет проверять ваши ответы."
 	if run.Enrollment.Mode == "curator" {
 		notice = "✅ Вы будете проходить этот курс с куратором. Назначенный специалист будет проверять ваши ответы и помогать разобраться в сложных моментах."
 	}
-	b.openFirstIncompleteLesson(ctx, nav, chatID, studentID, messageID, run, notice)
+	return b.openFirstIncompleteLesson(ctx, nav, chatID, studentID, messageID, run, notice)
 }
 
-func (b *Bot) continueCurrentCourse(ctx context.Context, chatID, studentID, messageID int64) {
+func (b *Bot) continueCurrentCourse(ctx context.Context, chatID, studentID, messageID int64) bool {
 	nav, ok := b.learning.(CourseEnrollmentNavigator)
 	if !ok {
 		b.showCourses(ctx, chatID, studentID, messageID, "Выберите курс для продолжения.")
-		return
+		return true
 	}
 	active, err := nav.ActiveCourse(ctx, studentID)
 	if errors.Is(err, domain.ErrNotFound) {
 		b.showCourses(ctx, chatID, studentID, messageID, "У вас пока нет незавершённого курса. Выберите курс для изучения.")
-		return
+		return true
 	}
 	if err != nil {
 		b.logger.Error("не удалось восстановить курс для продолжения", "student_id", studentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось восстановить курс. Попробуйте ещё раз.", keyboard(button("Повторить", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 
-	// StartCourse resumes a paused run, and for an active run returns its
-	// existing database record without changing the originally chosen mode.
 	run, err := nav.StartCourse(ctx, studentID, active.Enrollment.CourseID, active.Enrollment.Mode)
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
 			"Не удалось продолжить курс с куратором: назначение куратора сейчас неактивно. Администратор платформы должен восстановить назначение. Режим обучения не изменён.",
 			keyboard(button("Повторить", "course:continue"), button("К курсам", "courses")))
-		return
+		return true
 	}
 	if err != nil {
 		b.logger.Error("не удалось продолжить сохранённый курс", "student_id", studentID, "course_id", active.Enrollment.CourseID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось продолжить курс. Попробуйте ещё раз.", keyboard(button("Повторить", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
-	b.openFirstIncompleteLesson(ctx, nav, chatID, studentID, messageID, run, "")
+	return b.openFirstIncompleteLesson(ctx, nav, chatID, studentID, messageID, run, "")
 }
 
 func (b *Bot) openFirstIncompleteLesson(
@@ -251,23 +252,23 @@ func (b *Bot) openFirstIncompleteLesson(
 	chatID, studentID, messageID int64,
 	run domain.CourseEnrollmentProgress,
 	notice string,
-) {
+) bool {
 	lessons, err := nav.CourseLessons(ctx, studentID, run.Enrollment.ID)
 	if err != nil {
 		b.logger.Error("не удалось получить сохранённые уроки курса", "student_id", studentID, "course_enrollment_id", run.Enrollment.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить прогресс уроков курса. Попробуйте ещё раз.", keyboard(button("Продолжить курс", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	for _, lesson := range lessons {
 		if lesson.Status == "completed" {
 			continue
 		}
-		b.openCourseRunLesson(ctx, nav, chatID, studentID, messageID, run, lesson, notice)
-		return
+		return b.openCourseRunLesson(ctx, nav, chatID, studentID, messageID, run, lesson, notice)
 	}
 	b.render(ctx, chatID, messageID,
 		fmt.Sprintf("Вы завершили все уроки курса „%s“. Теперь можно вернуться в каталог и выбрать следующий курс.", truncate(run.Enrollment.CourseTitle, 180)),
 		keyboard(button("К курсам", "courses")))
+	return true
 }
 
 func (b *Bot) openCourseRunLesson(
@@ -277,25 +278,25 @@ func (b *Bot) openCourseRunLesson(
 	run domain.CourseEnrollmentProgress,
 	lesson domain.CourseEnrollmentLesson,
 	notice string,
-) {
+) bool {
 	progress, err := nav.StartLessonForCourse(ctx, studentID, run.Enrollment.ID, run.Enrollment.CourseID, lesson.LessonID)
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
 			"Не удалось открыть урок с куратором: активное назначение куратора недоступно. Администратор платформы должен проверить назначение. Режим обучения не изменён.",
 			keyboard(button("Повторить", "course:continue")))
-		return
+		return true
 	}
 	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidState) || errors.Is(err, domain.ErrInvalidInput) {
 		b.render(ctx, chatID, messageID, "Этот урок больше недоступен в сохранённом прохождении. Обратитесь к администратору платформы.", keyboard(
 			button("Продолжить курс", "course:continue"),
 			button("К курсам", "courses"),
 		))
-		return
+		return true
 	}
 	if err != nil {
 		b.logger.Error("не удалось восстановить урок курса", "student_id", studentID, "course_enrollment_id", run.Enrollment.ID, "lesson_id", lesson.LessonID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось открыть урок. Попробуйте ещё раз.", keyboard(button("Повторить", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	questionID := int64(0)
 	if progress.Enrollment.CurrentQuestionID != nil {
@@ -305,58 +306,58 @@ func (b *Bot) openCourseRunLesson(
 	}
 	if questionID <= 0 {
 		b.render(ctx, chatID, messageID, "В этом уроке пока нет доступных вопросов.", keyboard(button("Продолжить курс", "course:continue")))
-		return
+		return true
 	}
 	state, err := b.learning.OpenQuestion(ctx, studentID, progress.Enrollment.ID, questionID)
 	if err != nil {
 		b.logger.Error("не удалось восстановить вопрос курса", "student_id", studentID, "course_enrollment_id", run.Enrollment.ID, "lesson_id", lesson.LessonID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось открыть сохранённый вопрос. Попробуйте продолжить курс ещё раз.", keyboard(button("Продолжить курс", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	lessonForScreen := domain.Lesson{
 		ID: lesson.LessonID, CourseID: run.Enrollment.CourseID,
 		CourseTitle: run.Enrollment.CourseTitle, Title: lesson.Title,
 	}
 	b.renderQuestionWithNotice(ctx, chatID, studentID, messageID, state, &lessonForScreen, run.Enrollment.CourseID, notice)
+	return true
 }
 
-func (b *Bot) openCourseLesson(ctx context.Context, chatID, studentID, courseID, lessonID, messageID int64) {
+func (b *Bot) openCourseLesson(ctx context.Context, chatID, studentID, courseID, lessonID, messageID int64) bool {
 	nav, ok := b.learning.(CourseEnrollmentNavigator)
 	if !ok {
 		b.openLesson(ctx, chatID, studentID, courseID, lessonID, messageID)
-		return
+		return true
 	}
 	active, err := nav.ActiveCourse(ctx, studentID)
 	if errors.Is(err, domain.ErrNotFound) {
-		b.selectCourse(ctx, chatID, studentID, courseID, messageID)
-		return
+		return b.selectCourse(ctx, chatID, studentID, courseID, messageID)
 	}
 	if err != nil {
 		b.logger.Error("не удалось проверить активный курс перед открытием урока", "student_id", studentID, "course_id", courseID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось проверить текущее прохождение. Попробуйте ещё раз.", keyboard(button("Продолжить курс", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if active.Enrollment.CourseID != courseID {
 		b.renderActiveCourseBlocked(ctx, chatID, messageID, active)
-		return
+		return true
 	}
 	lessons, err := nav.CourseLessons(ctx, studentID, active.Enrollment.ID)
 	if err != nil {
 		b.logger.Error("не удалось проверить состав активного курса", "student_id", studentID, "course_enrollment_id", active.Enrollment.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось загрузить уроки текущего курса. Попробуйте ещё раз.", keyboard(button("Продолжить курс", "course:continue")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	for _, lesson := range lessons {
 		if lesson.LessonID == lessonID {
 			if lesson.Status == "completed" {
 				b.render(ctx, chatID, messageID, "Этот урок уже завершён. Продолжите курс со следующего доступного урока.", keyboard(button("Продолжить курс", "course:continue")))
-				return
+				return true
 			}
-			b.openCourseRunLesson(ctx, nav, chatID, studentID, messageID, active, lesson, "")
-			return
+			return b.openCourseRunLesson(ctx, nav, chatID, studentID, messageID, active, lesson, "")
 		}
 	}
 	b.render(ctx, chatID, messageID,
 		"Этот урок не входит в сохранённый состав вашего курса. Откройте урок из текущего прохождения.",
 		keyboard(button("Продолжить курс", "course:continue")))
+	return true
 }
