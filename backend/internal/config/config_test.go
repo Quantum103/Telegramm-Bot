@@ -41,6 +41,10 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.TelegramBotToken != "" {
 		t.Errorf("TelegramBotToken = %q, want empty when not configured", cfg.TelegramBotToken)
 	}
+	if cfg.TelegramUpdateWorkers != 4 || cfg.TelegramUpdateQueueCapacity != 16 {
+		t.Errorf("unexpected Telegram worker defaults: workers=%d queue=%d",
+			cfg.TelegramUpdateWorkers, cfg.TelegramUpdateQueueCapacity)
+	}
 	if cfg.CuratorReminderFirstAfter != 4*time.Hour ||
 		cfg.CuratorReminderSecondAfter != 24*time.Hour ||
 		cfg.CuratorEscalationAfter != 48*time.Hour {
@@ -95,6 +99,11 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "Redis address", key: "REDIS_ADDR", value: "not-an-address"},
 		{name: "Redis database", key: "REDIS_DB", value: "16"},
 		{name: "Redis timeout", key: "REDIS_CONNECT_TIMEOUT", value: "0s"},
+		{name: "zero Telegram workers", key: "TELEGRAM_UPDATE_WORKERS", value: "0"},
+		{name: "Telegram workers exceed database pool", key: "TELEGRAM_UPDATE_WORKERS", value: "11"},
+		{name: "malformed Telegram workers", key: "TELEGRAM_UPDATE_WORKERS", value: "many"},
+		{name: "zero Telegram queue", key: "TELEGRAM_UPDATE_QUEUE_CAPACITY", value: "0"},
+		{name: "Telegram queue too large", key: "TELEGRAM_UPDATE_QUEUE_CAPACITY", value: "257"},
 		{name: "first reminder must be positive", key: "CURATOR_REMINDER_FIRST_AFTER", value: "0s"},
 		{name: "second reminder must follow first", key: "CURATOR_REMINDER_SECOND_AFTER", value: "2h"},
 		{name: "escalation must follow second", key: "CURATOR_ESCALATION_AFTER", value: "24h"},
@@ -104,6 +113,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 			values := validEnvironment()
 			values[tt.key] = tt.value
 			if tt.key == "DATABASE_MIN_CONNS" {
+				values["DATABASE_MAX_CONNS"] = "10"
+			}
+			if tt.name == "Telegram workers exceed database pool" {
 				values["DATABASE_MAX_CONNS"] = "10"
 			}
 			if tt.key == "CURATOR_REMINDER_SECOND_AFTER" {
@@ -126,11 +138,44 @@ func TestLoadAcceptsOverrides(t *testing.T) {
 	values["HTTP_READ_TIMEOUT"] = "20s"
 	values["DATABASE_PORT"] = "5544"
 	values["DATABASE_MIN_CONNS"] = "0"
+	values["TELEGRAM_UPDATE_WORKERS"] = "3"
+	values["TELEGRAM_UPDATE_QUEUE_CAPACITY"] = "24"
 	cfg, err := load(lookupFrom(values))
 	if err != nil {
 		t.Fatalf("load returned error: %v", err)
 	}
 	if cfg.HTTPAddr != "127.0.0.1:9090" || cfg.HTTPReadTimeout != 20*time.Second || cfg.Database.Port != 5544 || cfg.Database.MinConns != 0 {
 		t.Fatalf("unexpected overridden config: %+v", cfg)
+	}
+	if cfg.TelegramUpdateWorkers != 3 || cfg.TelegramUpdateQueueCapacity != 24 {
+		t.Fatalf("unexpected Telegram worker overrides: workers=%d queue=%d",
+			cfg.TelegramUpdateWorkers, cfg.TelegramUpdateQueueCapacity)
+	}
+}
+
+func TestLoadDerivesTelegramWorkerDefaultFromDatabasePool(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxConns   string
+		wantWorker int
+	}{
+		{name: "single connection", maxConns: "1", wantWorker: 1},
+		{name: "small pool", maxConns: "4", wantWorker: 2},
+		{name: "standard pool", maxConns: "10", wantWorker: 4},
+		{name: "large pool remains capped", maxConns: "100", wantWorker: 4},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			values := validEnvironment()
+			values["DATABASE_MAX_CONNS"] = test.maxConns
+			values["DATABASE_MIN_CONNS"] = "0"
+			cfg, err := load(lookupFrom(values))
+			if err != nil {
+				t.Fatalf("load returned error: %v", err)
+			}
+			if cfg.TelegramUpdateWorkers != test.wantWorker {
+				t.Fatalf("TelegramUpdateWorkers = %d, want %d", cfg.TelegramUpdateWorkers, test.wantWorker)
+			}
+		})
 	}
 }
