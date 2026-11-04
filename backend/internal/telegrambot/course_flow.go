@@ -21,16 +21,18 @@ type CourseEnrollmentNavigator interface {
 // showStudentHome restores the student's active course from PostgreSQL. The
 // Telegram process never keeps the learning mode or course progress in memory.
 func (b *Bot) showStudentHome(ctx context.Context, chatID, studentID, messageID int64, greeting string) {
-	b.leaveStudentInteraction(ctx, studentID)
+	if err := b.leaveStudentInteraction(ctx, studentID); err != nil {
+		b.logger.Warn("не удалось завершить взаимодействие ученика при открытии главного экрана", "student_id", studentID, "error", err)
+	}
 	nav, ok := b.learning.(CourseEnrollmentNavigator)
 	if !ok {
-		b.showCourses(ctx, chatID, studentID, messageID, greeting)
+		b.renderCourses(ctx, chatID, studentID, messageID, greeting)
 		return
 	}
 
 	active, err := nav.ActiveCourse(ctx, studentID)
 	if errors.Is(err, domain.ErrNotFound) {
-		b.showCourses(ctx, chatID, studentID, messageID, greeting)
+		b.renderCourses(ctx, chatID, studentID, messageID, greeting)
 		return
 	}
 	if err != nil {

@@ -1091,14 +1091,148 @@ func TestCuratorReplyDeliveryWaitsUntilStudentLeavesLessonScreen(t *testing.T) {
 	if err := deliveries.DeferDelivery(ctx, deferred.ID, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("отложить ответ до завершения урока: %v", err)
 	}
-	if err := conversations.SetStudentLessonMode(ctx, fixture.studentID, false); err != nil {
-		t.Fatalf("выйти с экрана прохождения и ускорить доставку ответа: %v", err)
+
+	// Уже отправленная доставка должна остаться нетронутой, пока ожидающий ответ пробуждается.
+	sentReply, err := conversations.SendCuratorMessage(ctx, fixture.curator1ID, conversation.ID, "Уже отправленный ответ")
+	if err != nil {
+		t.Fatalf("создать вторую доставку куратора: %v", err)
 	}
+	var sentDeliveryID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT id FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'telegram'
+	`, sentReply.ID).Scan(&sentDeliveryID); err != nil {
+		t.Fatalf("получить ID второй доставки: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_message_deliveries
+		SET delivery_status = 'sent', sent_at = now(), locked_at = NULL
+		WHERE id = $1
+	`, sentDeliveryID); err != nil {
+		t.Fatalf("подготовить уже отправленную доставку: %v", err)
+	}
+
+	if err := conversations.LeaveStudentInteraction(ctx, fixture.studentID); err != nil {
+		t.Fatalf("завершить взаимодействие ученика: %v", err)
+	}
+	var chatModeEnabled, lessonModeEnabled bool
+	if err := pool.QueryRow(ctx, `
+		SELECT chat_mode_enabled, lesson_mode_enabled
+		FROM student_chat_modes WHERE student_id = $1
+	`, fixture.studentID).Scan(&chatModeEnabled, &lessonModeEnabled); err != nil {
+		t.Fatalf("прочитать режимы после выхода: %v", err)
+	}
+	if chatModeEnabled || lessonModeEnabled {
+		t.Fatalf("после выхода оба режима должны быть выключены: chat=%v lesson=%v", chatModeEnabled, lessonModeEnabled)
+	}
+	var pendingReady, sentUnchanged bool
+	if err := pool.QueryRow(ctx, `
+		SELECT delivery_status = 'pending' AND next_attempt_at <= now()
+		FROM conversation_message_deliveries WHERE id = $1
+	`, deferred.ID).Scan(&pendingReady); err != nil {
+		t.Fatalf("проверить пробуждение отложенного ответа: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT delivery_status = 'sent' AND sent_at IS NOT NULL
+		FROM conversation_message_deliveries WHERE id = $1
+	`, sentDeliveryID).Scan(&sentUnchanged); err != nil {
+		t.Fatalf("проверить неизменность отправленного ответа: %v", err)
+	}
+	if !pendingReady || !sentUnchanged {
+		t.Fatalf("объединённый выход должен разбудить только pending-доставку: pending_ready=%v sent_unchanged=%v",
+			pendingReady, sentUnchanged)
+	}
+
 	ready, err := deliveries.ClaimDueDelivery(ctx, time.Minute)
 	if err != nil {
 		t.Fatalf("повторно захватить ответ после завершения урока: %v", err)
 	}
 	if ready.ID != deferred.ID || ready.Channel != "telegram" || ready.StudentInLessonMode {
 		t.Fatalf("после выхода с экрана ответ должен стать доступным при незавершённом уроке: %+v", ready)
+	}
+}
+
+func TestLeaveStudentInteractionIsIdempotentAndDoesNotInsertDefaultModeRow(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, false)
+	repo := NewConversationRepository(pool)
+
+	if err := repo.SetStudentChatMode(ctx, fixture.studentID, true); err != nil {
+		t.Fatalf("включить режим общения перед выходом: %v", err)
+	}
+	if err := repo.LeaveStudentInteraction(ctx, fixture.studentID); err != nil {
+		t.Fatalf("выйти из режима общения: %v", err)
+	}
+
+	var chatEnabled, lessonEnabled bool
+	if err := pool.QueryRow(ctx, `
+		SELECT chat_mode_enabled, lesson_mode_enabled
+		FROM student_chat_modes WHERE student_id = $1
+	`, fixture.studentID).Scan(&chatEnabled, &lessonEnabled); err != nil {
+		t.Fatalf("прочитать режимы после выхода из чата: %v", err)
+	}
+	if chatEnabled || lessonEnabled {
+		t.Fatalf("выход не выключил оба режима: chat=%v lesson=%v", chatEnabled, lessonEnabled)
+	}
+
+	if err := repo.SetStudentLessonMode(ctx, fixture.studentID, true); err != nil {
+		t.Fatalf("включить режим урока перед повторным выходом: %v", err)
+	}
+	if err := repo.LeaveStudentInteraction(ctx, fixture.studentID); err != nil {
+		t.Fatalf("выйти из режима урока: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT chat_mode_enabled, lesson_mode_enabled
+		FROM student_chat_modes WHERE student_id = $1
+	`, fixture.studentID).Scan(&chatEnabled, &lessonEnabled); err != nil {
+		t.Fatalf("прочитать режимы после выхода из урока: %v", err)
+	}
+	if chatEnabled || lessonEnabled {
+		t.Fatalf("выход из урока не выключил оба режима: chat=%v lesson=%v", chatEnabled, lessonEnabled)
+	}
+
+	const sentinel = "2000-01-01 00:00:00+00"
+	if _, err := pool.Exec(ctx, `
+		UPDATE student_chat_modes SET updated_at = $2::timestamptz
+		WHERE student_id = $1
+	`, fixture.studentID, sentinel); err != nil {
+		t.Fatalf("подготовить updated_at для проверки идемпотентности: %v", err)
+	}
+	var beforeXmin string
+	var beforeUpdatedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT xmin::text, updated_at FROM student_chat_modes WHERE student_id = $1
+	`, fixture.studentID).Scan(&beforeXmin, &beforeUpdatedAt); err != nil {
+		t.Fatalf("прочитать строку режимов перед повторным выходом: %v", err)
+	}
+	if err := repo.LeaveStudentInteraction(ctx, fixture.studentID); err != nil {
+		t.Fatalf("повторный переход в каталог: %v", err)
+	}
+	var afterXmin string
+	var afterUpdatedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT xmin::text, updated_at FROM student_chat_modes WHERE student_id = $1
+	`, fixture.studentID).Scan(&afterXmin, &afterUpdatedAt); err != nil {
+		t.Fatalf("прочитать строку режимов после повторного выхода: %v", err)
+	}
+	if beforeXmin != afterXmin || !beforeUpdatedAt.Equal(afterUpdatedAt) {
+		t.Fatalf("повторный выход создал лишний UPDATE: before xmin=%s updated_at=%v, after xmin=%s updated_at=%v",
+			beforeXmin, beforeUpdatedAt, afterXmin, afterUpdatedAt)
+	}
+
+	missingModeFixture := createConversationFixture(t, pool, false)
+	if err := repo.LeaveStudentInteraction(ctx, missingModeFixture.studentID); err != nil {
+		t.Fatalf("выход при отсутствующей строке режима: %v", err)
+	}
+	var modeRows int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM student_chat_modes WHERE student_id = $1
+	`, missingModeFixture.studentID).Scan(&modeRows); err != nil {
+		t.Fatalf("проверить отсутствие строки режима по умолчанию: %v", err)
+	}
+	if modeRows != 0 {
+		t.Fatalf("выход при отсутствующих режимах создал лишнюю строку: count=%d", modeRows)
 	}
 }

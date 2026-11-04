@@ -12,20 +12,36 @@ import (
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
 )
 
-func (b *Bot) leaveStudentInteraction(ctx context.Context, studentID int64) {
+func (b *Bot) leaveStudentInteraction(ctx context.Context, studentID int64) error {
 	if b.conversations == nil {
-		return
+		return nil
 	}
+	if leaver, ok := b.conversations.(interface {
+		LeaveStudentInteraction(context.Context, int64) error
+	}); ok {
+		return leaver.LeaveStudentInteraction(ctx, studentID)
+	}
+
+	// Compatibility fallback for conversation providers that do not yet expose
+	// the combined operation. Production ConversationService uses one SQL call.
+	var failures []error
 	if err := b.conversations.SetStudentChatMode(ctx, studentID, false); err != nil {
-		b.logger.Warn("не удалось выключить режим общения при переходе к курсам", "student_id", studentID, "error", err)
+		failures = append(failures, err)
 	}
 	if err := b.conversations.SetStudentLessonMode(ctx, studentID, false); err != nil {
-		b.logger.Warn("не удалось выключить режим прохождения при переходе к курсам", "student_id", studentID, "error", err)
+		failures = append(failures, err)
 	}
+	return errors.Join(failures...)
 }
 
 func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int64, heading string) {
-	b.leaveStudentInteraction(ctx, studentID)
+	if err := b.leaveStudentInteraction(ctx, studentID); err != nil {
+		b.logger.Warn("не удалось завершить взаимодействие ученика при переходе к каталогу", "student_id", studentID, "error", err)
+	}
+	b.renderCourses(ctx, chatID, studentID, messageID, heading)
+}
+
+func (b *Bot) renderCourses(ctx context.Context, chatID, studentID, messageID int64, heading string) {
 	courses, err := b.catalog.ListCourses(ctx)
 	if err != nil {
 		b.logger.Error("не удалось загрузить каталог курсов", "student_id", studentID, "error", err)
@@ -50,7 +66,9 @@ func (b *Bot) showCourses(ctx context.Context, chatID, studentID, messageID int6
 }
 
 func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, messageID int64) {
-	b.leaveStudentInteraction(ctx, studentID)
+	if err := b.leaveStudentInteraction(ctx, studentID); err != nil {
+		b.logger.Warn("не удалось завершить взаимодействие ученика при открытии уроков", "student_id", studentID, "error", err)
+	}
 	course, err := b.catalog.GetCourse(ctx, courseID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
@@ -454,14 +472,12 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 	case callback.Data == "chat:start":
 		b.startStudentChat(ctx, chatID, messageID, student)
 	case callback.Data == "chat:cancel":
-		if b.conversations != nil {
-			if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
-				b.logger.Warn("не удалось отменить режим общения из меню", "student_id", student.ID, "error", err)
-				b.render(ctx, chatID, messageID, "Не удалось выключить режим общения. Попробуйте ещё раз.", keyboard(button("Повторить", "chat:cancel")))
-				return
-			}
+		if err := b.leaveStudentInteraction(ctx, student.ID); err != nil {
+			b.logger.Warn("не удалось завершить взаимодействие ученика из меню общения", "student_id", student.ID, "error", err)
+			b.render(ctx, chatID, messageID, "Не удалось выключить режим общения. Попробуйте ещё раз.", keyboard(button("Повторить", "chat:cancel")))
+			return
 		}
-		b.showCourses(ctx, chatID, student.ID, messageID, "Режим общения выключен. Выберите курс, чтобы продолжить обучение.")
+		b.renderCourses(ctx, chatID, student.ID, messageID, "Режим общения выключен. Выберите курс, чтобы продолжить обучение.")
 	case callback.Data == "courses":
 		b.showCourses(ctx, chatID, student.ID, messageID, "Выберите курс для изучения Библии.")
 	case len(parts) == 2 && parts[0] == "course":

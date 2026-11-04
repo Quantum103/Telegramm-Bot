@@ -11,8 +11,11 @@ import (
 
 type conversationEventStoreStub struct {
 	ConversationStore
-	createErr error
-	sendErr   error
+	createErr      error
+	sendErr        error
+	leaveCalls     int
+	leaveStudentID int64
+	leaveErr       error
 }
 
 func (s *conversationEventStoreStub) CreateStudentMessage(_ context.Context, _ domain.CreateStudentConversationMessageParams) (domain.ConversationMessage, error) {
@@ -29,6 +32,12 @@ func (s *conversationEventStoreStub) SendCuratorMessage(_ context.Context, _, _ 
 	return domain.ConversationMessage{ID: 202}, nil
 }
 
+func (s *conversationEventStoreStub) LeaveStudentInteraction(_ context.Context, studentID int64) error {
+	s.leaveCalls++
+	s.leaveStudentID = studentID
+	return s.leaveErr
+}
+
 func waitForConversationEvent(t *testing.T, events <-chan struct{}) {
 	t.Helper()
 	select {
@@ -38,6 +47,22 @@ func waitForConversationEvent(t *testing.T, events <-chan struct{}) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("conversation change was not published")
+	}
+}
+
+func TestConversationServiceLeavesStudentInteractionThroughCombinedStoreOperation(t *testing.T) {
+	store := &conversationEventStoreStub{}
+	conversations := NewConversationService(store)
+
+	if err := conversations.LeaveStudentInteraction(context.Background(), 42); err != nil {
+		t.Fatalf("leave student interaction: %v", err)
+	}
+	if store.leaveCalls != 1 || store.leaveStudentID != 42 {
+		t.Fatalf("combined store operation was not called exactly once: calls=%d student_id=%d",
+			store.leaveCalls, store.leaveStudentID)
+	}
+	if err := conversations.LeaveStudentInteraction(context.Background(), 0); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("invalid student ID should be rejected: %v", err)
 	}
 }
 

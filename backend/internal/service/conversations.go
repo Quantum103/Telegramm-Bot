@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -165,6 +166,27 @@ func (s *ConversationService) SetStudentLessonMode(ctx context.Context, studentI
 		return domain.ErrInvalidInput
 	}
 	return s.store.SetStudentLessonMode(ctx, studentID, enabled)
+}
+
+// LeaveStudentInteraction вызывает объединённую операцию репозитория,
+// сохраняя совместимость со старыми реализациями ConversationStore.
+func (s *ConversationService) LeaveStudentInteraction(ctx context.Context, studentID int64) error {
+	if studentID <= 0 {
+		return domain.ErrInvalidInput
+	}
+	if leaver, ok := s.store.(interface {
+		LeaveStudentInteraction(context.Context, int64) error
+	}); ok {
+		return leaver.LeaveStudentInteraction(ctx, studentID)
+	}
+	var failures []error
+	if err := s.store.SetStudentChatMode(ctx, studentID, false); err != nil {
+		failures = append(failures, err)
+	}
+	if err := s.store.SetStudentLessonMode(ctx, studentID, false); err != nil {
+		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
 }
 
 func (s *ConversationService) IsStudentChatMode(ctx context.Context, studentID int64) (bool, error) {

@@ -10,13 +10,16 @@ import (
 )
 
 type fakeStudentConversationService struct {
-	chatMode   map[int64]bool
-	lessonMode map[int64]bool
-	messages   []domain.CreateStudentConversationMessageParams
-	createErr  error
-	setErr     error
-	isModeErr  error
-	replayed   bool
+	chatMode           map[int64]bool
+	lessonMode         map[int64]bool
+	messages           []domain.CreateStudentConversationMessageParams
+	createErr          error
+	setErr             error
+	isModeErr          error
+	replayed           bool
+	leaveCalls         int
+	chatModeOffCalls   int
+	lessonModeOffCalls int
 }
 
 func newFakeStudentConversationService() *fakeStudentConversationService {
@@ -35,6 +38,9 @@ func (f *fakeStudentConversationService) SetStudentChatMode(_ context.Context, s
 	if f.setErr != nil {
 		return f.setErr
 	}
+	if !enabled {
+		f.chatModeOffCalls++
+	}
 	f.chatMode[studentID] = enabled
 	if enabled {
 		f.lessonMode[studentID] = false
@@ -46,10 +52,23 @@ func (f *fakeStudentConversationService) SetStudentLessonMode(_ context.Context,
 	if f.setErr != nil {
 		return f.setErr
 	}
+	if !enabled {
+		f.lessonModeOffCalls++
+	}
 	f.lessonMode[studentID] = enabled
 	if enabled {
 		f.chatMode[studentID] = false
 	}
+	return nil
+}
+
+func (f *fakeStudentConversationService) LeaveStudentInteraction(_ context.Context, studentID int64) error {
+	f.leaveCalls++
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.chatMode[studentID] = false
+	f.lessonMode[studentID] = false
 	return nil
 }
 
@@ -346,6 +365,7 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	student := students.byID[user.ID]
 	messageID := api.messages[0].messageID
+	leaveCallsBefore := conversations.leaveCalls
 
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 	if !conversations.lessonMode[student.ID] {
@@ -371,6 +391,9 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 	}
 
 	bot.handleCallback(context.Background(), testCallback("chat:cancel", user, messageID))
+	if conversations.leaveCalls != leaveCallsBefore+1 {
+		t.Fatalf("возврат из чата должен выполнить одну объединённую очистку режимов: calls=%d before=%d", conversations.leaveCalls, leaveCallsBefore)
+	}
 	if conversations.chatMode[student.ID] || conversations.lessonMode[student.ID] {
 		t.Fatalf("возврат из чата должен закрыть оба режима: chat=%v lesson=%v",
 			conversations.chatMode[student.ID], conversations.lessonMode[student.ID])
@@ -386,5 +409,12 @@ func TestCuratorChatReturnsToCoursesAndLessonDeliveryFollowsCurrentScreen(t *tes
 	bot.handleCallback(context.Background(), testCallback("courses", user, messageID))
 	if conversations.lessonMode[student.ID] {
 		t.Fatal("переход к курсам должен выключать режим прохождения даже при незавершённом enrollment")
+	}
+	if conversations.leaveCalls != leaveCallsBefore+2 {
+		t.Fatalf("каждый переход в каталог должен использовать одну объединённую операцию: calls=%d before=%d", conversations.leaveCalls, leaveCallsBefore)
+	}
+	if conversations.chatModeOffCalls != 0 || conversations.lessonModeOffCalls != 0 {
+		t.Fatalf("переходы в каталог всё ещё выключают режимы отдельными вызовами: chat_off=%d lesson_off=%d",
+			conversations.chatModeOffCalls, conversations.lessonModeOffCalls)
 	}
 }

@@ -66,6 +66,57 @@ func (r *ConversationRepository) SetStudentLessonMode(ctx context.Context, stude
 	return nil
 }
 
+// LeaveStudentInteraction выключает оба режима и пробуждает ожидающие ответы
+// куратора одним SQL-оператором. Отсутствующая строка означает два выключенных
+// режима, поэтому операция не создаёт запись без необходимости.
+func (r *ConversationRepository) LeaveStudentInteraction(ctx context.Context, studentID int64) error {
+	if studentID <= 0 {
+		return ErrInvalidInput
+	}
+
+	var active bool
+	err := r.pool.QueryRow(ctx, `
+		WITH active_student AS MATERIALIZED (
+			SELECT id
+			FROM students
+			WHERE id = $1 AND account_status = 'active'
+		),
+		updated_modes AS (
+			UPDATE student_chat_modes modes
+			SET chat_mode_enabled = FALSE,
+			    lesson_mode_enabled = FALSE,
+			    updated_at = now()
+			FROM active_student student
+			WHERE modes.student_id = student.id
+			  AND (modes.chat_mode_enabled OR modes.lesson_mode_enabled)
+			RETURNING modes.student_id
+		),
+		woken_deliveries AS (
+			UPDATE conversation_message_deliveries delivery
+			SET next_attempt_at = now(),
+			    updated_at = now()
+			FROM conversation_messages message
+			JOIN conversations conversation ON conversation.id = message.conversation_id
+			JOIN active_student student ON student.id = conversation.student_id
+			WHERE delivery.message_id = message.id
+			  AND delivery.channel = 'telegram'
+			  AND delivery.delivery_status = 'pending'
+			  AND delivery.next_attempt_at > now()
+			RETURNING delivery.id
+		)
+		SELECT EXISTS (SELECT 1 FROM active_student)
+		   AND (SELECT count(*) >= 0 FROM updated_modes)
+		   AND (SELECT count(*) >= 0 FROM woken_deliveries)
+	`, studentID).Scan(&active)
+	if err != nil {
+		return mapDatabaseError("завершить взаимодействие ученика и возобновить ответы куратора", err)
+	}
+	if !active {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *ConversationRepository) wakeStudentCuratorReplies(ctx context.Context, studentID int64) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE conversation_message_deliveries delivery
