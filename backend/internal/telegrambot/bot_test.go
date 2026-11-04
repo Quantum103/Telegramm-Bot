@@ -1514,4 +1514,3 @@ func TestRunDoesNotAdvanceOffsetAfterTemporaryProcessingFailure(t *testing.T) {
 		t.Fatalf("offsets = %v, want [0 0]: failed update must remain unconfirmed", offsets)
 	}
 }
-
