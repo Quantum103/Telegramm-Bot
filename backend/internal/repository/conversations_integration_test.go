@@ -1236,3 +1236,53 @@ func TestLeaveStudentInteractionIsIdempotentAndDoesNotInsertDefaultModeRow(t *te
 		t.Fatalf("выход при отсутствующих режимах создал лишнюю строку: count=%d", modeRows)
 	}
 }
+
+func TestGetOrCreateForCuratorRepairsLegacyAssignmentAndChecksOwnership(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	repo := NewConversationRepository(pool)
+
+	if _, err := repo.GetOrCreateForCurator(ctx, fixture.curator2ID, fixture.studentID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("посторонний куратор получил или создал диалог: %v", err)
+	}
+	var conversationsBefore int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM conversations WHERE student_id = $1 AND status = 'active'", fixture.studentID).Scan(&conversationsBefore); err != nil {
+		t.Fatalf("проверить отсутствие диалога до запроса назначенного куратора: %v", err)
+	}
+	if conversationsBefore != 0 {
+		t.Fatalf("запрос чужого куратора создал диалог: count=%d", conversationsBefore)
+	}
+
+	conversation, err := repo.GetOrCreateForCurator(ctx, fixture.curator1ID, fixture.studentID)
+	if err != nil {
+		t.Fatalf("создать диалог для назначенного куратора: %v", err)
+	}
+	if conversation.ID <= 0 || conversation.StudentID != fixture.studentID ||
+		conversation.AssignedCuratorStaffID != fixture.curator1ID || conversation.Status != "active" {
+		t.Fatalf("неверный созданный диалог: %+v", conversation)
+	}
+	repeated, err := repo.GetOrCreateForCurator(ctx, fixture.curator1ID, fixture.studentID)
+	if err != nil || repeated.ID != conversation.ID {
+		t.Fatalf("повторный запрос должен вернуть тот же диалог: first=%+v repeated=%+v err=%v", conversation, repeated, err)
+	}
+
+	var studentParticipants, curatorParticipants int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE student_id = $2 AND left_at IS NULL),
+			count(*) FILTER (WHERE staff_id = $3 AND left_at IS NULL)
+		FROM conversation_participants
+		WHERE conversation_id = $1
+	`, conversation.ID, fixture.studentID, fixture.curator1ID).Scan(&studentParticipants, &curatorParticipants); err != nil {
+		t.Fatalf("проверить участников восстановленного диалога: %v", err)
+	}
+	if studentParticipants != 1 || curatorParticipants != 1 {
+		t.Fatalf("в диалоге должны быть оба участника: student=%d curator=%d", studentParticipants, curatorParticipants)
+	}
+	dialogs, err := repo.ListForCurator(ctx, fixture.curator1ID)
+	if err != nil || len(dialogs) != 1 || dialogs[0].ID != conversation.ID {
+		t.Fatalf("назначенный куратор не видит восстановленный диалог: dialogs=%+v err=%v", dialogs, err)
+	}
+}
