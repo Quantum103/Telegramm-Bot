@@ -494,7 +494,7 @@ func TestMultiChoiceCallbackRedeliveryDoesNotToggleOptionOff(t *testing.T) {
 	if len(selected) != 1 || selected[0] != 6701 {
 		t.Fatalf("selection after callback redelivery = %v, want [6701]", selected)
 	}
-	if len(api.fakeAPI.answered) != 2 {
-		t.Fatalf("callback acknowledgement calls = %d, want 2 for the two deliveries", len(api.fakeAPI.answered))
+	if len(api.fakeAPI.answered) != 3 {
+		t.Fatalf("callback acknowledgement calls = %d, want 3 including setup and the two deliveries", len(api.fakeAPI.answered))
 	}
 }
