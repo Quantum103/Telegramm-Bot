@@ -1,0 +1,33 @@
+name: Temporary Go formatter
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+      - name: Format Go files and push only when changed
+        working-directory: backend
+        run: |
+          gofmt -w ./cmd ./internal
+          if git -C "$GITHUB_WORKSPACE" diff --quiet; then
+            echo "Go files are already formatted."
+            exit 0
+          fi
+          git -C "$GITHUB_WORKSPACE" config user.name "github-actions[bot]"
+          git -C "$GITHUB_WORKSPACE" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$GITHUB_WORKSPACE" add backend/cmd backend/internal
+          git -C "$GITHUB_WORKSPACE" commit -m "Format backend Go files"
+          git -C "$GITHUB_WORKSPACE" push origin HEAD:main
