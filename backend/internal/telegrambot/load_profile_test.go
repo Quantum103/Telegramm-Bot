@@ -253,7 +253,7 @@ func TestUpdateWorkerPoolLoadProfiles(t *testing.T) {
 			"simulated_handler_work_ms":     1,
 			"elapsed_ms":                    float64(elapsed) / float64(time.Millisecond),
 			"throughput_updates_per_second": float64(len(latencies)) / elapsed.Seconds(),
-			"queue_and_handler_latency_ms": telegramLatencyPercentiles(latencies),
+			"queue_and_handler_latency_ms":  telegramLatencyPercentiles(latencies),
 		}
 		encoded, err := json.Marshal(report)
 		if err != nil {
