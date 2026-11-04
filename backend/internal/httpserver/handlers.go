@@ -405,6 +405,9 @@ func newHandlerWithManagementAndConversationsAndTelegramAndCourseLearningAndRefe
 			protectedConversations := h.staffCuratorMiddleware(staffConversationMux)
 			mux.Handle("/api/v1/staff/conversations", protectedConversations)
 			mux.Handle("/api/v1/staff/conversations/", protectedConversations)
+			staffStudentConversationMux := http.NewServeMux()
+			staffStudentConversationMux.HandleFunc("POST /api/v1/staff/students/{studentID}/conversation", h.staffEnsureStudentConversation)
+			mux.Handle("/api/v1/staff/students/", h.staffCuratorMiddleware(staffStudentConversationMux))
 		}
 		if h.courseLearning != nil {
 			staffCourseLearningMux := http.NewServeMux()
