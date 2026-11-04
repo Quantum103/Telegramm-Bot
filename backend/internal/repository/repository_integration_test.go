@@ -165,6 +165,83 @@ func TestAnswerSavedIdempotentlyAndAttemptFailureIsNotIncorrect(t *testing.T) {
 		t.Fatalf("неожиданный результат первого сохранения: %+v", first)
 	}
 
+	// Competing workers may receive the same Telegram update concurrently.
+	// The enrollment lock and idempotency key must still produce one attempt.
+	concurrentStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID:  time.Now().UnixNano(),
+		DisplayName: fmt.Sprintf("test-answer-concurrent-%d", time.Now().UnixNano()),
+	})
+	if err != nil {
+		t.Fatalf("создать ученика для конкурентного повтора: %v", err)
+	}
+	concurrentEnrollment, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
+		StudentID: concurrentStudent.ID, LessonID: lessonID, LessonVersionID: versionID, Mode: "ai",
+	})
+	if err != nil {
+		t.Fatalf("создать конкурентное прохождение: %v", err)
+	}
+
+	const concurrentRedeliveries = 8
+	const concurrentIdempotencyKey = "a3d9e221-7c34-4bb4-b48a-75e8d9b30003"
+	type concurrentAnswerResult struct {
+		answer SavedAnswer
+		err    error
+	}
+	startConcurrent := make(chan struct{})
+	concurrentResults := make(chan concurrentAnswerResult, concurrentRedeliveries)
+	var concurrentWG sync.WaitGroup
+	for i := 0; i < concurrentRedeliveries; i++ {
+		concurrentWG.Add(1)
+		go func() {
+			defer concurrentWG.Done()
+			<-startConcurrent
+			answer, submitErr := answers.SaveTextAnswer(ctx, SaveTextAnswerParams{
+				StudentID: concurrentStudent.ID, EnrollmentID: concurrentEnrollment.ID,
+				QuestionID: questionID, AnswerText: "один и тот же Telegram update",
+				IdempotencyKey: concurrentIdempotencyKey,
+			})
+			concurrentResults <- concurrentAnswerResult{answer: answer, err: submitErr}
+		}()
+	}
+	close(startConcurrent)
+	concurrentWG.Wait()
+	close(concurrentResults)
+
+	var concurrentAttemptID int64
+	createdAttempts, replayedAttempts := 0, 0
+	for result := range concurrentResults {
+		if result.err != nil {
+			t.Errorf("конкурентное сохранение одного update: %v", result.err)
+			continue
+		}
+		if concurrentAttemptID == 0 {
+			concurrentAttemptID = result.answer.AttemptID
+		} else if result.answer.AttemptID != concurrentAttemptID {
+			t.Errorf("повтор получил другую попытку: first=%d replay=%d",
+				concurrentAttemptID, result.answer.AttemptID)
+		}
+		if result.answer.Replayed {
+			replayedAttempts++
+		} else {
+			createdAttempts++
+		}
+	}
+	if createdAttempts != 1 || replayedAttempts != concurrentRedeliveries-1 || concurrentAttemptID == 0 {
+		t.Fatalf("один update должен создать одну попытку: created=%d replayed=%d attempt_id=%d",
+			createdAttempts, replayedAttempts, concurrentAttemptID)
+	}
+	var concurrentAttemptCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM answer_attempts
+		WHERE enrollment_id = $1 AND idempotency_key = $2::uuid
+	`, concurrentEnrollment.ID, concurrentIdempotencyKey).Scan(&concurrentAttemptCount); err != nil {
+		t.Fatalf("проверить число конкурентных попыток: %v", err)
+	}
+	if concurrentAttemptCount != 1 {
+		t.Fatalf("в БД сохранено %d попыток одного update, ожидалась одна", concurrentAttemptCount)
+	}
+
 	replay, err := answers.SaveTextAnswer(ctx, SaveTextAnswerParams{
 		StudentID: student.ID, EnrollmentID: enrollmentID, QuestionID: questionID,
 		AnswerText: "Изменённое тело повторного запроса", IdempotencyKey: idempotencyKey,
@@ -477,5 +554,85 @@ func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing
 	}
 	if restartedLink.PageURL != pageURL || restartedLink.ContentSHA256 != contentSHA256 {
 		t.Fatalf("ссылка после пересоздания отличается: %+v", restartedLink)
+	}
+}
+
+
+func TestConcurrentDuplicateTelegramMessageCreatesOneMessageAndDelivery(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+1000); err != nil {
+		t.Fatalf("привязать Telegram куратора для конкурентной доставки: %v", err)
+	}
+
+	repo := NewConversationRepository(pool)
+	params := domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: time.Now().UnixNano(), BodyText: "Параллельный повтор одного Telegram update.",
+	}
+
+	const concurrentRedeliveries = 8
+	type concurrentMessageResult struct {
+		message domain.ConversationMessage
+		err     error
+	}
+	startConcurrent := make(chan struct{})
+	results := make(chan concurrentMessageResult, concurrentRedeliveries)
+	var wait sync.WaitGroup
+	for i := 0; i < concurrentRedeliveries; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-startConcurrent
+			message, err := repo.CreateStudentMessage(ctx, params)
+			results <- concurrentMessageResult{message: message, err: err}
+		}()
+	}
+	close(startConcurrent)
+	wait.Wait()
+	close(results)
+
+	var messageID int64
+	created, replayed := 0, 0
+	for result := range results {
+		if result.err != nil {
+			t.Errorf("конкурентное сохранение одного Telegram-сообщения: %v", result.err)
+			continue
+		}
+		if messageID == 0 {
+			messageID = result.message.ID
+		} else if result.message.ID != messageID {
+			t.Errorf("повтор получил другой message ID: first=%d replay=%d", messageID, result.message.ID)
+		}
+		if result.message.Replayed {
+			replayed++
+		} else {
+			created++
+		}
+	}
+	if created != 1 || replayed != concurrentRedeliveries-1 || messageID == 0 {
+		t.Fatalf("один update должен создать одно сообщение: created=%d replayed=%d message_id=%d",
+			created, replayed, messageID)
+	}
+
+	var messageCount, deliveryCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM conversation_messages
+		WHERE telegram_chat_id = $1 AND telegram_message_id = $2
+	`, params.TelegramChatID, params.TelegramMessageID).Scan(&messageCount); err != nil {
+		t.Fatalf("проверить число сообщений Telegram: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, messageID).Scan(&deliveryCount); err != nil {
+		t.Fatalf("проверить число уведомлений куратора: %v", err)
+	}
+	if messageCount != 1 || deliveryCount != 1 {
+		t.Fatalf("повтор создал дубликаты: messages=%d curator_deliveries=%d", messageCount, deliveryCount)
 	}
 }
