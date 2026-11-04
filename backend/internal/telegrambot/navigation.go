@@ -91,6 +91,35 @@ func (b *Bot) showLessons(ctx context.Context, chatID, studentID, courseID, mess
 		return
 	}
 
+	if navigator, ok := b.learning.(CourseEnrollmentNavigator); ok {
+		active, activeErr := navigator.ActiveCourse(ctx, studentID)
+		if activeErr == nil && active.Enrollment.CourseID == courseID {
+			runLessons, runErr := navigator.CourseLessons(ctx, studentID, active.Enrollment.ID)
+			if runErr != nil {
+				b.logger.Error("не удалось получить статусы уроков активного курса", "student_id", studentID, "course_enrollment_id", active.Enrollment.ID, "error", runErr)
+				b.render(ctx, chatID, messageID, "Не удалось загрузить прогресс курса. Попробуйте позже.", keyboard(button("Продолжить курс", "course:continue")))
+				return
+			}
+			submitted := make(map[int64]struct{}, len(runLessons))
+			for _, runLesson := range runLessons {
+				if runLesson.Status == "completed" {
+					submitted[runLesson.LessonID] = struct{}{}
+				}
+			}
+			available := lessons[:0]
+			for _, lesson := range lessons {
+				if _, sent := submitted[lesson.ID]; !sent {
+					available = append(available, lesson)
+				}
+			}
+			lessons = available
+		} else if activeErr != nil && !errors.Is(activeErr, domain.ErrNotFound) {
+			b.logger.Warn("не удалось проверить активный курс перед показом уроков", "student_id", studentID, "course_id", courseID, "error", activeErr)
+			b.render(ctx, chatID, messageID, "Не удалось проверить прогресс курса. Попробуйте позже.", keyboard(button("К курсам", "courses")))
+			return
+		}
+	}
+
 	var rows [][]InlineKeyboardButton
 	for _, lesson := range lessons {
 		title := fmt.Sprintf("%s · %d вопросов", lesson.Title, lesson.QuestionCount)
@@ -341,7 +370,11 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	case "text":
 		if hasSaved {
 			message.text("\n\n💬 Ваш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650))
-			message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ.")
+			if progress.Enrollment.Mode == "curator" {
+				message.text("\n\n✅ Ответ сохранён. После отправки урока куратор просмотрит все ваши ответы.")
+			} else {
+				message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ.")
+			}
 		} else {
 			message.text("\n\n✍️ Отправьте ответ следующим сообщением.")
 		}
@@ -384,7 +417,11 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 			}
 		} else if hasSaved {
 			message.text("\n\nСохранённый выбор: " + truncate(optionSummary(question.Options, state.SavedAnswer.SelectedOptionIDs), 650))
-			message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена.")
+			if progress.Enrollment.Mode == "curator" {
+				message.text("\n\n✅ Ответ сохранён. После отправки урока куратор просмотрит все ваши ответы.")
+			} else {
+				message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена.")
+			}
 			rows = append(rows, []InlineKeyboardButton{button("Изменить ответ", fmt.Sprintf("e:%d:%d", progress.Enrollment.ID, question.ID))})
 		}
 	default:
@@ -409,7 +446,7 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	if progress.Enrollment.Status == "in_progress" && progress.TotalQuestions > 0 &&
 		progress.AnsweredQuestions >= progress.TotalQuestions {
 		rows = append(rows, []InlineKeyboardButton{{
-			Text: "Завершить урок", CallbackData: fmt.Sprintf("lesson:finish:%d", progress.Enrollment.ID),
+			Text: map[bool]string{true: "Отправить урок", false: "Завершить урок"}[progress.Enrollment.Mode == "curator"], CallbackData: fmt.Sprintf("lesson:finish:%d", progress.Enrollment.ID),
 		}})
 	}
 	if courseID > 0 {
@@ -577,14 +614,31 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 	}
 	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
 	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Написать куратору", "chat:start")}}
-	if metadata, ok := b.catalog.(interface {
-		GetLesson(context.Context, int64) (domain.Lesson, error)
-	}); ok {
-		if lesson, lessonErr := metadata.GetLesson(ctx, completed.LessonID); lessonErr == nil && lesson.CourseID > 0 {
-			rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", lesson.CourseID))}}, rows...)
+	if completed.Mode == "curator" {
+		text = "✅ Урок отправлен куратору!\n\nОн больше не отображается среди доступных уроков. Куратор самостоятельно проверит ваши ответы и при необходимости свяжется с вами лично."
+		if completed.CourseEnrollmentID != nil {
+			if navigator, ok := b.learning.(CourseEnrollmentNavigator); ok {
+				lessons, lessonsErr := navigator.CourseLessons(ctx, studentID, *completed.CourseEnrollmentID)
+				if lessonsErr == nil {
+					for _, lesson := range lessons {
+						if lesson.Status != "completed" {
+							rows = append([][]InlineKeyboardButton{{button("Продолжить курс", "course:continue")}}, rows...)
+							break
+						}
+					}
+				}
+			}
 		}
-	} else if detail, detailErr := b.catalog.GetLessonDetail(ctx, completed.LessonID); detailErr == nil && detail.Lesson.CourseID > 0 {
-		rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", detail.Lesson.CourseID))}}, rows...)
+	} else {
+		if metadata, ok := b.catalog.(interface {
+			GetLesson(context.Context, int64) (domain.Lesson, error)
+		}); ok {
+			if lesson, lessonErr := metadata.GetLesson(ctx, completed.LessonID); lessonErr == nil && lesson.CourseID > 0 {
+				rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", lesson.CourseID))}}, rows...)
+			}
+		} else if detail, detailErr := b.catalog.GetLessonDetail(ctx, completed.LessonID); detailErr == nil && detail.Lesson.CourseID > 0 {
+			rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", detail.Lesson.CourseID))}}, rows...)
+		}
 	}
 	b.render(ctx, chatID, messageID, text, markup(rows))
 	return true

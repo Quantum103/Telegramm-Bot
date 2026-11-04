@@ -29,9 +29,14 @@ function reviewClass(decision?: string, status?: string): string {
   return 'neutral'
 }
 
-function lessonLabel(lesson: CourseEnrollmentLesson): string {
-  if (lesson.status === 'completed') return 'Завершён'
-  if (lesson.pending_reviews > 0) return 'Ожидает проверки'
+function lessonLabel(lesson: CourseEnrollmentLesson, mode = ''): string {
+  if (lesson.status === 'completed') {
+    if (mode !== 'curator') return 'Завершён'
+    if (lesson.pending_reviews > 0) return 'Отправлен · ожидает проверки'
+    if (lesson.needs_revision > 0) return 'Нужно связаться с учеником'
+    return 'Проверен куратором'
+  }
+  if (lesson.pending_reviews > 0) return 'Ожидает отправки'
   if (lesson.needs_revision > 0) return 'Требуется исправление'
   if (lesson.answered_questions > 0 || lesson.status === 'in_progress') return 'В процессе'
   if (lesson.status === 'awaiting_curator') return 'Ожидает куратора'
@@ -634,13 +639,13 @@ export default function StudentsPage({
               <span className="student-lesson-number">{lesson.position}</span>
               <span className="student-lesson-title"><strong>{lesson.title}</strong><small>{lesson.answered_questions} из {lesson.total_questions} ответов</small></span>
               <span className={'review-state review-state--' + (
-                lesson.status === 'completed' ? 'approved' :
-                  lesson.pending_reviews > 0 ? 'pending' :
+                lesson.status === 'completed' ? (lesson.needs_revision > 0 ? 'revision' : lesson.pending_reviews > 0 ? 'pending' : 'approved') :
+                  lesson.pending_reviews > 0 ? 'neutral' :
                     lesson.needs_revision > 0 ? 'revision' : 'neutral'
-              )}>{lessonLabel(lesson)}</span>
+              )}>{lessonLabel(lesson, activeCourse.mode)}</span>
               <span className="student-lesson-chevron" aria-hidden="true">{expanded ? '−' : '+'}</span>
             </button>
-            {isCurator && activeCourse.mode === 'curator' && lesson.pending_reviews > 0 && <div className="student-lesson-review-action">
+            {isCurator && activeCourse.mode === 'curator' && lesson.status === 'completed' && lesson.pending_reviews > 0 && <div className="student-lesson-review-action">
               <button className="primary-button" type="button"
                 onClick={() => {
                   setExpandedLessonIDs((current) => current.includes(lesson.lesson_id) ? current : [...current, lesson.lesson_id])
@@ -655,7 +660,7 @@ export default function StudentsPage({
                 <div className="review-lesson-summary-heading">
                   <div><p className="eyebrow">ПРОВЕРКА УРОКА</p><strong>{acceptedAnswers} из {lesson.total_questions} ответов принято</strong></div>
                   <span className={'review-state review-state--' + (allAnswersAccepted ? 'approved' : pendingAnswers > 0 ? 'pending' : revisionAnswers > 0 ? 'revision' : 'neutral')}>
-                    {allAnswersAccepted ? 'Завершён' : lessonLabel(lesson)}
+                    {allAnswersAccepted ? 'Все ответы приняты' : lessonLabel(lesson, activeCourse.mode)}
                   </span>
                 </div>
                 <div className="review-lesson-summary-stats">

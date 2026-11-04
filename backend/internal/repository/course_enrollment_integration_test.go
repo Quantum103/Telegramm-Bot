@@ -204,19 +204,19 @@ func TestCourseEnrollmentSerializesConcurrentStarts(t *testing.T) {
 	}
 }
 
-func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
+func TestCuratorTransferReviewAndCourseSubmission(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
-		TelegramID: time.Now().UnixNano(), DisplayName: "curator-course-test",
+		TelegramID: time.Now().UnixNano(), DisplayName: "curator-course-submit-test",
 	})
 	if err != nil {
 		t.Fatalf("создать ученика: %v", err)
 	}
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	courseID, lessonIDs, versionIDs := createCourseForEnrollmentTest(t, ctx, pool, suffix, "Курс с ручной проверкой", 2)
+	courseID, lessonIDs, versionIDs := createCourseForEnrollmentTest(t, ctx, pool, suffix, "Курс с отправкой куратору", 2)
 	adminID := createStaffForCourseTest(t, ctx, pool, "administrator")
 	firstCuratorID := createStaffForCourseTest(t, ctx, pool, "curator")
 	secondCuratorID := createStaffForCourseTest(t, ctx, pool, "curator")
@@ -229,9 +229,6 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("создать курс с первым куратором: %v", err)
 	}
-
-	// Передача ученика обновляет ответственного уже созданного запуска и не
-	// создаёт вторую запись назначения.
 	if err := staffRepository.AssignStudentCurator(ctx, adminID, student.ID, secondCuratorID); err != nil {
 		t.Fatalf("передать ученика второму куратору: %v", err)
 	}
@@ -239,33 +236,14 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 	if err != nil || run.Enrollment.CuratorStaffID == nil || *run.Enrollment.CuratorStaffID != secondCuratorID {
 		t.Fatalf("курс не передан новому куратору: progress=%+v err=%v", run, err)
 	}
-	var activeAssignments, endedAssignments int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE status = 'active'),
-		       count(*) FILTER (WHERE status = 'ended')
-		FROM student_curator_assignments WHERE student_id = $1
-	`, student.ID).Scan(&activeAssignments, &endedAssignments); err != nil {
-		t.Fatalf("проверить историю назначений: %v", err)
-	}
-	if activeAssignments != 1 || endedAssignments != 1 {
-		t.Fatalf("история назначения потеряна: active=%d ended=%d", activeAssignments, endedAssignments)
-	}
-
-	curatorRepository := NewCuratorLearningRepository(pool)
-	if _, err := curatorRepository.ListCourseLessons(ctx, firstCuratorID, student.ID, run.Enrollment.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("старый куратор не должен видеть курс после передачи: %v", err)
-	}
-	access, err := curatorRepository.ListCourseLessons(ctx, secondCuratorID, student.ID, run.Enrollment.ID)
-	if err != nil || len(access.Lessons) != 2 {
-		t.Fatalf("новый куратор не получил доступ к обязательным урокам: access=%+v err=%v", access, err)
-	}
 
 	enrollments := NewEnrollmentRepository(pool)
 	answers := NewAnswerRepository(pool)
+	curator := NewCuratorLearningRepository(pool)
 	for index, lessonID := range lessonIDs {
 		lesson, err := courses.GetLessonForRun(ctx, student.ID, run.Enrollment.ID, lessonID)
 		if err != nil || lesson.LessonVersionID != versionIDs[index] {
-			t.Fatalf("получить фиксированную версию урока: lesson=%+v err=%v", lesson, err)
+			t.Fatalf("получить зафиксированную версию урока: lesson=%+v err=%v", lesson, err)
 		}
 		enrollment, err := enrollments.Start(ctx, StartEnrollmentParams{
 			StudentID: student.ID, LessonID: lessonID, LessonVersionID: lesson.LessonVersionID,
@@ -283,154 +261,69 @@ func TestCuratorTransferReviewAndCourseCompletion(t *testing.T) {
 			AnswerText: fmt.Sprintf("Ответ ученика на урок %d", index+1),
 		})
 		if err != nil {
-			t.Fatalf("отправить ответ: %v", err)
-		}
-		curatorAnswers, err := curatorRepository.ListLessonAnswers(
-			ctx, secondCuratorID, student.ID, run.Enrollment.ID, lessonID,
-		)
-		if err != nil || len(curatorAnswers) != 1 || curatorAnswers[0].AttemptID == nil ||
-			*curatorAnswers[0].AttemptID != saved.AttemptID {
-			t.Fatalf("текущий куратор не получил ответ ученика: answers=%+v err=%v", curatorAnswers, err)
-		}
-		if _, err := curatorRepository.ListLessonAnswers(
-			ctx, firstCuratorID, student.ID, run.Enrollment.ID, lessonID,
-		); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("прежний куратор не должен видеть ответы после передачи: %v", err)
+			t.Fatalf("сохранить ответ: %v", err)
 		}
 
-		// Отправленный, но не проверенный ответ не разрешает завершить урок.
-		if _, err := enrollments.Complete(ctx, student.ID, enrollment.ID); !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("непроверенный ответ завершил урок: %v", err)
+		// До нажатия «Отправить урок» куратор не должен видеть задание в очереди.
+		beforeSubmission, err := curator.ListReviewQueue(ctx, secondCuratorID)
+		if err != nil || len(beforeSubmission) != 0 {
+			t.Fatalf("неотправленный урок появился в очереди: queue=%+v err=%v", beforeSubmission, err)
 		}
-		if index == 0 {
-			if _, err := curatorRepository.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
-				CuratorStaffID: secondCuratorID, AttemptID: saved.AttemptID,
-				Decision: "needs_revision", Feedback: "Добавьте пояснение к ответу.",
-			}); err != nil {
-				t.Fatalf("вернуть ответ на исправление: %v", err)
-			}
-			history, err := answers.ListAttemptHistory(ctx, student.ID, enrollment.ID, questionID)
-			if err != nil || len(history) != 1 || history[0].ReviewDecision == nil ||
-				*history[0].ReviewDecision != "needs_revision" ||
-				history[0].ReviewFeedback != nil && *history[0].ReviewFeedback != "Добавьте пояснение к ответу." {
-				t.Fatalf("ученик не получил решение и комментарий куратора: history=%+v err=%v", history, err)
-			}
-			revised, err := answers.Submit(ctx, AnswerSubmission{
-				StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: questionID,
-				AnswerText: "Исправленный ответ с пояснением",
-			})
-			if err != nil {
-				t.Fatalf("повторно отправить исправленный ответ: %v", err)
-			}
-			if _, err := enrollments.Complete(ctx, student.ID, enrollment.ID); !errors.Is(err, ErrInvalidState) {
-				t.Fatalf("непроверенная повторная попытка завершила урок: %v", err)
-			}
-			saved = revised
-		}
-		if _, err := curatorRepository.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		if _, err := curator.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
 			CuratorStaffID: secondCuratorID, AttemptID: saved.AttemptID,
-			Decision: "approved", Feedback: "Ответ принят.",
+			Decision: "approved", Feedback: "Нельзя проверять до отправки урока.",
+		}); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("куратор смог проверить неотправленный урок: %v", err)
+		}
+
+		submitted, err := enrollments.Complete(ctx, student.ID, enrollment.ID)
+		if err != nil || submitted.Status != "completed" {
+			t.Fatalf("урок нельзя отправить с сохранённым ответом без проверки куратора: enrollment=%+v err=%v", submitted, err)
+		}
+		queue, err := curator.ListReviewQueue(ctx, secondCuratorID)
+		if err != nil || len(queue) != 1 || queue[0].LessonID != lessonID || queue[0].PendingAnswers != 1 {
+			t.Fatalf("отправленный урок не появился в очереди куратора: queue=%+v err=%v", queue, err)
+		}
+
+		decision, feedback := "approved", "Ответ принят."
+		if index == 0 {
+			decision, feedback = "needs_revision", "При необходимости свяжусь с вами лично."
+		}
+		if _, err := curator.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+			CuratorStaffID: secondCuratorID, AttemptID: saved.AttemptID,
+			Decision: decision, Feedback: feedback,
 		}); err != nil {
-			t.Fatalf("одобрить последнюю попытку: %v", err)
+			t.Fatalf("куратор не смог проверить отправленный урок: %v", err)
 		}
-		automaticProgress, err := courses.GetForStudent(ctx, student.ID, run.Enrollment.ID)
-		if err != nil {
-			t.Fatalf("получить прогресс после автоматического завершения урока: %v", err)
-		}
-		if index == 0 && (automaticProgress.Enrollment.Status != "in_progress" || automaticProgress.CompletedLessons != 1) {
-			t.Fatalf("курс должен продолжаться после первого завершённого урока: %+v", automaticProgress)
-		}
-		if index == len(lessonIDs)-1 &&
-			(automaticProgress.Enrollment.Status != "completed" || automaticProgress.CompletedLessons != len(lessonIDs) || !automaticProgress.IsComplete) {
-			t.Fatalf("последний одобренный ответ должен автоматически завершить курс: %+v", automaticProgress)
-		}
-		if _, err := enrollments.Complete(ctx, student.ID, enrollment.ID); err != nil {
-			t.Fatalf("завершить урок после решения куратора: %v", err)
+		afterReview, err := curator.ListReviewQueue(ctx, secondCuratorID)
+		if err != nil || len(afterReview) != 0 {
+			t.Fatalf("проверенный ответ остался в очереди: queue=%+v err=%v", afterReview, err)
 		}
 		if _, err := answers.Submit(ctx, AnswerSubmission{
 			StudentID: student.ID, EnrollmentID: enrollment.ID, QuestionID: questionID,
-			AnswerText: "Попытка изменить уже завершённый урок",
+			AnswerText: "Попытка изменить отправленный урок",
 		}); !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("завершённый урок не должен принимать новый ответ, получено %v", err)
+			t.Fatalf("ученик смог изменить отправленный урок: %v", err)
 		}
-		if index == 0 {
-			afterFirst, err := courses.GetForStudent(ctx, student.ID, run.Enrollment.ID)
-			if err != nil {
-				t.Fatalf("получить прогресс после первого урока: %v", err)
-			}
-			if afterFirst.Enrollment.Status != "in_progress" || afterFirst.CompletedLessons != 1 {
-				t.Fatalf("курс завершился раньше второго урока: %+v", afterFirst)
-			}
+
+		progress, err := courses.GetForStudent(ctx, student.ID, run.Enrollment.ID)
+		if err != nil {
+			t.Fatalf("получить прогресс курса после отправки: %v", err)
+		}
+		if index == 0 && (progress.Enrollment.Status != "in_progress" || progress.CompletedLessons != 1) {
+			t.Fatalf("курс должен оставаться активным, пока не отправлены все уроки: %+v", progress)
+		}
+		if index == len(lessonIDs)-1 &&
+			(progress.Enrollment.Status != "completed" || progress.CompletedLessons != len(lessonIDs) || !progress.IsComplete) {
+			t.Fatalf("курс должен завершиться после отправки всех уроков, не дожидаясь проверки: %+v", progress)
 		}
 	}
 
-	completed, err := courses.GetForStudent(ctx, student.ID, run.Enrollment.ID)
-	if err != nil || completed.Enrollment.Status != "completed" ||
-		completed.CompletedLessons != 2 || completed.RemainingLessons != 0 || !completed.IsComplete {
-		t.Fatalf("курс не завершился после проверки всех уроков: progress=%+v err=%v", completed, err)
-	}
+	// После отправки всех уроков новый запуск курса снова доступен ученику,
+	// даже если кураторские решения уже не влияют на статус курса.
 	nextRun, err := courses.Start(ctx, student.ID, courseID, "ai")
-	if err != nil || nextRun.Enrollment.ID == run.Enrollment.ID ||
-		nextRun.Enrollment.RunNumber != run.Enrollment.RunNumber+1 || nextRun.Enrollment.Mode != "ai" {
-		t.Fatalf("после завершения нельзя начать новый запуск курса: progress=%+v err=%v", nextRun, err)
-	}
-
-	// Режим ai использует уже существующее назначение, но не переназначает его.
-	var assignedCuratorID int64
-	if err := pool.QueryRow(ctx, `
-		SELECT curator_staff_id FROM student_curator_assignments
-		WHERE student_id = $1 AND status = 'active'
-	`, student.ID).Scan(&assignedCuratorID); err != nil {
-		t.Fatalf("проверить сохранённое назначение после старта ai: %v", err)
-	}
-	if assignedCuratorID != secondCuratorID {
-		t.Fatalf("старт ai изменил административное назначение: got=%d want=%d", assignedCuratorID, secondCuratorID)
-	}
-
-	aiLesson, err := courses.GetLessonForRun(ctx, student.ID, nextRun.Enrollment.ID, lessonIDs[0])
-	if err != nil {
-		t.Fatalf("получить урок для AI-прохождения: %v", err)
-	}
-	aiEnrollment, err := NewEnrollmentRepository(pool).Start(ctx, StartEnrollmentParams{
-		StudentID:          student.ID,
-		LessonID:           lessonIDs[0],
-		LessonVersionID:    aiLesson.LessonVersionID,
-		CourseEnrollmentID: nextRun.Enrollment.ID,
-		Mode:               "ai",
-	})
-	if err != nil {
-		t.Fatalf("начать урок в режиме ai: %v", err)
-	}
-	var aiQuestionID int64
-	if err := pool.QueryRow(ctx, "SELECT id FROM lesson_questions WHERE lesson_version_id = $1", aiLesson.LessonVersionID).Scan(&aiQuestionID); err != nil {
-		t.Fatalf("получить вопрос AI-прохождения: %v", err)
-	}
-	aiAnswer, err := answers.Submit(ctx, AnswerSubmission{
-		StudentID:    student.ID,
-		EnrollmentID: aiEnrollment.ID,
-		QuestionID:   aiQuestionID,
-		AnswerText:   "Ответ для самостоятельного прохождения",
-	})
-	if err != nil {
-		t.Fatalf("отправить ответ в режиме ai: %v", err)
-	}
-	if _, err := curatorRepository.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
-		CuratorStaffID: secondCuratorID,
-		AttemptID:      aiAnswer.AttemptID,
-		Decision:       "approved",
-		Feedback:       "Не должно приниматься в режиме ai.",
-	}); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("режим ai не должен запускать ручную проверку куратора, получено %v", err)
-	}
-	if _, err := enrollments.Complete(ctx, student.ID, aiEnrollment.ID); err != nil {
-		t.Fatalf("AI-урок должен завершаться без ручного решения куратора: %v", err)
-	}
-	var aiReviewCount int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM answer_attempt_reviews WHERE answer_attempt_id = $1", aiAnswer.AttemptID).Scan(&aiReviewCount); err != nil {
-		t.Fatalf("проверить отсутствие ручной проверки AI-ответа: %v", err)
-	}
-	if aiReviewCount != 0 {
-		t.Fatalf("AI-ответ получил %d ручных решений куратора", aiReviewCount)
+	if err != nil || nextRun.Enrollment.Status != "in_progress" {
+		t.Fatalf("после отправки всех уроков нельзя начать новый запуск: progress=%+v err=%v", nextRun, err)
 	}
 }
 

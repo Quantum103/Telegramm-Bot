@@ -38,22 +38,22 @@ func (r *AnswerRepository) Submit(ctx context.Context, params AnswerSubmission) 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var lessonID, lessonVersionID int64
-	var enrollmentStatus string
+	var enrollmentStatus, enrollmentMode string
 	var courseEnrollmentID pgtype.Int8
 	if err := tx.QueryRow(ctx, `
-		SELECT lesson_id, lesson_version_id, status, course_enrollment_id
+		SELECT lesson_id, lesson_version_id, status, course_enrollment_id, mode
 		FROM lesson_enrollments
 		WHERE id = $1 AND student_id = $2
 		FOR UPDATE
 	`, params.EnrollmentID, params.StudentID).Scan(
-		&lessonID, &lessonVersionID, &enrollmentStatus, &courseEnrollmentID,
+		&lessonID, &lessonVersionID, &enrollmentStatus, &courseEnrollmentID, &enrollmentMode,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SavedAnswer{}, ErrNotFound
 		}
 		return SavedAnswer{}, mapDatabaseError("проверить прохождение ученика", err)
 	}
-	if enrollmentStatus == "cancelled" {
+	if enrollmentStatus == "cancelled" || (enrollmentStatus == "completed" && enrollmentMode == "curator") {
 		return SavedAnswer{}, ErrInvalidState
 	}
 	if courseEnrollmentID.Valid {

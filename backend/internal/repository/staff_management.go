@@ -238,15 +238,18 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			LEFT JOIN LATERAL (
 				SELECT
 					count(*) FILTER (
-						WHERE latest_attempt.id IS NOT NULL
+						WHERE review_enrollment.status = 'completed'
+						  AND latest_attempt.id IS NOT NULL
 						  AND latest_attempt.processing_status = 'pending'
 						  AND review.id IS NULL
 					)::INTEGER AS pending_reviews,
 					count(DISTINCT review_lesson.lesson_id) FILTER (
-						WHERE review.decision = 'needs_revision'
+						WHERE review_enrollment.status = 'completed'
+						  AND review.decision = 'needs_revision'
 					)::INTEGER AS needs_revision,
 					count(*) FILTER (
-						WHERE review.decision = 'needs_revision'
+						WHERE review_enrollment.status = 'completed'
+						  AND review.decision = 'needs_revision'
 					)::INTEGER AS needs_revision_answers
 				FROM course_enrollment_lessons review_lesson
 				JOIN lesson_questions question
@@ -268,10 +271,19 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 				WHERE review_lesson.course_enrollment_id = ce.id
 			) AS review_totals ON TRUE
 			WHERE ce.student_id = student.id
-			  AND ce.status IN ('in_progress', 'awaiting_curator', 'paused')
+			  AND (
+			      ce.status IN ('in_progress', 'awaiting_curator', 'paused')
+			      OR (
+			          ce.status = 'completed'
+			          AND ce.mode = 'curator'
+			          AND COALESCE(review_totals.pending_reviews, 0) > 0
+			      )
+			  )
 			GROUP BY ce.id, course.title, review_totals.pending_reviews,
 			         review_totals.needs_revision, review_totals.needs_revision_answers
-			ORDER BY ce.updated_at DESC, ce.id DESC
+			ORDER BY
+			    CASE WHEN ce.status = 'completed' THEN 0 ELSE 1 END,
+			    ce.updated_at DESC, ce.id DESC
 			LIMIT 1
 		) AS active_course ON TRUE
 		WHERE ($2::BOOLEAN = TRUE OR current_assignment.curator_staff_id = $1)
@@ -458,7 +470,36 @@ func assignStudentCuratorTx(
 			    status = CASE WHEN status = 'awaiting_curator' THEN 'in_progress' ELSE status END,
 			    updated_at = now()
 			WHERE student_id = $1 AND mode = 'curator'
-			  AND status IN ('in_progress', 'awaiting_curator')
+			  AND (
+			    status IN ('in_progress', 'awaiting_curator')
+			    OR (
+			        status = 'completed'
+			        AND EXISTS (
+			            SELECT 1
+			            FROM course_enrollment_lessons cel
+			            JOIN lesson_enrollments lesson
+			              ON lesson.course_enrollment_id = cel.course_enrollment_id
+			             AND lesson.lesson_id = cel.lesson_id
+			             AND lesson.lesson_version_id = cel.lesson_version_id
+			            JOIN lesson_questions question
+			              ON question.lesson_version_id = cel.lesson_version_id
+			            JOIN LATERAL (
+			                SELECT attempt.id, attempt.processing_status
+			                FROM answer_attempts attempt
+			                WHERE attempt.enrollment_id = lesson.id
+			                  AND attempt.question_id = question.id
+			                ORDER BY attempt.created_at DESC, attempt.id DESC
+			                LIMIT 1
+			            ) latest ON TRUE
+			            LEFT JOIN answer_attempt_reviews review
+			              ON review.answer_attempt_id = latest.id
+			            WHERE cel.course_enrollment_id = course_enrollments.id
+			              AND lesson.status = 'completed'
+			              AND latest.processing_status = 'pending'
+			              AND review.id IS NULL
+			        )
+			    )
+			)
 		`, studentID, curatorStaffID); err != nil {
 			return mapDatabaseError("синхронизировать куратора активного курса", err)
 		}
@@ -540,7 +581,36 @@ func assignStudentCuratorTx(
 		    status = CASE WHEN status = 'awaiting_curator' THEN 'in_progress' ELSE status END,
 		    updated_at = now()
 		WHERE student_id = $1 AND mode = 'curator'
-		  AND status IN ('in_progress', 'awaiting_curator')
+		  AND (
+			    status IN ('in_progress', 'awaiting_curator')
+			    OR (
+			        status = 'completed'
+			        AND EXISTS (
+			            SELECT 1
+			            FROM course_enrollment_lessons cel
+			            JOIN lesson_enrollments lesson
+			              ON lesson.course_enrollment_id = cel.course_enrollment_id
+			             AND lesson.lesson_id = cel.lesson_id
+			             AND lesson.lesson_version_id = cel.lesson_version_id
+			            JOIN lesson_questions question
+			              ON question.lesson_version_id = cel.lesson_version_id
+			            JOIN LATERAL (
+			                SELECT attempt.id, attempt.processing_status
+			                FROM answer_attempts attempt
+			                WHERE attempt.enrollment_id = lesson.id
+			                  AND attempt.question_id = question.id
+			                ORDER BY attempt.created_at DESC, attempt.id DESC
+			                LIMIT 1
+			            ) latest ON TRUE
+			            LEFT JOIN answer_attempt_reviews review
+			              ON review.answer_attempt_id = latest.id
+			            WHERE cel.course_enrollment_id = course_enrollments.id
+			              AND lesson.status = 'completed'
+			              AND latest.processing_status = 'pending'
+			              AND review.id IS NULL
+			        )
+			    )
+			)
 	`, studentID, curatorStaffID); err != nil {
 		return mapDatabaseError("передать активный курс новому куратору", err)
 	}

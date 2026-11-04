@@ -78,7 +78,7 @@ func (r *CuratorLearningRepository) ListReviewQueue(
 		       lesson.status
 		FROM staff_accounts actor
 		JOIN course_enrollments ce
-		  ON ce.mode = 'curator' AND ce.status = 'in_progress'
+		  ON ce.mode = 'curator' AND ce.status IN ('in_progress', 'completed')
 		JOIN students student ON student.id = ce.student_id
 		JOIN courses course ON course.id = ce.course_id
 		JOIN student_curator_assignments assignment
@@ -111,7 +111,7 @@ func (r *CuratorLearningRepository) ListReviewQueue(
 		  ON review.answer_attempt_id = latest.id
 		WHERE actor.id = $1
 		  AND actor.account_status = 'active'
-		  AND lesson.status = 'in_progress'
+		  AND lesson.status = 'completed'
 		  AND EXISTS (
 		      SELECT 1
 		      FROM staff_role_assignments assigned_curator_role
@@ -281,6 +281,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		        LEFT JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
 		          AND $2 = 'curator'
+		          AND le.status = 'completed'
 		          AND latest.processing_status = 'pending'
 		          AND review.id IS NULL),
 		       (SELECT CASE WHEN EXISTS (
@@ -296,6 +297,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		            JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		            WHERE q.lesson_version_id = cel.lesson_version_id
 		              AND $2 = 'curator'
+		              AND le.status = 'completed'
 		              AND review.decision = 'needs_revision'
 		        ) THEN 1 ELSE 0 END),
 		       (SELECT count(*)::INTEGER
@@ -310,6 +312,7 @@ func (r *CuratorLearningRepository) ListCourseLessons(
 		        JOIN answer_attempt_reviews review ON review.answer_attempt_id = latest.id
 		        WHERE q.lesson_version_id = cel.lesson_version_id
 		          AND $2 = 'curator'
+		          AND le.status = 'completed'
 		          AND review.decision = 'needs_revision')
 		FROM course_enrollment_lessons cel
 		JOIN lesson_versions lv
@@ -560,8 +563,8 @@ func (r *CuratorLearningRepository) ListLessonAnswers(
 	return answers, nil
 }
 
-// ReviewAttempt принимает одно окончательное решение по последней попытке вопроса.
-// Новая отправка ученика создаст другую попытку и не затрёт прежнее решение.
+// ReviewAttempt принимает решение по последней попытке уже отправленного урока.
+// Решение фиксируется отдельно и не меняет доступность урока для ученика.
 func (r *CuratorLearningRepository) ReviewAttempt(
 	ctx context.Context,
 	params domain.ReviewAnswerAttemptParams,
@@ -674,7 +677,7 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	if !errors.Is(existingErr, pgx.ErrNoRows) {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("проверить существующее решение куратора", existingErr)
 	}
-	if courseStatus != "in_progress" || enrollmentStatus != "in_progress" || processingStatus != "pending" {
+	if (courseStatus != "in_progress" && courseStatus != "completed") || enrollmentStatus != "completed" || processingStatus != "pending" {
 		return domain.AnswerAttemptReview{}, ErrInvalidState
 	}
 
@@ -712,22 +715,12 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	`, params.CuratorStaffID, params.AttemptID, params.Decision, studentID); err != nil {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("записать аудит проверки ответа куратором", err)
 	}
-	if params.Decision == "approved" {
-		if err := completeCuratorLessonAndCourseTx(
-			ctx, tx, params.CuratorStaffID, studentID, courseEnrollmentID, enrollmentID, lessonVersionID,
-		); err != nil {
-			return domain.AnswerAttemptReview{}, err
-		}
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("зафиксировать решение куратора", err)
 	}
 	return review, nil
 }
 
-// completeCuratorLessonAndCourseTx completes a lesson only after every question
-// has a saved answer and its latest attempt has been approved. Both transitions
-// share the transaction that records the curator's decision.
 func completeCuratorLessonAndCourseTx(
 	ctx context.Context,
 	tx pgx.Tx,

@@ -539,3 +539,46 @@ func TestMultiChoiceCallbackRedeliveryDoesNotToggleOptionOff(t *testing.T) {
 		t.Fatalf("callback acknowledgement calls = %d, want 2: one for setup and one for both deliveries of the same callback", len(api.fakeAPI.answered))
 	}
 }
+
+func TestCuratorLessonIsSentAfterAllAnswersAreSaved(t *testing.T) {
+	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "text", nil)
+
+	// Переводим тестовое прохождение в режим куратора.
+	learning.fakeLearning.mu.Lock()
+	progress := learning.fakeLearning.progress[701]
+	progress.Enrollment.Mode = "curator"
+	learning.fakeLearning.progress[701] = progress
+	learning.fakeLearning.mu.Unlock()
+
+	bot.handleUpdate(context.Background(), answerMessage(9401, 1401, user, "ответ на первый вопрос"))
+	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, mainID))
+	bot.handleUpdate(context.Background(), answerMessage(9402, 1402, user, "ответ на второй вопрос"))
+
+	last := lastEdit(t, api.fakeAPI)
+	var submitButtonFound bool
+	for _, row := range last.markup.InlineKeyboard {
+		for _, item := range row {
+			if item.CallbackData == "lesson:finish:701" && item.Text == "Отправить урок" {
+				submitButtonFound = true
+			}
+		}
+	}
+	if !submitButtonFound {
+		t.Fatalf("в режиме куратора должна отображаться кнопка «Отправить урок»: %+v", last.markup)
+	}
+
+	bot.handleCallback(context.Background(), testCallback("lesson:finish:701", user, mainID))
+	last = lastEdit(t, api.fakeAPI)
+	completed, err := learning.GetProgress(context.Background(), 1, 701)
+	if err != nil {
+		t.Fatalf("получить отправленное прохождение: %v", err)
+	}
+	if learning.fakeLearning.completeCalls != 1 ||
+		completed.Enrollment.Status != "completed" ||
+		completed.Enrollment.Mode != "curator" ||
+		!strings.Contains(last.text, "Урок отправлен куратору") ||
+		!hasButton(last.markup, "chat:start") {
+		t.Fatalf("отправка урока куратору завершилась неверно: calls=%d progress=%+v edit=%+v",
+			learning.fakeLearning.completeCalls, completed, last)
+	}
+}
