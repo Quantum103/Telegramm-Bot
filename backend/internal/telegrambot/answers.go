@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
@@ -74,6 +75,7 @@ func (b *Bot) seedMultiDraft(key answerStateKey, optionIDs []int64) {
 	b.multiDrafts[key] = selected
 }
 
+
 func (b *Bot) toggleMultiDraft(key answerStateKey, optionID int64) {
 	b.choiceMu.Lock()
 	defer b.choiceMu.Unlock()
@@ -89,6 +91,62 @@ func (b *Bot) toggleMultiDraft(key answerStateKey, optionID int64) {
 	}
 }
 
+// setMultiDraftOption applies the desired state, so redelivery of one callback
+// cannot invert the selection a second time.
+func (b *Bot) setMultiDraftOption(key answerStateKey, optionID int64, checked bool) {
+	b.choiceMu.Lock()
+	defer b.choiceMu.Unlock()
+	selected, exists := b.multiDrafts[key]
+	if !exists {
+		selected = make(map[int64]struct{})
+		b.multiDrafts[key] = selected
+	}
+	if checked {
+		selected[optionID] = struct{}{}
+		return
+	}
+	delete(selected, optionID)
+}
+
+// seedMultiDraftFromMarkup restores a volatile draft after a process restart.
+// Callback data stores the action's target state; for older keyboards, the
+// selected marker in the button label is used as a compatibility fallback.
+func (b *Bot) seedMultiDraftFromMarkup(key answerStateKey, markup *InlineKeyboardMarkup) {
+	b.choiceMu.Lock()
+	defer b.choiceMu.Unlock()
+	if _, exists := b.multiDrafts[key]; exists {
+		return
+	}
+	selected := make(map[int64]struct{})
+	if markup != nil {
+		for _, row := range markup.InlineKeyboard {
+			for _, item := range row {
+				parts := strings.Split(item.CallbackData, ":")
+				if len(parts) < 4 || parts[0] != "t" {
+					continue
+				}
+				enrollmentID, errEnrollment := strconv.ParseInt(parts[1], 10, 64)
+				questionID, errQuestion := strconv.ParseInt(parts[2], 10, 64)
+				optionID, errOption := strconv.ParseInt(parts[3], 10, 64)
+				if errEnrollment != nil || errQuestion != nil || errOption != nil ||
+					enrollmentID != key.enrollmentID || questionID != key.questionID || optionID <= 0 {
+					continue
+				}
+				if len(parts) == 5 {
+					switch parts[4] {
+					case "0":
+						selected[optionID] = struct{}{}
+					case "1":
+						delete(selected, optionID)
+					}
+				} else if strings.HasPrefix(item.Text, "✅ ") {
+					selected[optionID] = struct{}{}
+				}
+			}
+		}
+	}
+	b.multiDrafts[key] = selected
+}
 func (b *Bot) multiDraftSelection(key answerStateKey) []int64 {
 	b.choiceMu.Lock()
 	defer b.choiceMu.Unlock()
@@ -100,38 +158,39 @@ func (b *Bot) multiDraftSelection(key answerStateKey) []int64 {
 	return result
 }
 
-func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, message Message, text string) {
+
+func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, message Message, text string) bool {
 	student, err := b.ensureStudent(ctx, user)
 	if err != nil {
 		b.logger.Warn("не удалось определить ученика для текстового ответа", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, message.Chat.ID, "Не удалось проверить регистрацию. Отправьте /start и попробуйте ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	answerService, ok := b.learning.(answerLearningService)
 	if !ok {
 		b.send(ctx, message.Chat.ID, "Не удалось проверить текущий вопрос. Откройте урок через /start и попробуйте снова.")
-		return
+		return true
 	}
 
 	state, err := answerService.CurrentQuestion(ctx, student.ID)
 	if err != nil {
 		b.logger.Warn("нет доступного текущего вопроса для текстового ответа", "student_id", student.ID, "error", err)
 		b.send(ctx, message.Chat.ID, "Сейчас нет открытого текстового вопроса. Отправьте /start и выберите курс и урок.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if state.Question.AnswerType != "text" {
 		b.send(ctx, message.Chat.ID, "Для этого вопроса используйте кнопки вариантов ответа.")
-		return
+		return true
 	}
 	if state.Progress.Enrollment.CurrentQuestionID == nil ||
 		*state.Progress.Enrollment.CurrentQuestionID != state.Question.ID ||
 		state.Progress.Enrollment.Status != "in_progress" {
 		b.send(ctx, message.Chat.ID, "Текущий вопрос изменился. Откройте его через кнопки и отправьте ответ ещё раз.")
-		return
+		return true
 	}
 	if strings.TrimSpace(text) == "" {
 		b.send(ctx, message.Chat.ID, "Пустой ответ не сохранён. Напишите ответ и отправьте его ещё раз.")
-		return
+		return true
 	}
 
 	result, err := answerService.SubmitAnswer(ctx, domain.AnswerSubmission{
@@ -143,7 +202,7 @@ func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, m
 		b.logger.Warn("не удалось сохранить текстовый ответ", "student_id", student.ID,
 			"enrollment_id", state.Progress.Enrollment.ID, "question_id", state.Question.ID, "error", err)
 		b.send(ctx, message.Chat.ID, "Не удалось сохранить ответ. Он не принят. Проверьте соединение и отправьте ответ ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 
 	// Сохранение уже завершено. Ошибка удаления сообщения Telegram не должна отменять ответ.
@@ -164,8 +223,8 @@ func (b *Bot) handleTextAnswer(ctx context.Context, updateID int64, user User, m
 		state = refreshed
 	}
 	b.renderQuestion(ctx, message.Chat.ID, student.ID, b.knownMainMessage(message.Chat.ID), state, nil, 0)
+	return true
 }
-
 func (b *Bot) deleteIncomingMessage(ctx context.Context, message Message) {
 	deleter, ok := b.api.(telegramMessageDeleter)
 	if !ok {
@@ -185,7 +244,8 @@ func telegramUpdateIdempotencyKey(updateID int64) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16])
 }
 
-func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studentID, messageID int64, parts []string) {
+
+func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studentID, messageID int64, parts []string, replyMarkup *InlineKeyboardMarkup) bool {
 	action := parts[0]
 	switch action {
 	case "e":
@@ -201,23 +261,28 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 	switch action {
 	case "pick-edit":
 		need = 3
-	case "pick", "multi-toggle":
+	case "pick":
 		need = 4
+	case "multi-toggle":
+		need = 4
+		if len(parts) == 5 {
+			need = 5
+		}
 	case "multi-submit":
 		need = 3
 	default:
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return true
 	}
 	if len(parts) != need {
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return true
 	}
 	enrollmentID, okEnrollment := parsePositiveID(parts[1])
 	questionID, okQuestion := parsePositiveID(parts[2])
 	if !okEnrollment || !okQuestion {
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return true
 	}
 	var optionID int64
 	if action == "pick" || action == "multi-toggle" {
@@ -225,8 +290,16 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		optionID, ok = parsePositiveID(parts[3])
 		if !ok {
 			b.showStaleCallback(ctx, chatID, studentID, messageID)
-			return
+			return true
 		}
+	}
+	desiredSelected := false
+	if action == "multi-toggle" && len(parts) == 5 {
+		if parts[4] != "0" && parts[4] != "1" {
+			b.showStaleCallback(ctx, chatID, studentID, messageID)
+			return true
+		}
+		desiredSelected = parts[4] == "1"
 	}
 
 	var state service.NavigationState
@@ -237,7 +310,7 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		state, err = current.OpenCurrentQuestion(ctx, studentID, enrollmentID, questionID)
 		if errors.Is(err, domain.ErrConflict) && state.StaleCallback {
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 	} else {
 		progress, progressErr := b.learning.GetProgress(ctx, studentID, enrollmentID)
@@ -246,10 +319,10 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 			*progress.Enrollment.CurrentQuestionID != questionID {
 			if progressErr != nil {
 				b.showStaleCallback(ctx, chatID, studentID, messageID)
-			} else {
-				b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, 0)
+				return !isRetryableUpdateError(progressErr)
 			}
-			return
+			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, 0)
+			return true
 		}
 		state, err = b.learning.OpenQuestion(ctx, studentID, enrollmentID, questionID)
 	}
@@ -257,82 +330,87 @@ func (b *Bot) handleAnswerCallback(ctx context.Context, updateID, chatID, studen
 		b.logger.Warn("не удалось проверить вопрос для ответа кнопкой", "student_id", studentID,
 			"enrollment_id", enrollmentID, "question_id", questionID, "error", err)
 		b.send(ctx, chatID, "Не удалось проверить текущий вопрос. Попробуйте открыть его ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	key := answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: questionID}
 	switch action {
 	case "pick-edit":
 		if state.Question.AnswerType != "single_choice" && state.Question.AnswerType != "multiple_choice" {
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		b.setChoiceEditing(key, true)
 		if state.Question.AnswerType == "multiple_choice" && state.SavedAnswer != nil {
 			b.seedMultiDraft(key, state.SavedAnswer.SelectedOptionIDs)
 		}
 		b.renderQuestionMode(ctx, chatID, studentID, messageID, state, nil, 0, true, "")
-		return
+		return true
 	case "pick":
 		if state.Question.AnswerType != "single_choice" {
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		if state.SavedAnswer != nil && !b.isChoiceEditing(key) {
 			b.send(ctx, chatID, "Ответ уже сохранён. Нажмите «Изменить ответ», чтобы выбрать другой вариант.")
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		if !questionHasOption(state.Question.Options, optionID) {
 			b.send(ctx, chatID, "Выбранный вариант не относится к текущему вопросу. Выберите вариант на экране вопроса.")
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
-		b.saveChoiceAnswer(ctx, updateID, chatID, studentID, messageID, state, []int64{optionID})
-		return
+		return b.saveChoiceAnswer(ctx, updateID, chatID, studentID, messageID, state, []int64{optionID})
 	case "multi-toggle":
 		if state.Question.AnswerType != "multiple_choice" {
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		if state.SavedAnswer != nil && !b.isChoiceEditing(key) {
 			b.send(ctx, chatID, "Ответ уже сохранён. Нажмите «Изменить ответ», чтобы изменить выбор.")
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		if !questionHasOption(state.Question.Options, optionID) {
 			b.send(ctx, chatID, "Выбранный вариант не относится к текущему вопросу.")
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
-		b.toggleMultiDraft(key, optionID)
+		if len(parts) == 5 {
+			b.seedMultiDraftFromMarkup(key, replyMarkup)
+			b.setMultiDraftOption(key, optionID, desiredSelected)
+		} else {
+			// Compatibility with keyboards rendered before desired-state callbacks.
+			b.toggleMultiDraft(key, optionID)
+		}
 		b.setChoiceEditing(key, true)
 		b.renderQuestionMode(ctx, chatID, studentID, messageID, state, nil, 0, true, "")
-		return
+		return true
 	case "multi-submit":
 		if state.Question.AnswerType != "multiple_choice" {
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		if state.SavedAnswer != nil && !b.isChoiceEditing(key) {
 			b.send(ctx, chatID, "Ответ уже сохранён. Нажмите «Изменить ответ», чтобы изменить выбор.")
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
-			return
+			return true
 		}
 		selected := orderedDraftSelection(state.Question.Options, b.multiDraftSelection(key))
 		if len(selected) == 0 {
 			b.send(ctx, chatID, "Сначала отметьте хотя бы один вариант, затем подтвердите выбор.")
-			return
+			return true
 		}
-		b.saveChoiceAnswer(ctx, updateID, chatID, studentID, messageID, state, selected)
-		return
+		return b.saveChoiceAnswer(ctx, updateID, chatID, studentID, messageID, state, selected)
 	}
+	return true
 }
 
-func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID, messageID int64, state service.NavigationState, selected []int64) {
+func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID, messageID int64, state service.NavigationState, selected []int64) bool {
 	answerService, ok := b.learning.(answerLearningService)
 	if !ok {
 		b.send(ctx, chatID, "Не удалось сохранить выбор. Попробуйте ещё раз.")
-		return
+		return true
 	}
 	enrollmentID := state.Progress.Enrollment.ID
 	questionID := state.Question.ID
@@ -347,7 +425,7 @@ func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID,
 		b.logger.Warn("не удалось сохранить выбор ответа", "student_id", studentID,
 			"enrollment_id", enrollmentID, "question_id", questionID, "error", err)
 		b.send(ctx, chatID, "Не удалось сохранить выбор. Ответ не принят; попробуйте подтвердить его ещё раз.")
-		return
+		return !isRetryableUpdateError(err)
 	}
 	b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: questionID})
 	var refreshed service.NavigationState
@@ -366,8 +444,8 @@ func (b *Bot) saveChoiceAnswer(ctx context.Context, updateID, chatID, studentID,
 		state = refreshed
 	}
 	b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, 0)
+	return true
 }
-
 func questionHasOption(options []domain.QuestionOption, selectedID int64) bool {
 	for _, option := range options {
 		if option.ID == selectedID {
