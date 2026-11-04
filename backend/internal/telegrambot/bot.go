@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	apiBaseURL       = "https://api.telegram.org"
-	longPollTimeout  = 30
-	httpRequestLimit       = 4 << 20
+	apiBaseURL               = "https://api.telegram.org"
+	longPollTimeout          = 30
+	httpRequestLimit         = 4 << 20
 	callbackAckCacheCapacity = 4096
 )
 
@@ -461,8 +461,8 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
 		studentReferrals: studentReferrals,
 		mainMessages:     make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
-		multiDrafts: make(map[answerStateKey]map[int64]struct{}),
-		callbackAckSeen: make(map[string]struct{}),
+		multiDrafts:      make(map[answerStateKey]map[int64]struct{}),
+		callbackAckSeen:  make(map[string]struct{}),
 		callbackAckOrder: make([]string, 0, callbackAckCacheCapacity),
 	}
 }
