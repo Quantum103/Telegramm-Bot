@@ -74,6 +74,26 @@ func (s *ConversationService) GetOrCreateForStudent(ctx context.Context, student
 	return s.store.GetOrCreateForStudent(ctx, studentID)
 }
 
+// EnsureForCurator returns the conversation for a student assigned to this
+// curator, creating it when an older assignment predates conversation creation.
+func (s *ConversationService) EnsureForCurator(ctx context.Context, curatorStaffID, studentID int64) (domain.Conversation, error) {
+	if curatorStaffID <= 0 || studentID <= 0 {
+		return domain.Conversation{}, domain.ErrInvalidInput
+	}
+	provisioner, ok := s.store.(interface {
+		GetOrCreateForCurator(context.Context, int64, int64) (domain.Conversation, error)
+	})
+	if !ok {
+		return domain.Conversation{}, domain.ErrInvalidState
+	}
+	conversation, err := provisioner.GetOrCreateForCurator(ctx, curatorStaffID, studentID)
+	if err != nil {
+		return domain.Conversation{}, err
+	}
+	s.PublishConversationChanged()
+	return conversation, nil
+}
+
 func (s *ConversationService) ListForCurator(ctx context.Context, curatorStaffID int64) ([]domain.ConversationSummary, error) {
 	if curatorStaffID <= 0 {
 		return nil, domain.ErrInvalidInput
