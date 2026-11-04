@@ -136,9 +136,9 @@ jobs:
         working-directory: backend
         run: go test ./internal/telegrambot -run 'TestUpdateWorkerPoolLoadProfiles|TestTelegramAPILoadProfiles|TestTelegramHTTPClientHandlesRateLimitServerFailureAndTimeout' -count=1 -v
 
-      - name: Run Telegram race tests
+      - name: Run race tests across all backend packages
         working-directory: backend
-        run: go test -race ./internal/telegrambot
+        run: go test -race ./...
 
       - name: Benchmark Telegram update worker pool
         working-directory: backend
