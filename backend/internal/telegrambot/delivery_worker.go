@@ -248,7 +248,11 @@ func (w *DeliveryWorker) deliver(ctx context.Context, delivery domain.Conversati
 		w.logger.Error("не удалось запланировать повтор Telegram-доставки",
 			"delivery_id", delivery.ID, "error_code", errorCode,
 			"error_kind", classifyTelegramAPIError(err), "error", markErr)
+		return
 	}
+	w.logger.Warn("повтор Telegram-доставки запланирован",
+		"delivery_id", delivery.ID, "error_code", errorCode,
+		"error_kind", classifyTelegramAPIError(err), "retry_after", retryAfter)
 }
 
 func nextAllowedNotificationTime(now time.Time, timezone, quietStart, quietEnd string) (time.Time, error) {

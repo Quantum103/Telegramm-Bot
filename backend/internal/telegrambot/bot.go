@@ -135,13 +135,16 @@ func classifyTelegramAPIError(err error) TelegramErrorKind {
 	if errors.As(err, &apiErr) {
 		description := strings.ToLower(apiErr.Description)
 		switch {
-		case strings.Contains(description, "message is not modified"):
+		case (apiErr.Code == http.StatusBadRequest || apiErr.HTTPStatus == http.StatusBadRequest) &&
+			strings.Contains(description, "message is not modified"):
 			return TelegramErrorMessageUnchanged
-		case strings.Contains(description, "message to edit not found"),
-			strings.Contains(description, "message not found"):
+		case (apiErr.Code == http.StatusBadRequest || apiErr.HTTPStatus == http.StatusBadRequest) &&
+			(strings.Contains(description, "message to edit not found") ||
+				strings.Contains(description, "message not found")):
 			return TelegramErrorMessageNotFound
-		case strings.Contains(description, "message can't be edited"),
-			strings.Contains(description, "message can not be edited"):
+		case (apiErr.Code == http.StatusBadRequest || apiErr.HTTPStatus == http.StatusBadRequest) &&
+			(strings.Contains(description, "message can't be edited") ||
+				strings.Contains(description, "message can not be edited")):
 			return TelegramErrorMessageNotEditable
 		case apiErr.Code == http.StatusTooManyRequests || apiErr.HTTPStatus == http.StatusTooManyRequests:
 			return TelegramErrorRateLimited
@@ -333,6 +336,9 @@ func (c *HTTPClient) call(ctx context.Context, method string, payload any, resul
 
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, httpRequestLimit))
 	if err != nil {
+		if requestCtx.Err() != nil {
+			return requestCtx.Err()
+		}
 		return errors.New("не удалось прочитать ответ Telegram Bot API")
 	}
 
