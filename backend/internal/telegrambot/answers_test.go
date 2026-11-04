@@ -498,4 +498,3 @@ func TestMultiChoiceCallbackRedeliveryDoesNotToggleOptionOff(t *testing.T) {
 		t.Fatalf("callback acknowledgement calls = %d, want 2 for the two deliveries", len(api.fakeAPI.answered))
 	}
 }
-
