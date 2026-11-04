@@ -50,7 +50,8 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 		}
 		return id
 	}
-	studentID = createStudent(time.Now().UnixNano(), "student-assigned")
+	studentTelegramID := time.Now().UnixNano()
+	studentID = createStudent(studentTelegramID, "student-assigned")
 	otherStudentID = createStudent(time.Now().UnixNano()+1, "student-not-assigned")
 
 	t.Cleanup(func() {
@@ -61,6 +62,31 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 		}
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM student_curator_assignments WHERE student_id IN ($1, $2)", studentID, otherStudentID); err != nil {
 			t.Errorf("очистить назначения кураторов: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM conversation_message_reads read_mark
+			USING conversations conversation
+			WHERE read_mark.conversation_id = conversation.id
+			  AND conversation.student_id IN ($1, $2)
+		`, studentID, otherStudentID); err != nil {
+			t.Errorf("очистить отметки прочтения тестовых диалогов: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM conversation_message_deliveries delivery
+			USING conversation_messages message, conversations conversation
+			WHERE delivery.message_id = message.id
+			  AND message.conversation_id = conversation.id
+			  AND conversation.student_id IN ($1, $2)
+		`, studentID, otherStudentID); err != nil {
+			t.Errorf("очистить доставки тестовых сообщений: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM conversation_messages message
+			USING conversations conversation
+			WHERE message.conversation_id = conversation.id
+			  AND conversation.student_id IN ($1, $2)
+		`, studentID, otherStudentID); err != nil {
+			t.Errorf("очистить сообщения тестовых диалогов: %v", err)
 		}
 		if _, err := pool.Exec(cleanupCtx, `
 			DELETE FROM conversation_participants participant
@@ -115,6 +141,22 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 	}
 	if studentParticipants != 1 || curatorParticipants != 1 {
 		t.Fatalf("новый диалог должен сразу включать ученика и куратора: student=%d curator=%d", studentParticipants, curatorParticipants)
+	}
+	firstReply, err := conversationRepo.SendCuratorMessage(ctx, firstCuratorID, conversationID, "Здравствуйте! Это первое сообщение куратора.")
+	if err != nil {
+		t.Fatalf("куратор должен иметь возможность написать первым в пустом диалоге: %v", err)
+	}
+	var deliveryStatus string
+	var recipientChatID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT delivery_status, recipient_chat_id
+		FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'telegram'
+	`, firstReply.ID).Scan(&deliveryStatus, &recipientChatID); err != nil {
+		t.Fatalf("получить Telegram-доставку первого сообщения куратора: %v", err)
+	}
+	if deliveryStatus != "pending" || recipientChatID != studentTelegramID { 
+		t.Fatalf("первое сообщение куратора должно быть поставлено в Telegram outbox: status=%s recipient=%d", deliveryStatus, recipientChatID)
 	}
 	firstView, err := repo.ListStudentsForStaff(ctx, firstCuratorID)
 	if err != nil {
