@@ -146,16 +146,6 @@ func scanStudentWithActivityDue(row pgx.Row) (Student, bool, error) {
 	return student, activityDue, nil
 }
 
-func normalizeOptionalString(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	normalized := strings.TrimSpace(*value)
-	if normalized == "" {
-		return nil
-	}
-	return &normalized
-}
 
 func sameOptionalString(left, right *string) bool {
 	if left == nil || right == nil {
