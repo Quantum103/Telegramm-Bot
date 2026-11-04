@@ -24,6 +24,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const appShutdownTimeout = 40 * time.Second
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
@@ -220,7 +222,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	cancelApp()
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), appShutdownTimeout)
 	defer cancelShutdown()
 
 	shutdownErr := server.Shutdown(shutdownCtx)
