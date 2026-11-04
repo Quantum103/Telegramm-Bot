@@ -694,6 +694,19 @@ func (b *Bot) handleStaffLinkCommand(ctx context.Context, chatID int64, user Use
 	}
 	account, err := b.staffTelegram.BindTelegramAccount(ctx, user.ID, user.Username, fields[1])
 	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidInput) {
+		// The first attempt may have committed the binding and consumed the
+		// one-time token before the polling offset was advanced. Recognize that
+		// replay instead of telling the already-linked employee that the token
+		// merely expired.
+		linked, lookupErr := b.staffTelegram.FindByTelegramID(ctx, user.ID)
+		if lookupErr == nil && linked.AccountStatus == "active" && (linked.IsCurator || linked.IsAdministrator) {
+			b.send(ctx, chatID, "Telegram уже привязан к учётной записи «"+linked.DisplayName+"». Повторный запрос не изменил привязку.")
+			return true
+		}
+		if lookupErr != nil && !errors.Is(lookupErr, domain.ErrNotFound) {
+			b.logger.Error("не удалось проверить повторную Telegram-привязку", "telegram_user_id", user.ID, "error", lookupErr)
+			return !isRetryableUpdateError(lookupErr)
+		}
 		b.send(ctx, chatID, "Код привязки недействителен или истёк. Создайте новый код в веб-панели.")
 		return true
 	}
