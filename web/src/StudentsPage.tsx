@@ -483,7 +483,7 @@ export default function StudentsPage({
         '',
         'Давайте обсудим это в чате.',
       ]
-      onOpenConversation(conversation.id, lines.join('\\n').slice(0, 3800))
+      onOpenConversation(conversation.id, lines.join('\n').slice(0, 3800))
     } catch (reason: unknown) {
       const message = messageOf(reason, 'Не удалось открыть диалог с учеником.')
       setError(message)
