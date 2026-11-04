@@ -190,7 +190,7 @@ func run(logger *slog.Logger) error {
 		}
 		bot := telegrambot.NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferrals(
 			telegramAPI, studentService, catalogService, learningService,
-			logger, chapterPublisher, conversationService, staffTelegramService, studentReferralService,
+			logger, chapterPublisher, conversationService, staffTelegramService, staffReferralService,
 		)
 		if err := bot.ConfigureUpdateWorkerPool(cfg.TelegramUpdateWorkers, cfg.TelegramUpdateQueueCapacity); err != nil {
 			close(botDone)
