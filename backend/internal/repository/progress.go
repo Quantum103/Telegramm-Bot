@@ -203,8 +203,8 @@ func getProgress(ctx context.Context, queryer progressQueryRower, studentID, enr
 	return progress, nil
 }
 
-// Complete фиксирует завершение только после сохранения ответа на каждый вопрос.
-// Результат смысловой проверки не подменяется количеством отправленных ответов.
+// Complete фиксирует отправку урока после сохранения ответа на каждый вопрос.
+// Для режима curator проверка ответов выполняется отдельно после отправки.
 func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollmentID int64) (Enrollment, error) {
 	if studentID <= 0 || enrollmentID <= 0 {
 		return Enrollment{}, ErrInvalidInput
@@ -277,29 +277,6 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, studentID, enrollme
 	}
 	if totalQuestions == 0 || answeredQuestions != totalQuestions {
 		return Enrollment{}, ErrInvalidState
-	}
-	if enrollment.Mode == "curator" {
-		var unapprovedQuestions int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*)::INTEGER
-			FROM lesson_questions q
-			LEFT JOIN LATERAL (
-				SELECT aa.id
-				FROM answer_attempts aa
-				WHERE aa.enrollment_id = $1 AND aa.question_id = q.id
-				ORDER BY aa.created_at DESC, aa.id DESC
-				LIMIT 1
-			) latest ON TRUE
-			LEFT JOIN answer_attempt_reviews review
-			  ON review.answer_attempt_id = latest.id
-			WHERE q.lesson_version_id = $2
-			  AND (latest.id IS NULL OR review.decision IS DISTINCT FROM 'approved')
-		`, enrollmentID, enrollment.LessonVersionID).Scan(&unapprovedQuestions); err != nil {
-			return Enrollment{}, mapDatabaseError("проверить решения куратора перед завершением урока", err)
-		}
-		if unapprovedQuestions > 0 {
-			return Enrollment{}, ErrInvalidState
-		}
 	}
 
 	enrollment, err = scanEnrollment(tx.QueryRow(ctx, `
