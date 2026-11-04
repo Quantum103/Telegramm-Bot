@@ -62,6 +62,17 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM student_curator_assignments WHERE student_id IN ($1, $2)", studentID, otherStudentID); err != nil {
 			t.Errorf("очистить назначения кураторов: %v", err)
 		}
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM conversation_participants participant
+			USING conversations conversation
+			WHERE participant.conversation_id = conversation.id
+			  AND conversation.student_id IN ($1, $2)
+		`, studentID, otherStudentID); err != nil {
+			t.Errorf("очистить участников тестовых диалогов: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM conversations WHERE student_id IN ($1, $2)", studentID, otherStudentID); err != nil {
+			t.Errorf("очистить тестовые диалоги: %v", err)
+		}
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_role_assignments WHERE staff_id IN ($1, $2, $3)", adminID, firstCuratorID, secondCuratorID); err != nil {
 			t.Errorf("очистить роли тестовых сотрудников: %v", err)
 		}
@@ -77,6 +88,34 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 	if err := repo.AssignStudentCurator(ctx, adminID, studentID, firstCuratorID); err != nil {
 		t.Fatalf("первое назначение куратора: %v", err)
 	}
+	conversationRepo := NewConversationRepository(pool)
+	firstDialogs, err := conversationRepo.ListForCurator(ctx, firstCuratorID)
+	if err != nil {
+		t.Fatalf("получить диалоги сразу после назначения: %v", err)
+	}
+	if len(firstDialogs) != 1 || firstDialogs[0].StudentID != studentID {
+		t.Fatalf("диалог должен появиться у куратора сразу после назначения, получено: %+v", firstDialogs)
+	}
+	conversationID := firstDialogs[0].ID
+	firstMessages, err := conversationRepo.ListMessagesForCurator(ctx, firstCuratorID, conversationID, 0, 50)
+	if err != nil {
+		t.Fatalf("открыть пустой диалог до первого сообщения ученика: %v", err)
+	}
+	if len(firstMessages) != 0 {
+		t.Fatalf("новый диалог должен быть пустым до первого сообщения: %+v", firstMessages)
+	}
+	var studentParticipants, curatorParticipants int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE student_id = $2),
+		       count(*) FILTER (WHERE staff_id = $3 AND left_at IS NULL)
+		FROM conversation_participants
+		WHERE conversation_id = $1
+	`, conversationID, studentID, firstCuratorID).Scan(&studentParticipants, &curatorParticipants); err != nil {
+		t.Fatalf("проверить участников нового диалога: %v", err)
+	}
+	if studentParticipants != 1 || curatorParticipants != 1 {
+		t.Fatalf("новый диалог должен сразу включать ученика и куратора: student=%d curator=%d", studentParticipants, curatorParticipants)
+	}
 	firstView, err := repo.ListStudentsForStaff(ctx, firstCuratorID)
 	if err != nil {
 		t.Fatalf("получить учеников первого куратора: %v", err)
@@ -86,6 +125,20 @@ func TestStudentCuratorAssignmentScopesStudentsAndTransfersAtomically(t *testing
 	}
 	if err := repo.AssignStudentCurator(ctx, adminID, studentID, secondCuratorID); err != nil {
 		t.Fatalf("перевести ученика второму куратору: %v", err)
+	}
+	firstDialogs, err = conversationRepo.ListForCurator(ctx, firstCuratorID)
+	if err != nil {
+		t.Fatalf("получить диалоги прежнего куратора после передачи: %v", err)
+	}
+	if len(firstDialogs) != 0 {
+		t.Fatalf("прежний куратор сохранил доступ к диалогу после передачи: %+v", firstDialogs)
+	}
+	secondDialogs, err := conversationRepo.ListForCurator(ctx, secondCuratorID)
+	if err != nil {
+		t.Fatalf("получить диалоги нового куратора после передачи: %v", err)
+	}
+	if len(secondDialogs) != 1 || secondDialogs[0].ID != conversationID || secondDialogs[0].StudentID != studentID {
+		t.Fatalf("при передаче должен сохраниться тот же диалог и появиться у нового куратора: %+v", secondDialogs)
 	}
 	firstView, err = repo.ListStudentsForStaff(ctx, firstCuratorID)
 	if err != nil {
