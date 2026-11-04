@@ -372,7 +372,11 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 				if question.AnswerType == "single_choice" {
 					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("p:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
 				} else {
-					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("t:%d:%d:%d", progress.Enrollment.ID, question.ID, option.ID))})
+					desiredSelected := "1"
+					if _, isSelected := selectedSet[option.ID]; isSelected {
+						desiredSelected = "0"
+					}
+					rows = append(rows, []InlineKeyboardButton{button(label, fmt.Sprintf("t:%d:%d:%d:%s", progress.Enrollment.ID, question.ID, option.ID, desiredSelected))})
 				}
 			}
 			if question.AnswerType == "multiple_choice" {
