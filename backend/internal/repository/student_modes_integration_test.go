@@ -136,10 +136,10 @@ func TestStudentModesRemainExclusiveUnderConcurrentSwitches(t *testing.T) {
 }
 
 type studentModeState struct {
-	xmin         string
-	chatEnabled  bool
+	xmin          string
+	chatEnabled   bool
 	lessonEnabled bool
-	updatedAt    time.Time
+	updatedAt     time.Time
 }
 
 func readStudentModeState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, studentID int64) studentModeState {
