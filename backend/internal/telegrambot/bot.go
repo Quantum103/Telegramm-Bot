@@ -37,10 +37,11 @@ type Chat struct {
 }
 
 type Message struct {
-	MessageID int64  `json:"message_id"`
-	From      *User  `json:"from"`
-	Chat      Chat   `json:"chat"`
-	Text      string `json:"text"`
+	MessageID   int64                `json:"message_id"`
+	From        *User                `json:"from"`
+	Chat        Chat                 `json:"chat"`
+	Text        string               `json:"text"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 type InlineKeyboardButton struct {
@@ -501,6 +502,28 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 }
 
+func isRetryableUpdateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, terminal := range []error{
+		domain.ErrNotFound,
+		domain.ErrConflict,
+		domain.ErrInvalidInput,
+		domain.ErrInvalidState,
+		domain.ErrNoPreviousQuestion,
+		domain.ErrNoNextQuestion,
+		domain.ErrActiveCourse,
+		domain.ErrNoCurator,
+		domain.ErrLegacyProgress,
+	} {
+		if errors.Is(err, terminal) {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 	backoff := time.Second
 	var me User
@@ -545,8 +568,7 @@ func (b *Bot) waitForAPI(ctx context.Context) (User, error) {
 
 func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 	if update.CallbackQuery != nil {
-		b.handleCallbackWithUpdateID(ctx, update.UpdateID, *update.CallbackQuery)
-		return true
+		return b.handleCallbackWithUpdateID(ctx, update.UpdateID, *update.CallbackQuery)
 	}
 	message := update.Message
 	if message == nil || message.From == nil || message.From.ID <= 0 || message.Chat.ID <= 0 {
@@ -585,8 +607,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) bool {
 				return b.handleStudentConversationText(ctx, student, *message, trimmedText)
 			}
 		}
-		b.handleTextAnswer(ctx, update.UpdateID, *message.From, *message, trimmedText)
-		return true
+		return b.handleTextAnswer(ctx, update.UpdateID, *message.From, *message, trimmedText)
 	}
 
 	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
