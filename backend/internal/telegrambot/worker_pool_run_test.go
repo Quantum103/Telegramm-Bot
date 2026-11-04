@@ -243,3 +243,63 @@ func TestBotConcurrentSharedStateAccess(t *testing.T) {
 		t.Fatalf("knownMainMessage(1) = %d, want a positive message ID", got)
 	}
 }
+
+func TestBotConfigureUpdateWorkerPoolValidatesLimits(t *testing.T) {
+	bot := NewBot(nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := bot.ConfigureUpdateWorkerPool(3, 24); err != nil {
+		t.Fatalf("ConfigureUpdateWorkerPool() error = %v", err)
+	}
+	if bot.updateWorkerCount != 3 || bot.updateQueueCapacity != 24 {
+		t.Fatalf("configured pool = (%d workers, queue %d), want (3, 24)",
+			bot.updateWorkerCount, bot.updateQueueCapacity)
+	}
+
+	for _, test := range []struct {
+		name    string
+		workers int
+		queue   int
+	}{
+		{name: "zero workers", workers: 0, queue: 1},
+		{name: "too many workers", workers: 33, queue: 1},
+		{name: "zero queue", workers: 1, queue: 0},
+		{name: "too large queue", workers: 1, queue: 257},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := bot.ConfigureUpdateWorkerPool(test.workers, test.queue); err == nil {
+				t.Fatal("ConfigureUpdateWorkerPool() error = nil, want validation error")
+			}
+		})
+	}
+}
+
+func BenchmarkUpdateWorkerPoolParallel(b *testing.B) {
+	pool, err := NewUpdateWorkerPool(context.Background(), 4, 16, func(context.Context, Update) bool {
+		return true
+	})
+	if err != nil {
+		b.Fatalf("NewUpdateWorkerPool() error = %v", err)
+	}
+	defer func() {
+		pool.Close()
+		pool.Wait()
+	}()
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		var sequence int64
+		for pb.Next() {
+			sequence++
+			update := workerPoolMessageUpdate(sequence, sequence%64+1)
+			result, err := pool.Submit(context.Background(), update)
+			if err != nil {
+				b.Errorf("Submit() error = %v", err)
+				return
+			}
+			processed, ok := <-result
+			if !ok || !processed {
+				b.Error("worker pool did not process submitted update")
+				return
+			}
+		}
+	})
+}
