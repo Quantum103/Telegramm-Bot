@@ -154,6 +154,30 @@ func (h handlers) staffCuratorMiddleware(next http.Handler) http.Handler {
 	return h.staffSessionMiddleware(roleChecked)
 }
 
+type curatorConversationEnsurer interface {
+	EnsureForCurator(context.Context, int64, int64) (domain.Conversation, error)
+}
+
+func (h handlers) staffEnsureStudentConversation(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	identity := staffIdentityFromRequest(r)
+	studentID, ok := parsePositiveID(w, r.PathValue("studentID"))
+	if !ok {
+		return
+	}
+	ensurer, ok := h.conversations.(curatorConversationEnsurer)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "conversation_provisioning_unavailable"})
+		return
+	}
+	conversation, err := ensurer.EnsureForCurator(r.Context(), identity.StaffID, studentID)
+	if err != nil {
+		h.writeAPIError(w, err, "создать или получить диалог ученика")
+		return
+	}
+	writeJSON(w, http.StatusOK, conversation)
+}
+
 func (h handlers) staffListConversations(w http.ResponseWriter, r *http.Request) {
 	setNoStoreHeaders(w)
 	identity := staffIdentityFromRequest(r)
