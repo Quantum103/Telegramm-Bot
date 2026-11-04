@@ -166,3 +166,99 @@ func telegramLatencyPercentiles(samples []time.Duration) map[string]float64 {
 	}
 	return map[string]float64{"p50": quantile(0.50), "p95": quantile(0.95), "p99": quantile(0.99)}
 }
+
+func TestUpdateWorkerPoolLoadProfiles(t *testing.T) {
+	const operationsPerStudent = 100
+	for _, students := range []int{1, 5, 10} {
+		pool, err := NewUpdateWorkerPool(context.Background(), 4, 16, func(ctx context.Context, _ Update) bool {
+			timer := time.NewTimer(time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return false
+			case <-timer.C:
+				return true
+			}
+		})
+		if err != nil {
+			t.Fatalf("создать worker pool для %d учеников: %v", students, err)
+		}
+
+		startGate := make(chan struct{})
+		results := make([][]time.Duration, students)
+		errorsByStudent := make(chan error, students)
+		var workers sync.WaitGroup
+		workers.Add(students)
+		startedAt := time.Now()
+		for index := 0; index < students; index++ {
+			index := index
+			go func() {
+				defer workers.Done()
+				local := make([]time.Duration, 0, operationsPerStudent)
+				chatID := int64(2000 + index)
+				<-startGate
+				for operation := 0; operation < operationsPerStudent; operation++ {
+					update := Update{
+						UpdateID: int64(100000 + index*operationsPerStudent + operation),
+						Message:  &Message{Chat: Chat{ID: chatID, Type: "private"}},
+					}
+					requestStartedAt := time.Now()
+					result, submitErr := pool.Submit(context.Background(), update)
+					if submitErr != nil {
+						errorsByStudent <- fmt.Errorf("ученик %d, update %d: Submit: %w", index+1, operation+1, submitErr)
+						break
+					}
+					select {
+					case processed, ok := <-result:
+						local = append(local, time.Since(requestStartedAt))
+						if !ok || !processed {
+							errorsByStudent <- fmt.Errorf("ученик %d, update %d: обработчик не подтвердил update", index+1, operation+1)
+							results[index] = local
+							return
+						}
+					case <-time.After(5 * time.Second):
+						errorsByStudent <- fmt.Errorf("ученик %d, update %d: timeout ожидания worker pool", index+1, operation+1)
+						results[index] = local
+						return
+					}
+				}
+				results[index] = local
+			}()
+		}
+		close(startGate)
+		workers.Wait()
+		elapsed := time.Since(startedAt)
+		pool.Close()
+		pool.Wait()
+
+		select {
+		case loadErr := <-errorsByStudent:
+			t.Fatalf("worker pool профиль %d учеников завершился с ошибкой: %v", students, loadErr)
+		default:
+		}
+
+		latencies := make([]time.Duration, 0, students*operationsPerStudent)
+		for _, values := range results {
+			latencies = append(latencies, values...)
+		}
+		if len(latencies) != students*operationsPerStudent {
+			t.Fatalf("worker pool профиль %d учеников: завершено %d из %d updates",
+				students, len(latencies), students*operationsPerStudent)
+		}
+		report := map[string]any{
+			"students":                       students,
+			"workers":                        4,
+			"queue_capacity_per_worker":      16,
+			"updates":                        len(latencies),
+			"simulated_handler_work_ms":      1,
+			"elapsed_ms":                     float64(elapsed) / float64(time.Millisecond),
+			"throughput_updates_per_second":  float64(len(latencies)) / elapsed.Seconds(),
+			"queue_and_handler_latency_ms":   telegramLatencyPercentiles(latencies),
+		}
+		encoded, err := json.Marshal(report)
+		if err != nil {
+			t.Fatalf("сериализовать worker pool профиль: %v", err)
+		}
+		t.Logf("TELEGRAM_WORKER_POOL_LOAD_PROFILE %s", encoded)
+	}
+}
