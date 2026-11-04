@@ -271,10 +271,19 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 				WHERE review_lesson.course_enrollment_id = ce.id
 			) AS review_totals ON TRUE
 			WHERE ce.student_id = student.id
-			  AND ce.status IN ('in_progress', 'awaiting_curator', 'paused')
+			  AND (
+			      ce.status IN ('in_progress', 'awaiting_curator', 'paused')
+			      OR (
+			          ce.status = 'completed'
+			          AND ce.mode = 'curator'
+			          AND COALESCE(review_totals.pending_reviews, 0) > 0
+			      )
+			  )
 			GROUP BY ce.id, course.title, review_totals.pending_reviews,
 			         review_totals.needs_revision, review_totals.needs_revision_answers
-			ORDER BY ce.updated_at DESC, ce.id DESC
+			ORDER BY
+			    CASE WHEN ce.status = 'completed' THEN 0 ELSE 1 END,
+			    ce.updated_at DESC, ce.id DESC
 			LIMIT 1
 		) AS active_course ON TRUE
 		WHERE ($2::BOOLEAN = TRUE OR current_assignment.curator_staff_id = $1)
