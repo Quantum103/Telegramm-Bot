@@ -2,10 +2,11 @@ package repository
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestStudentModeSettersSkipUnchangedRowsAndRemainExclusive(t *testing.T) {
@@ -141,9 +142,7 @@ type studentModeState struct {
 	updatedAt    time.Time
 }
 
-func readStudentModeState(t *testing.T, ctx context.Context, pool interface {
-	QueryRow(context.Context, string, ...any) interface{ Scan(...any) error }
-}, studentID int64) studentModeState {
+func readStudentModeState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, studentID int64) studentModeState {
 	t.Helper()
 	var state studentModeState
 	if err := pool.QueryRow(ctx, `
@@ -164,4 +163,3 @@ func assertStudentModeStateUnchanged(t *testing.T, before, after studentModeStat
 	}
 }
 
-var _ = fmt.Sprintf
