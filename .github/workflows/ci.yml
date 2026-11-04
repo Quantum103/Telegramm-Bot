@@ -86,6 +86,10 @@ jobs:
         working-directory: backend
         run: go test ./...
 
+      - name: Run Telegram race tests
+        working-directory: backend
+        run: go test -race ./internal/telegrambot
+
       - name: Benchmark Telegram navigation and student interaction
         working-directory: backend
         run: go test ./internal/repository -run '^$' -bench '^(BenchmarkQuestionNavigationPaths|BenchmarkStudentInteractionExitQueries)$' -benchtime=30x -count=1
