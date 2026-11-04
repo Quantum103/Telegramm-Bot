@@ -35,7 +35,10 @@ func integrationRedisClient(t *testing.T) *redis.Client {
 }
 func uniqueLimiterIdentity(t *testing.T) (string, string) {
 	t.Helper()
-	return "198.51.100.77", fmt.Sprintf("test-%d-%s@example.test", time.Now().UnixNano(), strings.ReplaceAll(t.Name(), "/", "-"))
+	nonce := uint64(time.Now().UnixNano())
+	ip := fmt.Sprintf("127.0.%d.%d", byte(nonce>>8), byte(nonce))
+	email := fmt.Sprintf("test-%d-%s@example.test", nonce, strings.ReplaceAll(t.Name(), "/", "-"))
+	return ip, email
 }
 func TestRedisStaffLoginLimiterSharesFailureCountsAcrossClients(t *testing.T) {
 	clientA, clientB := integrationRedisClient(t), integrationRedisClient(t)

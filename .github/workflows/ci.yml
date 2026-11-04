@@ -50,6 +50,7 @@ jobs:
           --health-retries 20
     env:
       TEST_DATABASE_URL: postgres://bible_app:ci-only-password@127.0.0.1:5432/bible_platform_test?sslmode=disable
+      UPGRADE_DATABASE_URL: postgres://bible_app:ci-only-password@127.0.0.1:5432/bible_platform_upgrade_test?sslmode=disable
       TEST_REDIS_ADDR: 127.0.0.1:6379
     steps:
       - name: Checkout repository
@@ -71,6 +72,44 @@ jobs:
           -database "$TEST_DATABASE_URL"
           up
 
+      - name: Verify data-preserving migration upgrade (schema v11 to latest)
+        run: |
+          set -euo pipefail
+
+          docker run --rm --network host postgres:18-alpine \
+            psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE bible_platform_upgrade_test"
+
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 \
+            -path=/migrations -database "$UPGRADE_DATABASE_URL" goto 11
+
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/testdata:/fixtures:ro" \
+            postgres:18-alpine psql "$UPGRADE_DATABASE_URL" \
+            -v ON_ERROR_STOP=1 -f /fixtures/migration_upgrade_seed_v11.sql
+
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 \
+            -path=/migrations -database "$UPGRADE_DATABASE_URL" goto 13
+
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/testdata:/fixtures:ro" \
+            postgres:18-alpine psql "$UPGRADE_DATABASE_URL" \
+            -v ON_ERROR_STOP=1 -f /fixtures/migration_upgrade_referral_v13.sql
+
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 \
+            -path=/migrations -database "$UPGRADE_DATABASE_URL" up
+
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/testdata:/fixtures:ro" \
+            postgres:18-alpine psql "$UPGRADE_DATABASE_URL" \
+            -v ON_ERROR_STOP=1 -f /fixtures/migration_upgrade_assert_v15.sql
+
       - name: Check Go formatting
         working-directory: backend
         run: |
@@ -86,9 +125,20 @@ jobs:
         working-directory: backend
         run: go test ./...
 
-      - name: Run Telegram race tests
+      - name: Run PostgreSQL navigation load profiles (1/5/10 students)
         working-directory: backend
-        run: go test -race ./internal/telegrambot
+        env:
+          RUN_LOAD_PROFILE: "1"
+          LOAD_PROFILE_ITERATIONS: "1000"
+        run: go test ./internal/repository -run TestQuestionNavigationLoadProfiles -count=1 -v
+
+      - name: Run Telegram fake API load and failure profiles
+        working-directory: backend
+        run: go test ./internal/telegrambot -run 'TestUpdateWorkerPoolLoadProfiles|TestTelegramAPILoadProfiles|TestTelegramHTTPClientHandlesRateLimitServerFailureAndTimeout' -count=1 -v
+
+      - name: Run race tests across all backend packages
+        working-directory: backend
+        run: go test -race ./...
 
       - name: Benchmark Telegram update worker pool
         working-directory: backend

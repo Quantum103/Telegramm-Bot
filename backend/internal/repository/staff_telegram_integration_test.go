@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestStaffTelegramBindingUsesSingleUseTokenAndDetectsInactiveAccount(t *test
 	if _, err := repo.FindByTelegramID(ctx, telegramID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("непривязанный Telegram ID должен быть неизвестен: %v", err)
 	}
-	tokenHash := sha256.Sum256([]byte("stage4-single-use-token"))
+	tokenHash := sha256.Sum256([]byte(fmt.Sprintf("stage4-single-use-token-%d", time.Now().UnixNano())))
 	if err := repo.IssueLinkToken(ctx, fixture.curator1ID, tokenHash, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("выдать одноразовый токен: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestAdministratorCanLinkTelegramForEscalations(t *testing.T) {
 	fixture := createConversationFixture(t, pool, true)
 	repo := NewStaffTelegramRepository(pool)
 	telegramID := fixture.telegramID + 9100
-	tokenHash := sha256.Sum256([]byte("stage5-admin-single-use-token"))
+	tokenHash := sha256.Sum256([]byte(fmt.Sprintf("stage5-admin-single-use-token-%d", time.Now().UnixNano())))
 	if err := repo.IssueLinkToken(ctx, fixture.adminID, tokenHash, time.Now().Add(5*time.Minute)); err != nil {
 		t.Fatalf("администратору должен выдаваться код привязки Telegram: %v", err)
 	}
