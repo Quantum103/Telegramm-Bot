@@ -11,19 +11,19 @@ import (
 
 // Config содержит настройки HTTP-сервера, Telegram-бота и подключения к PostgreSQL.
 type Config struct {
-	HTTPAddr                   string
-	HTTPReadTimeout            time.Duration
-	HTTPReadHeaderTimeout      time.Duration
-	HTTPWriteTimeout           time.Duration
-	HTTPIdleTimeout            time.Duration
-	TelegramBotToken           string
-	TelegramUpdateWorkers      int
+	HTTPAddr                    string
+	HTTPReadTimeout             time.Duration
+	HTTPReadHeaderTimeout       time.Duration
+	HTTPWriteTimeout            time.Duration
+	HTTPIdleTimeout             time.Duration
+	TelegramBotToken            string
+	TelegramUpdateWorkers       int
 	TelegramUpdateQueueCapacity int
-	CuratorReminderFirstAfter  time.Duration
-	CuratorReminderSecondAfter time.Duration
-	CuratorEscalationAfter     time.Duration
-	Database                   DatabaseConfig
-	Redis                      RedisConfig
+	CuratorReminderFirstAfter   time.Duration
+	CuratorReminderSecondAfter  time.Duration
+	CuratorEscalationAfter      time.Duration
+	Database                    DatabaseConfig
+	Redis                       RedisConfig
 }
 
 type RedisConfig struct {
