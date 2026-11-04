@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestEnsureByTelegramIDOnlyWritesWhenNeeded(t *testing.T) {
@@ -222,9 +224,7 @@ type studentWriteState struct {
 	lastActiveAt time.Time
 }
 
-func readStudentWriteState(t *testing.T, ctx context.Context, pool interface {
-	QueryRow(context.Context, string, ...any) interface{ Scan(...any) error }
-}, studentID int64) studentWriteState {
+func readStudentWriteState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, studentID int64) studentWriteState {
 	t.Helper()
 	var state studentWriteState
 	if err := pool.QueryRow(ctx, `
