@@ -72,12 +72,12 @@ func TestTelegramAPILoadProfiles(t *testing.T) {
 				students, len(latencies), students*operationsPerStudent)
 		}
 		report := map[string]any{
-			"students": students,
-			"requests": len(latencies),
-			"elapsed_ms": float64(elapsed) / float64(time.Millisecond),
+			"students":                       students,
+			"requests":                       len(latencies),
+			"elapsed_ms":                     float64(elapsed) / float64(time.Millisecond),
 			"throughput_requests_per_second": float64(len(latencies)) / elapsed.Seconds(),
-			"latency_ms": telegramLatencyPercentiles(latencies),
-			"fake_api_requests_total": requests.Load(),
+			"latency_ms":                     telegramLatencyPercentiles(latencies),
+			"fake_api_requests_total":        requests.Load(),
 		}
 		encoded, err := json.Marshal(report)
 		if err != nil {
@@ -89,21 +89,21 @@ func TestTelegramAPILoadProfiles(t *testing.T) {
 
 func TestTelegramHTTPClientHandlesRateLimitServerFailureAndTimeout(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     int
-		body       string
-		delay      time.Duration
-		timeout    time.Duration
-		wantKind   TelegramErrorKind
+		name     string
+		status   int
+		body     string
+		delay    time.Duration
+		timeout  time.Duration
+		wantKind TelegramErrorKind
 	}{
 		{
 			name: "rate limited", status: http.StatusTooManyRequests,
-			body: `{"ok":false,"error_code":429,"description":"Too Many Requests"}`,
+			body:     `{"ok":false,"error_code":429,"description":"Too Many Requests"}`,
 			wantKind: TelegramErrorRateLimited,
 		},
 		{
 			name: "server failure", status: http.StatusInternalServerError,
-			body: `{"ok":false,"error_code":500,"description":"Internal Server Error"}`,
+			body:     `{"ok":false,"error_code":500,"description":"Internal Server Error"}`,
 			wantKind: TelegramErrorServerFailure,
 		},
 		{
