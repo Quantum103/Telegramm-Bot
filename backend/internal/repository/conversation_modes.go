@@ -11,24 +11,52 @@ func (r *ConversationRepository) SetStudentChatMode(ctx context.Context, student
 	if studentID <= 0 {
 		return ErrInvalidInput
 	}
-	tag, err := r.pool.Exec(ctx, `
-		INSERT INTO student_chat_modes (student_id, chat_mode_enabled, lesson_mode_enabled)
-		SELECT id, $2, FALSE FROM students
-		WHERE id = $1 AND account_status = 'active'
-		ON CONFLICT (student_id) DO UPDATE
-		SET chat_mode_enabled = EXCLUDED.chat_mode_enabled,
-		    lesson_mode_enabled = CASE
-		        WHEN EXCLUDED.chat_mode_enabled THEN FALSE
-		        ELSE student_chat_modes.lesson_mode_enabled
-		    END,
-		    updated_at = now()
-	`, studentID, enabled)
+
+	var active bool
+	err := r.pool.QueryRow(ctx, `
+		WITH eligible_student AS MATERIALIZED (
+			SELECT id
+			FROM students
+			WHERE id = $1 AND account_status = 'active'
+		),
+		mode_upsert AS (
+			INSERT INTO student_chat_modes (student_id, chat_mode_enabled, lesson_mode_enabled)
+			SELECT id, $2, FALSE
+			FROM eligible_student
+			WHERE $2 OR EXISTS (
+				SELECT 1 FROM student_chat_modes WHERE student_id = eligible_student.id
+			)
+			ON CONFLICT (student_id) DO UPDATE
+			SET chat_mode_enabled = EXCLUDED.chat_mode_enabled,
+			    lesson_mode_enabled = CASE
+			        WHEN EXCLUDED.chat_mode_enabled THEN FALSE
+			        ELSE student_chat_modes.lesson_mode_enabled
+			    END,
+			    updated_at = now()
+			WHERE (
+				student_chat_modes.chat_mode_enabled,
+				student_chat_modes.lesson_mode_enabled
+			) IS DISTINCT FROM (
+				EXCLUDED.chat_mode_enabled,
+				CASE
+					WHEN EXCLUDED.chat_mode_enabled THEN FALSE
+					ELSE student_chat_modes.lesson_mode_enabled
+				END
+			)
+			RETURNING student_id
+		)
+		SELECT EXISTS (SELECT 1 FROM eligible_student)
+		FROM (SELECT count(*) FROM mode_upsert) AS applied
+	`, studentID, enabled).Scan(&active)
 	if err != nil {
 		return mapDatabaseError("сохранить режим общения ученика", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if !active {
 		return ErrNotFound
 	}
+
+	// Сохраняем прежний побочный эффект и для повторного включения режима:
+	// отложенные ответы куратора должны быть разбужены независимо от UPDATE.
 	if enabled {
 		return r.wakeStudentCuratorReplies(ctx, studentID)
 	}
@@ -42,24 +70,52 @@ func (r *ConversationRepository) SetStudentLessonMode(ctx context.Context, stude
 	if studentID <= 0 {
 		return ErrInvalidInput
 	}
-	tag, err := r.pool.Exec(ctx, `
-		INSERT INTO student_chat_modes (student_id, chat_mode_enabled, lesson_mode_enabled)
-		SELECT id, FALSE, $2 FROM students
-		WHERE id = $1 AND account_status = 'active'
-		ON CONFLICT (student_id) DO UPDATE
-		SET lesson_mode_enabled = EXCLUDED.lesson_mode_enabled,
-		    chat_mode_enabled = CASE
-		        WHEN EXCLUDED.lesson_mode_enabled THEN FALSE
-		        ELSE student_chat_modes.chat_mode_enabled
-		    END,
-		    updated_at = now()
-	`, studentID, enabled)
+
+	var active bool
+	err := r.pool.QueryRow(ctx, `
+		WITH eligible_student AS MATERIALIZED (
+			SELECT id
+			FROM students
+			WHERE id = $1 AND account_status = 'active'
+		),
+		mode_upsert AS (
+			INSERT INTO student_chat_modes (student_id, chat_mode_enabled, lesson_mode_enabled)
+			SELECT id, FALSE, $2
+			FROM eligible_student
+			WHERE $2 OR EXISTS (
+				SELECT 1 FROM student_chat_modes WHERE student_id = eligible_student.id
+			)
+			ON CONFLICT (student_id) DO UPDATE
+			SET lesson_mode_enabled = EXCLUDED.lesson_mode_enabled,
+			    chat_mode_enabled = CASE
+			        WHEN EXCLUDED.lesson_mode_enabled THEN FALSE
+			        ELSE student_chat_modes.chat_mode_enabled
+			    END,
+			    updated_at = now()
+			WHERE (
+				student_chat_modes.lesson_mode_enabled,
+				student_chat_modes.chat_mode_enabled
+			) IS DISTINCT FROM (
+				EXCLUDED.lesson_mode_enabled,
+				CASE
+					WHEN EXCLUDED.lesson_mode_enabled THEN FALSE
+					ELSE student_chat_modes.chat_mode_enabled
+				END
+			)
+			RETURNING student_id
+		)
+		SELECT EXISTS (SELECT 1 FROM eligible_student)
+		FROM (SELECT count(*) FROM mode_upsert) AS applied
+	`, studentID, enabled).Scan(&active)
 	if err != nil {
 		return mapDatabaseError("сохранить режим прохождения урока ученика", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if !active {
 		return ErrNotFound
 	}
+
+	// Выход с экрана урока должен разбуждать ожидающие ответы даже тогда,
+	// когда режим уже был выключен предыдущим callback.
 	if !enabled {
 		return r.wakeStudentCuratorReplies(ctx, studentID)
 	}
