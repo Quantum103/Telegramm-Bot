@@ -440,7 +440,6 @@ func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
 	b.handleCallbackWithUpdateID(ctx, 0, callback)
 }
 
-
 func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, callback CallbackQuery) bool {
 	// Callback acknowledgement is a UI operation. Business processing below
 	// returns independently so a temporary failure does not advance polling offset.
