@@ -337,6 +337,47 @@ func TestSingleChoiceOptionIsSaved(t *testing.T) {
 	}
 }
 
+func TestChangingSavedSingleChoiceAnswerCreatesNewAttempt(t *testing.T) {
+	options := []domain.QuestionOption{
+		{ID: 6111, Key: "a", Text: "первый вариант"},
+		{ID: 6112, Key: "b", Text: "второй вариант"},
+	}
+	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", options)
+	key := answerStateKey{studentID: 1, enrollmentID: 701, questionID: 1001}
+
+	bot.handleCallbackWithUpdateID(context.Background(), 9110, testCallback("p:701:1001:6111", user, mainID))
+	if len(learning.attempts) != 1 || len(learning.saved[key].SelectedOptionIDs) != 1 ||
+		learning.saved[key].SelectedOptionIDs[0] != 6111 {
+		t.Fatalf("первый вариант не был сохранён: attempts=%+v saved=%+v", learning.attempts, learning.saved[key])
+	}
+	firstAttemptID := learning.saved[key].AttemptID
+	if !hasButton(lastEdit(t, api.fakeAPI).markup, "e:701:1001") {
+		t.Fatal("после сохранения должен быть доступен переход к изменению ответа")
+	}
+
+	bot.handleCallbackWithUpdateID(context.Background(), 9111, testCallback("e:701:1001", user, mainID))
+	editScreen := lastEdit(t, api.fakeAPI)
+	if !hasButton(editScreen.markup, "p:701:1001:6112") ||
+		!strings.Contains(editScreen.text, "Изменить") {
+		t.Fatalf("экран изменения не показывает варианты ответа: %+v", editScreen)
+	}
+
+	bot.handleCallbackWithUpdateID(context.Background(), 9112, testCallback("p:701:1001:6112", user, mainID))
+	saved := learning.saved[key]
+	if len(learning.attempts) != 2 || len(saved.SelectedOptionIDs) != 1 ||
+		saved.SelectedOptionIDs[0] != 6112 || saved.AttemptID == firstAttemptID {
+		t.Fatalf("изменение не создало новую попытку или не заменило сохранённый вариант: attempts=%+v saved=%+v",
+			learning.attempts, saved)
+	}
+	progress, err := learning.GetProgress(context.Background(), 1, 701)
+	if err != nil || progress.AnsweredQuestions != 1 {
+		t.Fatalf("изменение ответа не должно увеличивать число отвеченных вопросов: progress=%+v err=%v", progress, err)
+	}
+	if !strings.Contains(lastEdit(t, api.fakeAPI).text, "второй вариант") {
+		t.Fatalf("после изменения должен отображаться новый сохранённый вариант: %q", lastEdit(t, api.fakeAPI).text)
+	}
+}
+
 func TestOptionBelongingToAnotherQuestionIsRejected(t *testing.T) {
 	options := []domain.QuestionOption{{ID: 6201, Key: "a", Text: "только этот вопрос"}}
 	api, _, _, learning, bot, user, mainID := setupAnswerFlow(t, "single_choice", options)
