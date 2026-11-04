@@ -734,7 +734,6 @@ func assignStudentCuratorTx(
 	return nil
 }
 
-
 // ensureStudentConversationTx creates the student's chat at assignment time.
 // The student row is already locked by the caller, so concurrent assignment paths
 // cannot create more than one active conversation for the same student.
