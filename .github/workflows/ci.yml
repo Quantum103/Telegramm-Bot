@@ -91,97 +91,11 @@ jobs:
         env:
           RUN_LOAD_PROFILE: "1"
           LOAD_PROFILE_ITERATIONS: "1000"
-        run: go test ./internal/repository -run '^TestQuestionNavigationLoadProfiles
-      - name: Benchmark Telegram update worker pool
-        working-directory: backend
-        run: go test ./internal/telegrambot -run '^$' -bench '^BenchmarkUpdateWorkerPoolParallel$' -benchtime=30x -count=1
-
-      - name: Benchmark Telegram navigation and student interaction
-        working-directory: backend
-        run: go test ./internal/repository -run '^$' -bench '^(BenchmarkQuestionNavigationPaths|BenchmarkStudentInteractionExitQueries)$' -benchtime=30x -count=1
-
-      - name: Run go vet
-        working-directory: backend
-        run: go vet ./...
-
-  frontend:
-    name: Frontend checks and Compose configuration
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Install frontend dependencies
-        working-directory: web
-        run: npm install --no-audit --no-fund
-
-      - name: Check TypeScript
-        working-directory: web
-        run: npm run typecheck
-
-      - name: Build frontend for production
-        working-directory: web
-        run: npm run build
-
-      - name: Create local environment file
-        run: cp .env.example .env
-
-      - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
- -count=1 -v
+        run: go test ./internal/repository -run '^TestQuestionNavigationLoadProfiles$' -count=1 -v
 
       - name: Run Telegram fake API load and failure profiles
         working-directory: backend
-        run: go test ./internal/telegrambot -run '^(TestTelegramAPILoadProfiles|TestTelegramHTTPClientHandlesRateLimitServerFailureAndTimeout)
-      - name: Benchmark Telegram update worker pool
-        working-directory: backend
-        run: go test ./internal/telegrambot -run '^$' -bench '^BenchmarkUpdateWorkerPoolParallel$' -benchtime=30x -count=1
-
-      - name: Benchmark Telegram navigation and student interaction
-        working-directory: backend
-        run: go test ./internal/repository -run '^$' -bench '^(BenchmarkQuestionNavigationPaths|BenchmarkStudentInteractionExitQueries)$' -benchtime=30x -count=1
-
-      - name: Run go vet
-        working-directory: backend
-        run: go vet ./...
-
-  frontend:
-    name: Frontend checks and Compose configuration
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Install frontend dependencies
-        working-directory: web
-        run: npm install --no-audit --no-fund
-
-      - name: Check TypeScript
-        working-directory: web
-        run: npm run typecheck
-
-      - name: Build frontend for production
-        working-directory: web
-        run: npm run build
-
-      - name: Create local environment file
-        run: cp .env.example .env
-
-      - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
- -count=1 -v
+        run: go test ./internal/telegrambot -run '^(TestTelegramAPILoadProfiles|TestTelegramHTTPClientHandlesRateLimitServerFailureAndTimeout)$' -count=1 -v
 
       - name: Run Telegram race tests
         working-directory: backend
