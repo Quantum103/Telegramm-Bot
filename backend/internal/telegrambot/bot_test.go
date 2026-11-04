@@ -1251,7 +1251,6 @@ func TestHTTPClientSlowResponseRespectsEarlierCallerTimeout(t *testing.T) {
 	}
 }
 
-
 func TestRenderDoesNotFallbackForAmbiguousOrTransientEditErrors(t *testing.T) {
 	tests := []struct {
 		name string
