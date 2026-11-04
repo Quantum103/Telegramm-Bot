@@ -1334,7 +1334,7 @@ func TestRenderDoesNotFallbackWhenConnectionIsLostAfterEditRequest(t *testing.T)
 
 	api := newHTTPClient("secret-token", server.URL, server.Client())
 	catalog, learning := fixture()
-	bot := newTestBot(api, &fakeStudents{}, catalog, learning)
+	bot := NewBot(api, &fakeStudents{}, catalog, learning, nil)
 	bot.render(context.Background(), 123, 456, "новый экран", keyboard(button("К курсам", "courses")))
 
 	select {
