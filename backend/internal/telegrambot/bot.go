@@ -462,7 +462,7 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 	return &Bot{
 		api: api, students: students, catalog: catalog, learning: learning, logger: logger,
 		chapterPublisher: publisher, conversations: conversations, staffTelegram: staffTelegram,
-		studentReferrals: studentReferrals,
+		studentReferrals:  studentReferrals,
 		updateWorkerCount: defaultUpdateWorkerCount, updateQueueCapacity: defaultUpdateQueueCapacity,
 		mainMessages: make(map[int64]int64), choiceEditing: make(map[answerStateKey]bool),
 		multiDrafts:      make(map[answerStateKey]map[int64]struct{}),
@@ -470,6 +470,7 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 		callbackAckOrder: make([]string, 0, callbackAckCacheCapacity),
 	}
 }
+
 // ConfigureUpdateWorkerPool sets worker and per-worker queue limits. Configure
 // the pool before calling Run; the values are read once when Run starts.
 func (b *Bot) ConfigureUpdateWorkerPool(workerCount, queueCapacity int) error {
