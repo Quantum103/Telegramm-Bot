@@ -238,15 +238,18 @@ func (r *StaffManagementRepository) ListStudentsForStaff(ctx context.Context, ac
 			LEFT JOIN LATERAL (
 				SELECT
 					count(*) FILTER (
-						WHERE latest_attempt.id IS NOT NULL
+						WHERE review_enrollment.status = 'completed'
+						  AND latest_attempt.id IS NOT NULL
 						  AND latest_attempt.processing_status = 'pending'
 						  AND review.id IS NULL
 					)::INTEGER AS pending_reviews,
 					count(DISTINCT review_lesson.lesson_id) FILTER (
-						WHERE review.decision = 'needs_revision'
+						WHERE review_enrollment.status = 'completed'
+						  AND review.decision = 'needs_revision'
 					)::INTEGER AS needs_revision,
 					count(*) FILTER (
-						WHERE review.decision = 'needs_revision'
+						WHERE review_enrollment.status = 'completed'
+						  AND review.decision = 'needs_revision'
 					)::INTEGER AS needs_revision_answers
 				FROM course_enrollment_lessons review_lesson
 				JOIN lesson_questions question
