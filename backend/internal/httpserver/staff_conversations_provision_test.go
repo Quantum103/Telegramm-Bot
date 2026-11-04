@@ -126,7 +126,7 @@ func TestConversationProvisionEndpointRejectsUnauthorizedRequests(t *testing.T) 
 		{
 			name: "student belongs to another curator", roles: []string{"curator"},
 			csrf: csrfToken, path: "/api/v1/staff/students/88/conversation",
-			wantStatus: http.StatusNotFound,
+			wantStatus: http.StatusNotFound, wantCalls: 1,
 		},
 	}
 	for _, tt := range tests {
