@@ -436,7 +436,10 @@ func (b *Bot) handleCallback(ctx context.Context, callback CallbackQuery) {
 	b.handleCallbackWithUpdateID(ctx, 0, callback)
 }
 
-func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, callback CallbackQuery) {
+
+func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, callback CallbackQuery) bool {
+	// Callback acknowledgement is a UI operation. Business processing below
+	// returns independently so a temporary failure does not advance polling offset.
 	if callback.ID != "" {
 		if err := b.api.AnswerCallbackQuery(ctx, callback.ID, ""); err != nil && ctx.Err() == nil {
 			b.logger.Warn("не удалось подтвердить callback Telegram", "error", err)
@@ -445,7 +448,7 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 	if callback.From == nil || callback.From.ID <= 0 || callback.Message == nil ||
 		callback.Message.Chat.ID <= 0 || callback.Message.Chat.ID != callback.From.ID ||
 		(callback.Message.Chat.Type != "" && callback.Message.Chat.Type != "private") {
-		return
+		return true
 	}
 
 	chatID, messageID := callback.Message.Chat.ID, callback.Message.MessageID
@@ -453,64 +456,68 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 	if err != nil {
 		b.logger.Warn("не удалось проверить ученика для callback", "telegram_user_id", callback.From.ID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось проверить регистрацию. Отправьте /start и попробуйте снова.", keyboard(button("К курсам", "courses")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 
 	parts := strings.Split(callback.Data, ":")
 	switch {
 	case callback.Data == "home:refresh":
 		b.showStudentHome(ctx, chatID, student.ID, messageID, "")
+		return true
 	case callback.Data == "course:continue":
-		b.continueCurrentCourse(ctx, chatID, student.ID, messageID)
+		return b.continueCurrentCourse(ctx, chatID, student.ID, messageID)
 	case len(parts) == 4 && parts[0] == "course" && parts[1] == "start":
 		courseID, ok := parsePositiveID(parts[3])
 		if !ok || (parts[2] != "ai" && parts[2] != "curator") {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
-			return
+			return true
 		}
-		b.startCourseWithMode(ctx, chatID, student.ID, courseID, messageID, parts[2])
+		return b.startCourseWithMode(ctx, chatID, student.ID, courseID, messageID, parts[2])
 	case callback.Data == "chat:start":
-		b.startStudentChat(ctx, chatID, messageID, student)
+		return b.startStudentChat(ctx, chatID, messageID, student)
 	case callback.Data == "chat:cancel":
 		if err := b.leaveStudentInteraction(ctx, student.ID); err != nil {
 			b.logger.Warn("не удалось завершить взаимодействие ученика из меню общения", "student_id", student.ID, "error", err)
 			b.render(ctx, chatID, messageID, "Не удалось выключить режим общения. Попробуйте ещё раз.", keyboard(button("Повторить", "chat:cancel")))
-			return
+			return !isRetryableUpdateError(err)
 		}
 		b.renderCourses(ctx, chatID, student.ID, messageID, "Режим общения выключен. Выберите курс, чтобы продолжить обучение.")
+		return true
 	case callback.Data == "courses":
 		b.showCourses(ctx, chatID, student.ID, messageID, "Выберите курс для изучения Библии.")
+		return true
 	case len(parts) == 2 && parts[0] == "course":
 		courseID, ok := parsePositiveID(parts[1])
 		if !ok {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
-			return
+			return true
 		}
-		b.selectCourse(ctx, chatID, student.ID, courseID, messageID)
+		return b.selectCourse(ctx, chatID, student.ID, courseID, messageID)
 	case len(parts) == 2 && parts[0] == "lessons":
 		courseID, ok := parsePositiveID(parts[1])
 		if !ok {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
-			return
+			return true
 		}
 		b.showLessons(ctx, chatID, student.ID, courseID, messageID)
+		return true
 	case len(parts) == 3 && parts[0] == "lesson" && parts[1] == "finish":
 		enrollmentID, ok := parsePositiveID(parts[2])
 		if !ok {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
-			return
+			return true
 		}
-		b.finishLesson(ctx, chatID, student.ID, messageID, enrollmentID)
+		return b.finishLesson(ctx, chatID, student.ID, messageID, enrollmentID)
 	case len(parts) == 3 && parts[0] == "lesson":
 		courseID, okCourse := parsePositiveID(parts[1])
 		lessonID, okLesson := parsePositiveID(parts[2])
 		if !okCourse || !okLesson {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
-			return
+			return true
 		}
-		b.openCourseLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
+		return b.openCourseLesson(ctx, chatID, student.ID, courseID, lessonID, messageID)
 	case len(parts) > 0 && (parts[0] == "e" || parts[0] == "p" || parts[0] == "t" || parts[0] == "s" || parts[0] == "pick-edit" || parts[0] == "pick" || parts[0] == "multi-toggle" || parts[0] == "multi-submit"):
-		b.handleAnswerCallback(ctx, updateID, chatID, student.ID, messageID, parts)
+		return b.handleAnswerCallback(ctx, updateID, chatID, student.ID, messageID, parts, callback.Message.ReplyMarkup)
 	case (len(parts) == 4 || len(parts) == 5) && parts[0] == "nav" && (parts[1] == "prev" || parts[1] == "next"):
 		enrollmentID, okEnrollment := parsePositiveID(parts[2])
 		expectedQuestionID, okQuestion := parsePositiveID(parts[3])
@@ -521,42 +528,52 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 		}
 		if !okEnrollment || !okQuestion || !okCourse {
 			b.showStaleCallback(ctx, chatID, student.ID, messageID)
-			return
+			return true
 		}
-		b.navigate(ctx, chatID, student.ID, messageID, enrollmentID, expectedQuestionID, courseID, parts[1])
+		return b.navigate(ctx, chatID, student.ID, messageID, enrollmentID, expectedQuestionID, courseID, parts[1])
 	default:
 		b.showStaleCallback(ctx, chatID, student.ID, messageID)
+		return true
 	}
 }
 
-func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, enrollmentID int64) {
+func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, enrollmentID int64) bool {
 	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Warn("не удалось проверить прогресс перед завершением урока", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if progress.Enrollment.Status != "in_progress" {
+		if progress.Enrollment.Status == "completed" && b.conversations != nil {
+			if err := b.conversations.SetStudentLessonMode(ctx, studentID, false); err != nil {
+				b.logger.Warn("не удалось закрыть режим прохождения после повторного завершения урока", "student_id", studentID, "error", err)
+				return !isRetryableUpdateError(err)
+			}
+		}
 		b.showCourses(ctx, chatID, studentID, messageID, "Это прохождение уже не активно. Выберите следующий урок.")
-		return
+		return true
 	}
 	if progress.TotalQuestions == 0 || progress.AnsweredQuestions < progress.TotalQuestions {
 		if progress.Enrollment.CurrentQuestionID != nil {
 			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, 0)
-			return
+			return true
 		}
 		b.render(ctx, chatID, messageID, "Сначала сохраните ответы на все вопросы урока.", keyboard(button("К курсам", "courses")))
-		return
+		return true
 	}
 	completed, err := b.learning.CompleteLesson(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Warn("не удалось завершить урок", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось завершить урок. Попробуйте ещё раз.", keyboard(button("Повторить завершение", fmt.Sprintf("lesson:finish:%d", enrollmentID)), button("К курсам", "courses")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if b.conversations != nil {
 		if err := b.conversations.SetStudentLessonMode(ctx, studentID, false); err != nil {
 			b.logger.Warn("не удалось закрыть режим прохождения после завершения урока", "student_id", studentID, "error", err)
+			// Completion is already durable. A redelivery will retry this cleanup
+			// through the completed-status branch above.
+			return !isRetryableUpdateError(err)
 		}
 	}
 	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
@@ -571,9 +588,10 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 		rows = append([][]InlineKeyboardButton{{button("К урокам", fmt.Sprintf("lessons:%d", detail.Lesson.CourseID))}}, rows...)
 	}
 	b.render(ctx, chatID, messageID, text, markup(rows))
+	return true
 }
 
-func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID, courseID int64, direction string) {
+func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enrollmentID, expectedQuestionID, courseID int64, direction string) bool {
 	step := 1
 	if direction == "prev" {
 		step = -1
@@ -584,7 +602,7 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 		state, err := navigator.NavigateQuestion(ctx, studentID, enrollmentID, expectedQuestionID, step)
 		if state.StaleCallback {
 			b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
-			return
+			return true
 		}
 		b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: expectedQuestionID})
 		if err != nil {
@@ -594,29 +612,29 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 				} else {
 					b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
 				}
-				return
+				return true
 			}
 			b.logger.Warn("не удалось переместиться между вопросами", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 			b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Попробуйте снова или вернитесь к каталогу.", keyboard(button("К курсам", "courses")))
-			return
+			return !isRetryableUpdateError(err)
 		}
 		b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
-		return
+		return true
 	}
 
 	progress, err := b.learning.GetProgress(ctx, studentID, enrollmentID)
 	if err != nil {
 		b.logger.Warn("callback с недоступным прохождением", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return !isRetryableUpdateError(err)
 	}
 	if progress.Enrollment.CurrentQuestionID == nil {
 		b.showStaleCallback(ctx, chatID, studentID, messageID)
-		return
+		return true
 	}
 	if *progress.Enrollment.CurrentQuestionID != expectedQuestionID {
 		b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
-		return
+		return true
 	}
 	b.clearChoiceState(answerStateKey{studentID: studentID, enrollmentID: enrollmentID, questionID: expectedQuestionID})
 
@@ -629,15 +647,15 @@ func (b *Bot) navigate(ctx context.Context, chatID, studentID, messageID, enroll
 	if err != nil {
 		if errors.Is(err, domain.ErrNoPreviousQuestion) || errors.Is(err, domain.ErrNoNextQuestion) {
 			b.showQuestion(ctx, chatID, studentID, messageID, enrollmentID, courseID)
-			return
+			return true
 		}
 		b.logger.Warn("не удалось переместиться между вопросами", "student_id", studentID, "enrollment_id", enrollmentID, "error", err)
 		b.render(ctx, chatID, messageID, "Не удалось открыть вопрос. Попробуйте снова или вернитесь к каталогу.", keyboard(button("К курсам", "courses")))
-		return
+		return !isRetryableUpdateError(err)
 	}
 	b.renderQuestion(ctx, chatID, studentID, messageID, state, nil, courseID)
+	return true
 }
-
 func (b *Bot) showStaleCallback(ctx context.Context, chatID, studentID, messageID int64) {
 	b.showCourses(ctx, chatID, studentID, messageID, "Эта кнопка устарела. Выберите курс из актуального каталога.")
 }
