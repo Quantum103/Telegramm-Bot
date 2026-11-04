@@ -134,21 +134,24 @@ func classifyTelegramAPIError(err error) TelegramErrorKind {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		description := strings.ToLower(apiErr.Description)
+		status := apiErr.HTTPStatus
+		if status == 0 {
+			status = apiErr.Code
+		}
 		switch {
-		case (apiErr.Code == http.StatusBadRequest || apiErr.HTTPStatus == http.StatusBadRequest) &&
-			strings.Contains(description, "message is not modified"):
+		case status == http.StatusBadRequest && strings.Contains(description, "message is not modified"):
 			return TelegramErrorMessageUnchanged
-		case (apiErr.Code == http.StatusBadRequest || apiErr.HTTPStatus == http.StatusBadRequest) &&
+		case status == http.StatusBadRequest &&
 			(strings.Contains(description, "message to edit not found") ||
 				strings.Contains(description, "message not found")):
 			return TelegramErrorMessageNotFound
-		case (apiErr.Code == http.StatusBadRequest || apiErr.HTTPStatus == http.StatusBadRequest) &&
+		case status == http.StatusBadRequest &&
 			(strings.Contains(description, "message can't be edited") ||
 				strings.Contains(description, "message can not be edited")):
 			return TelegramErrorMessageNotEditable
-		case apiErr.Code == http.StatusTooManyRequests || apiErr.HTTPStatus == http.StatusTooManyRequests:
+		case status == http.StatusTooManyRequests:
 			return TelegramErrorRateLimited
-		case apiErr.Code >= http.StatusInternalServerError || apiErr.HTTPStatus >= http.StatusInternalServerError:
+		case status >= http.StatusInternalServerError:
 			return TelegramErrorServerFailure
 		default:
 			return TelegramErrorAPIFailure
