@@ -663,6 +663,20 @@ export function staffConversationEventsURL(): string {
   return url.toString()
 }
 
+export async function ensureStaffConversationForStudent(studentID: number): Promise<{ id: number }> {
+  if (!Number.isSafeInteger(studentID) || studentID <= 0) throw new Error('Некорректный идентификатор ученика.')
+  const response = await fetch(`/api/v1/staff/students/${studentID}/conversation`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...csrfHeaders() },
+    cache: 'no-store', credentials: 'same-origin', body: '{}',
+  })
+  const body = await readJSONResponse<{ id: number }>(response)
+  if (!body || !Number.isSafeInteger(body.id) || body.id <= 0) {
+    throw new Error('Сервер вернул некорректный идентификатор диалога.')
+  }
+  return body
+}
+
 export async function listStaffConversations(signal?: AbortSignal): Promise<StaffConversationSummary[]> {
   const body = await getJSON<StaffConversationsResponse>('/api/v1/staff/conversations', signal)
   if (!body || !Array.isArray(body.conversations)) throw new Error('Сервер вернул некорректный список диалогов.')
