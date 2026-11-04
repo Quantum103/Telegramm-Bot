@@ -43,6 +43,43 @@ func (r *ConversationRepository) GetOrCreateForStudent(ctx context.Context, stud
 	return conversation, nil
 }
 
+// GetOrCreateForCurator repairs or creates the internal conversation for an
+// already-assigned student. The assignment is checked while the student row is
+// locked, so a curator cannot provision a chat for another curator's student.
+func (r *ConversationRepository) GetOrCreateForCurator(ctx context.Context, curatorStaffID, studentID int64) (domain.Conversation, error) {
+	if curatorStaffID <= 0 || studentID <= 0 {
+		return domain.Conversation{}, ErrInvalidInput
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Conversation{}, mapDatabaseError("начать получение диалога куратора", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := lockActiveStudent(ctx, tx, studentID); err != nil {
+		return domain.Conversation{}, err
+	}
+	currentCuratorID, err := currentCuratorTx(ctx, tx, studentID)
+	if errors.Is(err, ErrInvalidState) || (err == nil && currentCuratorID != curatorStaffID) {
+		return domain.Conversation{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Conversation{}, err
+	}
+
+	conversation, _, _, err := getOrCreateConversationTx(ctx, tx, studentID)
+	if err != nil {
+		return domain.Conversation{}, err
+	}
+	if conversation.AssignedCuratorStaffID != curatorStaffID {
+		return domain.Conversation{}, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Conversation{}, mapDatabaseError("зафиксировать получение диалога куратора", err)
+	}
+	return conversation, nil
+}
+
 func lockActiveStudent(ctx context.Context, tx pgx.Tx, studentID int64) (int64, error) {
 	var telegramID int64
 	var status string
