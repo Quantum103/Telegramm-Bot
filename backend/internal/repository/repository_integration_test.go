@@ -557,7 +557,6 @@ func TestBibleChapterAndTelegraphLinkPersistAcrossRepositoryInstances(t *testing
 	}
 }
 
-
 func TestConcurrentDuplicateTelegramMessageCreatesOneMessageAndDelivery(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
