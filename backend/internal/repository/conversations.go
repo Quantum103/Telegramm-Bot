@@ -122,6 +122,64 @@ func currentCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (int64, e
 	return curatorID, nil
 }
 
+func assignSupportCoordinatorTx(ctx context.Context, tx pgx.Tx, studentID int64) error {
+	if _, err := currentCuratorTx(ctx, tx, studentID); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrInvalidState) {
+		return err
+	}
+
+	var previousCuratorID pgtype.Int8
+	err := tx.QueryRow(ctx, `
+		SELECT curator_staff_id
+		FROM student_curator_assignments
+		WHERE student_id = $1 AND status = 'active'
+		ORDER BY assigned_at DESC, id DESC
+		LIMIT 1 FOR UPDATE
+	`, studentID).Scan(&previousCuratorID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return mapDatabaseError("получить прежнее назначение перед выбором координатора", err)
+	}
+
+	var curatorStaffID int64
+	err = tx.QueryRow(ctx, `
+		SELECT staff.id
+		FROM staff_accounts staff
+		WHERE staff.account_status = 'active'
+		  AND staff.telegram_id IS NOT NULL
+		  AND staff.telegram_id > 0
+		  AND EXISTS (
+		      SELECT 1
+		      FROM staff_role_assignments role_assignment
+		      JOIN staff_roles role ON role.id = role_assignment.role_id
+		      WHERE role_assignment.staff_id = staff.id
+		        AND role_assignment.revoked_at IS NULL
+		        AND role.role_code = 'curator'
+		  )
+		ORDER BY (
+		    SELECT count(*)
+		    FROM student_curator_assignments assignment
+		    JOIN students student ON student.id = assignment.student_id
+		    WHERE assignment.curator_staff_id = staff.id
+		      AND assignment.status = 'active'
+		      AND student.account_status = 'active'
+		), staff.id
+		FOR UPDATE OF staff SKIP LOCKED
+		LIMIT 1
+	`).Scan(&curatorStaffID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidState
+	}
+	if err != nil {
+		return mapDatabaseError("выбрать доступного координатора", err)
+	}
+
+	return assignStudentCuratorTx(
+		ctx, tx, studentID, curatorStaffID, nil, previousCuratorID,
+		"student.curator.support_assign",
+	)
+}
+
 func getOrCreateConversationTx(ctx context.Context, tx pgx.Tx, studentID int64) (domain.Conversation, int64, int64, error) {
 	curatorID, err := currentCuratorTx(ctx, tx, studentID)
 	if errors.Is(err, ErrInvalidState) {
@@ -216,6 +274,9 @@ func (r *ConversationRepository) CreateStudentMessage(ctx context.Context, param
 	}
 	if telegramID != params.TelegramChatID {
 		return domain.ConversationMessage{}, ErrInvalidState
+	}
+	if err := assignSupportCoordinatorTx(ctx, tx, params.StudentID); err != nil {
+		return domain.ConversationMessage{}, err
 	}
 	conversation, studentParticipantID, _, err := getOrCreateConversationTx(ctx, tx, params.StudentID)
 	if err != nil {
