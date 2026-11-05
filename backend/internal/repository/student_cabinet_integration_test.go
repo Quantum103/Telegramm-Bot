@@ -13,7 +13,7 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	defer cancel()
 
 	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
-		TelegramID: time.Now().UnixNano(),
+		TelegramID:  time.Now().UnixNano(),
 		DisplayName: "student-cabinet-integration",
 	})
 	if err != nil {
