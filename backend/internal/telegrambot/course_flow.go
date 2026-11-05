@@ -54,7 +54,7 @@ func (b *Bot) renderActiveCourse(
 	enrollment := progress.Enrollment
 	mode := "самостоятельно"
 	if enrollment.Mode == "curator" {
-		mode = "с куратором"
+		mode = "с координатором"
 	}
 	text := ""
 	if prefix != "" {
@@ -182,7 +182,7 @@ func (b *Bot) startCourseWithMode(
 				return !isRetryableUpdateError(currentErr)
 			}
 			b.render(ctx, chatID, messageID,
-				"Пока не удалось начать курс с куратором: вам ещё не назначен активный куратор. Администратор платформы должен назначить его. Ваш выбор не изменён — после назначения можно будет повторить попытку.",
+				"Пока не удалось начать курс с координатором: вам ещё не назначен активный координатор. Администратор платформы должен назначить его. Ваш выбор не изменён — после назначения можно будет повторить попытку.",
 				markup([][]InlineKeyboardButton{
 					{button("Повторить выбор способа", fmt.Sprintf("course:%d", courseID))},
 					{button("К курсам", "courses")},
@@ -236,7 +236,7 @@ func (b *Bot) continueCurrentCourse(ctx context.Context, chatID, studentID, mess
 	run, err := nav.StartCourse(ctx, studentID, active.Enrollment.CourseID, active.Enrollment.Mode)
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
-			"Не удалось продолжить курс с куратором: назначение координатора сейчас неактивно. Администратор платформы должен восстановить назначение. Режим обучения не изменён.",
+			"Не удалось продолжить курс с координатором: назначение сейчас неактивно. Администратор платформы должен восстановить назначение. Режим обучения не изменён.",
 			keyboard(button("Повторить", "course:continue"), button("К курсам", "courses")))
 		return true
 	}
@@ -268,10 +268,13 @@ func (b *Bot) openFirstIncompleteLesson(
 		return b.openCourseRunLesson(ctx, nav, chatID, studentID, messageID, run, lesson, notice)
 	}
 	message := fmt.Sprintf("Вы завершили все уроки курса „%s“. Теперь можно вернуться в каталог и выбрать следующий курс.", truncate(run.Enrollment.CourseTitle, 180))
-	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}}
+	rows := [][]InlineKeyboardButton{
+		{button("К курсам", "courses")},
+		{button("Главное меню", "home:main")},
+	}
 	if run.Enrollment.Mode == "curator" {
-		message = fmt.Sprintf("✅ Вы отправили все уроки курса „%s“ куратору. Он проверит ответы и при необходимости свяжется с вами лично.", truncate(run.Enrollment.CourseTitle, 180))
-		rows = append(rows, []InlineKeyboardButton{button("Написать куратору", "chat:start")})
+		message = fmt.Sprintf("✅ Вы отправили все уроки курса „%s“ координатору. Он проверит ответы и при необходимости свяжется с вами лично.", truncate(run.Enrollment.CourseTitle, 180))
+		rows = append(rows, []InlineKeyboardButton{button("Связаться с координатором", "chat:start")})
 	}
 	b.render(ctx, chatID, messageID, message, markup(rows))
 	return true
@@ -288,7 +291,7 @@ func (b *Bot) openCourseRunLesson(
 	progress, err := nav.StartLessonForCourse(ctx, studentID, run.Enrollment.ID, run.Enrollment.CourseID, lesson.LessonID)
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
-			"Не удалось открыть урок с куратором: активное назначение координатора недоступно. Администратор платформы должен проверить назначение. Режим обучения не изменён.",
+			"Не удалось открыть урок с координатором: активное назначение недоступно. Администратор платформы должен проверить назначение. Режим обучения не изменён.",
 			keyboard(button("Повторить", "course:continue")))
 		return true
 	}
