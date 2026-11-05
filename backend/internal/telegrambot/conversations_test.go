@@ -299,7 +299,7 @@ func TestStudentWithoutCuratorKeepsOriginalMessageVisible(t *testing.T) {
 		t.Fatalf("сообщение без куратора неожиданно сохранено: %+v", conversations.messages)
 	}
 	last := api.messages[len(api.messages)-1].text
-	if !strings.Contains(last, "НЕ отправлено") || !strings.Contains(last, "скопируйте его") {
+	if !strings.Contains(last, "НЕ отправлено") || !strings.Contains(last, "попробуйте отправить его позже") {
 		t.Fatalf("бот не объяснил, что текст не отправлен и остаётся в истории: %q", last)
 	}
 }
