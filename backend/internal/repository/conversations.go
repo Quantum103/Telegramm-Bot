@@ -164,7 +164,7 @@ func assignSupportCoordinatorTx(ctx context.Context, tx pgx.Tx, studentID int64)
 		      AND assignment.status = 'active'
 		      AND student.account_status = 'active'
 		), staff.id
-		FOR UPDATE OF staff SKIP LOCKED
+		FOR UPDATE OF staff
 		LIMIT 1
 	`).Scan(&curatorStaffID)
 	if errors.Is(err, pgx.ErrNoRows) {
