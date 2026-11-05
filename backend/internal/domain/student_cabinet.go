@@ -7,7 +7,7 @@ type StudentCabinet struct {
 	RegisteredAt     time.Time
 	CompletedCourses int
 	CompletedLessons int
-	Courses            []StudentCabinetCourse
+	Courses          []StudentCabinetCourse
 }
 
 // StudentCabinetCourse описывает последний запуск одного курса.
