@@ -65,6 +65,11 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 		t.Fatalf("создать ученика для режима координатора: %v", err)
 	}
 	curatorID := createStaffForCourseTest(t, ctx, pool, "curator")
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `
+			UPDATE staff_accounts SET account_status = 'inactive', telegram_id = NULL WHERE id = $1
+		`, curatorID)
+	}()
 	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", curatorID, time.Now().UnixNano()+2); err != nil {
 		t.Fatalf("привязать Telegram координатора: %v", err)
 	}
