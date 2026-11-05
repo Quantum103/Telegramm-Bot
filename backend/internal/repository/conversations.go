@@ -680,16 +680,18 @@ func listConversationMessagesTx(ctx context.Context, tx pgx.Tx, conversationID, 
 	return result, nil
 }
 
-func (r *ConversationRepository) SendCuratorMessage(ctx context.Context, staffID, conversationID int64, bodyText string) (domain.ConversationMessage, error) {
+// createCuratorMessageTx writes a curator reply and its Telegram outbox record
+// using the caller's transaction. It is also used by automated review feedback.
+func (r *ConversationRepository) createCuratorMessageTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	staffID, conversationID int64,
+	bodyText string,
+) (domain.ConversationMessage, error) {
 	body := strings.TrimSpace(bodyText)
 	if staffID <= 0 || conversationID <= 0 || body == "" {
 		return domain.ConversationMessage{}, ErrInvalidInput
 	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return domain.ConversationMessage{}, mapDatabaseError("начать отправку ответа куратора", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	participantID, err := r.curatorParticipantTx(ctx, tx, staffID, conversationID)
 	if err != nil {
 		return domain.ConversationMessage{}, err
@@ -725,6 +727,24 @@ func (r *ConversationRepository) SendCuratorMessage(ctx context.Context, staffID
 	message.ConversationID, message.SenderParticipantID = conversationID, participantID
 	message.SenderType, message.MessageType, message.BodyText = "curator", "text", &body
 	message.DeliveryStatus = "pending"
+	return message, nil
+}
+
+func (r *ConversationRepository) SendCuratorMessage(ctx context.Context, staffID, conversationID int64, bodyText string) (domain.ConversationMessage, error) {
+	body := strings.TrimSpace(bodyText)
+	if staffID <= 0 || conversationID <= 0 || body == "" {
+		return domain.ConversationMessage{}, ErrInvalidInput
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.ConversationMessage{}, mapDatabaseError("начать отправку ответа куратора", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	message, err := r.createCuratorMessageTx(ctx, tx, staffID, conversationID, body)
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE conversation_response_waits
 		SET responded_at = now(), updated_at = now()
