@@ -56,18 +56,39 @@ func (r *CourseEnrollmentRepository) Start(
 		FOR UPDATE OF ce
 	`, studentID))
 	if activeErr == nil {
+		if active.CourseID != courseID {
+			progress, progressErr := r.getProgress(ctx, tx, studentID, active.ID)
+			if progressErr != nil {
+				return domain.CourseEnrollmentProgress{}, progressErr
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return domain.CourseEnrollmentProgress{}, mapDatabaseError("зафиксировать восстановление активного курса", err)
+			}
+			return progress, domain.ErrActiveCourse
+		}
+
+		if active.Mode == "curator" {
+			if err := assignCourseCoordinatorTx(ctx, tx, studentID); err != nil {
+				if !errors.Is(err, domain.ErrNoCurator) {
+					return domain.CourseEnrollmentProgress{}, err
+				}
+				progress, progressErr := r.getProgress(ctx, tx, studentID, active.ID)
+				if progressErr != nil {
+					return domain.CourseEnrollmentProgress{}, progressErr
+				}
+				if commitErr := tx.Commit(ctx); commitErr != nil {
+					return domain.CourseEnrollmentProgress{}, mapDatabaseError("зафиксировать состояние курса без координатора", commitErr)
+				}
+				return progress, domain.ErrNoCurator
+			}
+		}
+
 		progress, progressErr := r.getProgress(ctx, tx, studentID, active.ID)
 		if progressErr != nil {
 			return domain.CourseEnrollmentProgress{}, progressErr
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return domain.CourseEnrollmentProgress{}, mapDatabaseError("зафиксировать восстановление активного курса", err)
-		}
-		if active.CourseID != courseID {
-			return progress, domain.ErrActiveCourse
-		}
-		if active.Status == "awaiting_curator" {
-			return progress, domain.ErrNoCurator
 		}
 		return progress, nil
 	}
@@ -94,6 +115,9 @@ func (r *CourseEnrollmentRepository) Start(
 		}
 		curatorID := int64(0)
 		if paused.Mode == "curator" {
+			if err := assignCourseCoordinatorTx(ctx, tx, studentID); err != nil {
+				return domain.CourseEnrollmentProgress{}, err
+			}
 			curatorID, err = currentActiveCuratorTx(ctx, tx, studentID)
 			if err != nil {
 				return domain.CourseEnrollmentProgress{}, err
@@ -136,6 +160,9 @@ func (r *CourseEnrollmentRepository) Start(
 	if supersededErr == nil {
 		curatorID := int64(0)
 		if superseded.Mode == "curator" {
+			if err := assignCourseCoordinatorTx(ctx, tx, studentID); err != nil {
+				return domain.CourseEnrollmentProgress{}, err
+			}
 			curatorID, err = currentActiveCuratorTx(ctx, tx, studentID)
 			if err != nil {
 				return domain.CourseEnrollmentProgress{}, err
@@ -210,6 +237,9 @@ func (r *CourseEnrollmentRepository) Start(
 
 	curatorID := int64(0)
 	if mode == "curator" {
+		if err := assignCourseCoordinatorTx(ctx, tx, studentID); err != nil {
+			return domain.CourseEnrollmentProgress{}, err
+		}
 		curatorID, err = currentActiveCuratorTx(ctx, tx, studentID)
 		if err != nil {
 			return domain.CourseEnrollmentProgress{}, err
