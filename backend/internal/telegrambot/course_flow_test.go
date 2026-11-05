@@ -191,7 +191,6 @@ func TestCourseModeChoiceStartsAICourseAndFirstLesson(t *testing.T) {
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
 	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
-	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 
 	choice := lastEdit(t, api)
