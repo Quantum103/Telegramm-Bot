@@ -612,7 +612,7 @@ func TestStartWithReferralAssignsCuratorWithoutChangingCourseMode(t *testing.T) 
 	if referrals.calls != 1 || len(referrals.studentID) != 1 || referrals.studentID[0] != 1 || referrals.codes[0] != "c_42" {
 		t.Fatalf("referral was not applied to the registered student: %+v", referrals)
 	}
-	if len(api.messages) != 1 || !strings.Contains(api.messages[0].text, "Куратор закреплён за вами") {
+	if len(api.messages) != 1 || !strings.Contains(api.messages[0].text, "Координатор закреплён за вами") {
 		t.Fatalf("successful referral result missing: %+v", api.messages)
 	}
 	if !strings.Contains(api.messages[0].text, "не меняет способ прохождения курса") {
