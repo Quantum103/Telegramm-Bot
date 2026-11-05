@@ -257,7 +257,7 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 		t.Fatalf("не показана инструкция для общения: %q", lastEdit(t, api).text)
 	}
 
-	incoming := Update{UpdateID: 3, Message: &Message{
+	incoming := Update{UpdateID: 4, Message: &Message{
 		MessageID: 321, From: &user, Chat: Chat{ID: user.ID, Type: "private"},
 		Text: "Нужна помощь с уроком.",
 	}}
@@ -274,7 +274,7 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 	}
 	if !strings.Contains(api.messages[len(api.messages)-1].text, "Сообщение сохранено") ||
 		!strings.Contains(api.messages[len(api.messages)-1].text, "обязательно вам ответит") {
-		t.Fatalf("бот должен подтвердить сохранение и сообщить, что куратор ответит: %q", api.messages[len(api.messages)-1].text)
+		t.Fatalf("бот должен подтвердить сохранение и сообщить, что координатор ответит: %q", api.messages[len(api.messages)-1].text)
 	}
 }
 
