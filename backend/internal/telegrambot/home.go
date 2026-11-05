@@ -1,0 +1,110 @@
+package telegrambot
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+)
+
+const studentWelcomeText = `Здравствуйте! Вы попали в чат, где можно изучать Библию в спокойном для себя темпе. Есть выбор прохождения: с координатором или самостоятельно.
+
+В чём особенности?
+
+⭐ С координатором — за вами закрепляется человек, который будет вам помогать. Вы сможете общаться, и самое главное — всё полностью анонимно.
+
+Самостоятельно — все уроки будут проходить автоматически, но вы всегда сможете нажать «Связаться с координатором» и написать ему, если появится сложный вопрос. Вам обязательно ответят!`
+
+type studentCabinetReader interface {
+	GetStudentCabinet(context.Context, int64) (domain.StudentCabinet, error)
+}
+
+func (b *Bot) showMainMenu(ctx context.Context, chatID, studentID, messageID int64, notice string) bool {
+	if err := b.leaveStudentInteraction(ctx, studentID); err != nil {
+		b.logger.Warn("не удалось завершить предыдущее взаимодействие перед открытием главного меню", "student_id", studentID, "error", err)
+		b.render(ctx, chatID, messageID,
+			"Не удалось открыть главное меню. Попробуйте ещё раз.",
+			keyboard(button("Повторить", "home:main")))
+		return !isRetryableUpdateError(err)
+	}
+
+	text := studentWelcomeText
+	if strings.TrimSpace(notice) != "" {
+		text += "\n\n" + strings.TrimSpace(notice)
+	}
+	b.render(ctx, chatID, messageID, text, markup([][]InlineKeyboardButton{
+		{button("Личный кабинет", "home:account")},
+		{button("Начать прохождение уроков", "home:lessons")},
+	}))
+	return true
+}
+
+func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, messageID int64) bool {
+	if err := b.leaveStudentInteraction(ctx, studentID); err != nil {
+		b.logger.Warn("не удалось завершить взаимодействие перед открытием личного кабинета", "student_id", studentID, "error", err)
+		b.render(ctx, chatID, messageID,
+			"Не удалось открыть личный кабинет. Попробуйте ещё раз.",
+			keyboard(button("Повторить", "home:account"), button("Главное меню", "home:main")))
+		return !isRetryableUpdateError(err)
+	}
+
+	reader, ok := b.learning.(studentCabinetReader)
+	if !ok {
+		b.render(ctx, chatID, messageID,
+			"Личный кабинет временно недоступен. Попробуйте позже.",
+			keyboard(button("Главное меню", "home:main")))
+		return true
+	}
+
+	cabinet, err := reader.GetStudentCabinet(ctx, studentID)
+	if err != nil {
+		b.logger.Error("не удалось загрузить личный кабинет ученика", "student_id", studentID, "error", err)
+		b.render(ctx, chatID, messageID,
+			"Не удалось загрузить личный кабинет. Попробуйте ещё раз.",
+			keyboard(button("Повторить", "home:account"), button("Главное меню", "home:main")))
+		return !isRetryableUpdateError(err)
+	}
+
+	var text strings.Builder
+	text.WriteString("👤 Личный кабинет\n\n")
+	fmt.Fprintf(&text, "Дата регистрации: %s\n", cabinet.RegisteredAt.Format("02.01.2006"))
+	fmt.Fprintf(&text, "Завершено курсов: %d\n", cabinet.CompletedCourses)
+	fmt.Fprintf(&text, "Завершено уроков: %d\n", cabinet.CompletedLessons)
+	text.WriteString("\nВаши курсы:")
+	if len(cabinet.Courses) == 0 {
+		text.WriteString("\n\nВы пока не начали ни одного курса.")
+	} else {
+		for _, course := range cabinet.Courses {
+			fmt.Fprintf(
+				&text,
+				"\n\n• %s\n  %s · %d из %d уроков",
+				truncate(course.Title, 140),
+				studentCourseStatusLabel(course.Status),
+				course.CompletedLessons,
+				course.TotalLessons,
+			)
+		}
+	}
+
+	b.render(ctx, chatID, messageID, text.String(), markup([][]InlineKeyboardButton{
+		{button("Начать прохождение уроков", "home:lessons")},
+		{button("Главное меню", "home:main")},
+	}))
+	return true
+}
+
+func studentCourseStatusLabel(status string) string {
+	switch status {
+	case "completed":
+		return "Завершён"
+	case "in_progress":
+		return "В процессе"
+	case "awaiting_curator":
+		return "Ожидает координатора"
+	case "paused":
+		return "Приостановлен"
+	default:
+		return "Статус неизвестен"
+	}
+}
