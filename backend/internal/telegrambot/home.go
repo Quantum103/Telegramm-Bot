@@ -89,6 +89,14 @@ func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, message
 				course.TotalLessons,
 				progressVerb,
 			)
+			if course.Mode == "curator" {
+				if course.PendingReviews > 0 {
+					fmt.Fprintf(&text, "\n  Ожидают проверки ответов: %d", course.PendingReviews)
+				}
+				if course.NeedsRevisionAnswers > 0 {
+					fmt.Fprintf(&text, "\n  Замечания координатора: %d", course.NeedsRevisionAnswers)
+				}
+			}
 		}
 	}
 

@@ -14,8 +14,10 @@ type StudentCabinet struct {
 type StudentCabinetCourse struct {
 	CourseID         int64
 	Title            string
-	Mode             string
-	Status           string
-	TotalLessons     int
-	CompletedLessons int
+	Mode                 string
+	Status               string
+	TotalLessons         int
+	CompletedLessons     int
+	PendingReviews       int
+	NeedsRevisionAnswers int
 }

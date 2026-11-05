@@ -31,7 +31,7 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	}
 
 	courseTitle := "Личный кабинет · тестовый курс"
-	courseID, _, _ := createCourseForEnrollmentTest(
+	courseID, lessonIDs, _ := createCourseForEnrollmentTest(
 		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), courseTitle, 2,
 	)
 	run, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, courseID, "ai")
@@ -66,7 +66,7 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	}
 	curatorID := createStaffForCourseTest(t, ctx, pool, "curator")
 	defer func() {
-		_, _ = pool.Exec(context.Background(), `
+			_, _ = pool.Exec(context.Background(), `
 			UPDATE staff_accounts SET account_status = 'inactive', telegram_id = NULL WHERE id = $1
 		`, curatorID)
 	}()
@@ -80,11 +80,30 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	if curatorRun.Enrollment.Mode != "curator" {
 		t.Fatalf("курс должен быть запущен с координатором: %+v", curatorRun.Enrollment)
 	}
+	firstLesson := startCuratorTestLesson(t, ctx, pool, curatorStudent.ID, curatorRun, lessonIDs[0], "Первый ответ")
+	secondLesson := startCuratorTestLesson(t, ctx, pool, curatorStudent.ID, curatorRun, lessonIDs[1], "Второй ответ")
+	enrollments := NewEnrollmentRepository(pool)
+	for _, submitted := range []curatorTestLessonRun{firstLesson, secondLesson} {
+		if _, err := enrollments.Complete(ctx, curatorStudent.ID, submitted.enrollment.ID); err != nil {
+			t.Fatalf("отправить урок координатору: %v", err)
+		}
+	}
+	if _, err := NewCuratorLearningRepository(pool).ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		CuratorStaffID: curatorID,
+		AttemptID:      secondLesson.answer.AttemptID,
+		Decision:       "needs_revision",
+		Feedback:       "Добавьте пояснение.",
+	}); err != nil {
+		t.Fatalf("сохранить замечание координатора: %v", err)
+	}
 	curatorCabinet, err := cabinetRepository.GetStudentCabinet(ctx, curatorStudent.ID)
 	if err != nil {
 		t.Fatalf("получить личный кабинет ученика с координатором: %v", err)
 	}
-	if len(curatorCabinet.Courses) != 1 || curatorCabinet.Courses[0].Mode != "curator" {
-		t.Fatalf("режим координатора не отражён в личном кабинете: %+v", curatorCabinet.Courses)
+	if len(curatorCabinet.Courses) != 1 ||
+		curatorCabinet.Courses[0].Mode != "curator" ||
+		curatorCabinet.Courses[0].PendingReviews != 1 ||
+		curatorCabinet.Courses[0].NeedsRevisionAnswers != 1 {
+		t.Fatalf("личный кабинет неверно показывает статусы проверки: %+v", curatorCabinet.Courses)
 	}
 }

@@ -36,7 +36,9 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		       latest.status,
 		       latest.mode,
 		       latest.total_lessons,
-		       latest.completed_lessons
+		       latest.completed_lessons,
+		       latest.pending_reviews,
+		       latest.needs_revision_answers
 		FROM students student
 		LEFT JOIN LATERAL (
 		    SELECT current_run.course_id,
@@ -47,6 +49,8 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		           count(course_lesson.lesson_id) FILTER (
 		               WHERE lesson.status = 'completed'
 		           )::INTEGER AS completed_lessons,
+		           COALESCE(review_totals.pending_reviews, 0)::INTEGER AS pending_reviews,
+		           COALESCE(review_totals.needs_revision_answers, 0)::INTEGER AS needs_revision_answers,
 		           current_run.updated_at,
 		           current_run.id
 		    FROM (
@@ -69,7 +73,40 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		      ON lesson.course_enrollment_id = current_run.id
 		     AND lesson.lesson_id = course_lesson.lesson_id
 		     AND lesson.lesson_version_id = course_lesson.lesson_version_id
+		    LEFT JOIN LATERAL (
+		        SELECT
+		            count(*) FILTER (
+		                WHERE review_enrollment.status = 'completed'
+		                  AND latest_attempt.id IS NOT NULL
+		                  AND latest_attempt.processing_status = 'pending'
+		                  AND review.id IS NULL
+		            )::INTEGER AS pending_reviews,
+		            count(*) FILTER (
+		                WHERE review_enrollment.status = 'completed'
+		                  AND review.decision = 'needs_revision'
+		            )::INTEGER AS needs_revision_answers
+		        FROM course_enrollment_lessons review_lesson
+		        JOIN lesson_questions question
+		          ON question.lesson_version_id = review_lesson.lesson_version_id
+		        LEFT JOIN lesson_enrollments review_enrollment
+		          ON review_enrollment.course_enrollment_id = current_run.id
+		         AND review_enrollment.lesson_id = review_lesson.lesson_id
+		         AND review_enrollment.lesson_version_id = review_lesson.lesson_version_id
+		        LEFT JOIN LATERAL (
+		            SELECT attempt.id, attempt.processing_status
+		            FROM answer_attempts attempt
+		            WHERE attempt.enrollment_id = review_enrollment.id
+		              AND attempt.question_id = question.id
+		            ORDER BY attempt.created_at DESC, attempt.id DESC
+		            LIMIT 1
+		        ) latest_attempt ON TRUE
+		        LEFT JOIN answer_attempt_reviews review
+		          ON review.answer_attempt_id = latest_attempt.id
+		        WHERE review_lesson.course_enrollment_id = current_run.id
+		          AND current_run.mode = 'curator'
+		    ) review_totals ON TRUE
 		    GROUP BY current_run.course_id, current_run.title, current_run.mode, current_run.status,
+		             review_totals.pending_reviews, review_totals.needs_revision_answers,
 		             current_run.updated_at, current_run.id
 		    ORDER BY current_run.updated_at DESC, current_run.id DESC
 		) latest ON TRUE
@@ -91,10 +128,12 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		var courseID pgtype.Int8
 		var title, mode, status pgtype.Text
 		var totalLessons, courseCompletedLessons pgtype.Int4
+		var pendingReviews, needsRevisionAnswers pgtype.Int4
 
 		if err := rows.Scan(
 			&registeredAt, &completedCourses, &completedLessons,
 			&courseID, &title, &status, &mode, &totalLessons, &courseCompletedLessons,
+			&pendingReviews, &needsRevisionAnswers,
 		); err != nil {
 			return domain.StudentCabinet{}, mapDatabaseError("прочитать данные личного кабинета", err)
 		}
@@ -109,7 +148,9 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 				Mode:             mode.String,
 				Status:           status.String,
 				TotalLessons:     int(totalLessons.Int32),
-				CompletedLessons: int(courseCompletedLessons.Int32),
+				CompletedLessons:     int(courseCompletedLessons.Int32),
+				PendingReviews:       int(pendingReviews.Int32),
+				NeedsRevisionAnswers: int(needsRevisionAnswers.Int32),
 			})
 		}
 	}
