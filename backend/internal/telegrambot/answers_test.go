@@ -576,7 +576,7 @@ func TestCuratorLessonIsSentAfterAllAnswersAreSaved(t *testing.T) {
 	if learning.fakeLearning.completeCalls != 1 ||
 		completed.Enrollment.Status != "completed" ||
 		completed.Enrollment.Mode != "curator" ||
-		!strings.Contains(last.text, "Урок отправлен куратору") ||
+		!strings.Contains(last.text, "Урок отправлен координатору") ||
 		!hasButton(last.markup, "chat:start") {
 		t.Fatalf("отправка урока куратору завершилась неверно: calls=%d progress=%+v edit=%+v",
 			learning.fakeLearning.completeCalls, completed, last)
