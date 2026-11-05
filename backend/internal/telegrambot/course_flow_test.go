@@ -191,6 +191,7 @@ func TestCourseModeChoiceStartsAICourseAndFirstLesson(t *testing.T) {
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
 	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 
 	choice := lastEdit(t, api)
@@ -233,6 +234,7 @@ func TestCuratorModeSelectionConfirmsAndOpensFirstLesson(t *testing.T) {
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:start:curator:10", user, messageID))
 
@@ -261,6 +263,7 @@ func TestCuratorModeFailureDoesNotCreateRunOrSwitchToAI(t *testing.T) {
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:start:curator:10", user, messageID))
 
@@ -343,6 +346,7 @@ func TestSecondCourseIsBlockedButCatalogRemainsAvailable(t *testing.T) {
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:start:ai:10", user, messageID))
 
@@ -373,6 +377,7 @@ func TestRedeliveredModeCallbackReusesTheSameCourseRun(t *testing.T) {
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	callback := testCallback("course:start:ai:10", user, messageID)
 	update := Update{UpdateID: 77, CallbackQuery: &callback}
