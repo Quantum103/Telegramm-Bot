@@ -399,13 +399,65 @@ func TestCuratorTransferReviewAndCourseSubmission(t *testing.T) {
 
 		decision, feedback := "approved", "Ответ принят."
 		if index == 0 {
-			decision, feedback = "needs_revision", "При необходимости свяжусь с вами лично."
+			decision, feedback = "needs_revision", "Пожалуйста, уточните этот момент в ответе."
 		}
-		if _, err := curator.ReviewAttempt(ctx, domain.ReviewAnswerAttemptParams{
+		reviewParams := domain.ReviewAnswerAttemptParams{
 			CuratorStaffID: secondCuratorID, AttemptID: saved.AttemptID,
 			Decision: decision, Feedback: feedback,
-		}); err != nil {
+		}
+		if _, err := curator.ReviewAttempt(ctx, reviewParams); err != nil {
 			t.Fatalf("куратор не смог проверить отправленный урок: %v", err)
+		}
+		if index == 0 {
+			replayed, err := curator.ReviewAttempt(ctx, reviewParams)
+			if err != nil || !replayed.Replayed {
+				t.Fatalf("повторная проверка должна вернуть сохранённое решение без новой доставки: review=%+v err=%v", replayed, err)
+			}
+
+			var messageBody, deliveryStatus string
+			var recipientChatID int64
+			if err := pool.QueryRow(ctx, `
+				SELECT message.body_text, delivery.delivery_status, delivery.recipient_chat_id
+				FROM conversation_messages message
+				JOIN conversation_participants sender
+				  ON sender.id = message.sender_participant_id
+				JOIN conversations conversation
+				  ON conversation.id = message.conversation_id
+				JOIN conversation_message_deliveries delivery
+				  ON delivery.message_id = message.id AND delivery.channel = 'telegram'
+				WHERE conversation.student_id = $1
+				  AND sender.staff_id = $2
+				ORDER BY message.id DESC
+				LIMIT 1
+			`, student.ID, secondCuratorID).Scan(&messageBody, &deliveryStatus, &recipientChatID); err != nil {
+				t.Fatalf("не удалось получить сообщение с комментарием координатора: %v", err)
+			}
+			expectedMessage := "Комментарий координатора к вашему ответу:\n\n" + feedback
+			if messageBody != expectedMessage || deliveryStatus != "pending" ||
+				recipientChatID != student.TelegramID {
+				t.Fatalf("комментарий должен попасть в чат и Telegram outbox ученика: body=%q status=%q chat_id=%d", messageBody, deliveryStatus, recipientChatID)
+			}
+			var messageCount int
+			if err := pool.QueryRow(ctx, `
+				SELECT count(*)
+				FROM conversation_messages message
+				JOIN conversation_participants sender ON sender.id = message.sender_participant_id
+				JOIN conversations conversation ON conversation.id = message.conversation_id
+				WHERE conversation.student_id = $1 AND sender.staff_id = $2
+			`, student.ID, secondCuratorID).Scan(&messageCount); err != nil || messageCount != 1 {
+				t.Fatalf("повторная проверка создала дублирующее сообщение: count=%d err=%v", messageCount, err)
+			}
+		} else {
+			var messageCount int
+			if err := pool.QueryRow(ctx, `
+				SELECT count(*)
+				FROM conversation_messages message
+				JOIN conversation_participants sender ON sender.id = message.sender_participant_id
+				JOIN conversations conversation ON conversation.id = message.conversation_id
+				WHERE conversation.student_id = $1 AND sender.staff_id = $2
+			`, student.ID, secondCuratorID).Scan(&messageCount); err != nil || messageCount != 1 {
+				t.Fatalf("принятие ответа не должно создавать лишнее сообщение: count=%d err=%v", messageCount, err)
+			}
 		}
 		afterReview, err := curator.ListReviewQueue(ctx, secondCuratorID)
 		if err != nil || len(afterReview) != 0 {
