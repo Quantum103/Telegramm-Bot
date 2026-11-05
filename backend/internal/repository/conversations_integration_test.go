@@ -651,6 +651,84 @@ func TestStudentMessageAutomaticallyAssignsLeastLoadedCoordinator(t *testing.T) 
 	}
 }
 
+func TestConcurrentSupportRequestsCanShareOnlyAvailableCoordinator(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, false)
+	coordinatorTelegramID := fixture.telegramID + 7000
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, coordinatorTelegramID); err != nil {
+		t.Fatalf("подключить Telegram единственного координатора: %v", err)
+	}
+
+	secondStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "Параллельный ученик поддержки",
+	})
+	if err != nil {
+		t.Fatalf("создать второго ученика: %v", err)
+	}
+
+	repo := NewConversationRepository(pool)
+	type result struct {
+		message domain.ConversationMessage
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var wait sync.WaitGroup
+	params := []domain.CreateStudentConversationMessageParams{
+		{
+			StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+			TelegramMessageID: 887774, BodyText: "Первое параллельное обращение.",
+		},
+		{
+			StudentID: secondStudent.ID, TelegramChatID: secondStudent.TelegramID,
+			TelegramMessageID: 887775, BodyText: "Второе параллельное обращение.",
+		},
+	}
+	for _, param := range params {
+		wait.Add(1)
+		go func(param domain.CreateStudentConversationMessageParams) {
+			defer wait.Done()
+			<-start
+			message, createErr := repo.CreateStudentMessage(ctx, param)
+			results <- result{message: message, err: createErr}
+		}(param)
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	messageIDs := make(map[int64]struct{}, 2)
+	for item := range results {
+		if item.err != nil {
+			t.Errorf("обращение к единственному координатору не должно теряться: %v", item.err)
+			continue
+		}
+		messageIDs[item.message.ID] = struct{}{}
+	}
+	if len(messageIDs) != 2 {
+		t.Fatalf("сохранено обращений = %d, ожидалось 2", len(messageIDs))
+	}
+
+	var assignmentCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM student_curator_assignments
+		WHERE curator_staff_id = $1 AND status = 'active'
+		  AND student_id IN ($2, $3)
+	`, fixture.curator1ID, fixture.studentID, secondStudent.ID).Scan(&assignmentCount); err != nil {
+		t.Fatalf("проверить назначения после параллельных обращений: %v", err)
+	}
+	if assignmentCount != 2 {
+		t.Fatalf("оба ученика должны попасть к единственному доступному координатору: assignments=%d", assignmentCount)
+	}
+	dialogs, err := repo.ListForCurator(ctx, fixture.curator1ID)
+	if err != nil || len(dialogs) != 2 {
+		t.Fatalf("координатор должен увидеть оба диалога: dialogs=%+v err=%v", dialogs, err)
+	}
+}
+
 func TestStudentMessageWithoutAvailableCoordinatorIsNotPersisted(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
