@@ -535,44 +535,162 @@ func TestProcessingCuratorNotificationIsRedirectedDuringTransfer(t *testing.T) {
 	}
 }
 
-func TestStudentMessageBeforeCuratorAssignmentIsStoredAndDeliveredAfterAssignment(t *testing.T) {
+func TestStudentMessageAutomaticallyAssignsLeastLoadedCoordinator(t *testing.T) {
 	pool := integrationPool(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, false)
+
+	firstTelegramID := fixture.telegramID + 5000
+	secondTelegramID := fixture.telegramID + 6000
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, firstTelegramID); err != nil {
+		t.Fatalf("подключить Telegram первого координатора: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator2ID, secondTelegramID); err != nil {
+		t.Fatalf("подключить Telegram второго координатора: %v", err)
+	}
+
+	courseID, _, _ := createCourseForEnrollmentTest(
+		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()), "Самостоятельный курс поддержки", 1,
+	)
+	courseRun, err := NewCourseEnrollmentRepository(pool).Start(ctx, fixture.studentID, courseID, "ai")
+	if err != nil {
+		t.Fatalf("начать самостоятельное прохождение: %v", err)
+	}
+
+	repo := NewConversationRepository(pool)
+	firstMessage, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
+		TelegramMessageID: 887771, BodyText: "Нужна помощь при самостоятельном прохождении.",
+	})
+	if err != nil {
+		t.Fatalf("первое обращение должно автоматически назначить координатора: %v", err)
+	}
+
+	var firstAssignedCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT curator_staff_id
+		FROM student_curator_assignments
+		WHERE student_id = $1 AND status = 'active'
+	`, fixture.studentID).Scan(&firstAssignedCuratorID); err != nil {
+		t.Fatalf("получить автоматически назначенного координатора: %v", err)
+	}
+	if firstAssignedCuratorID != fixture.curator1ID {
+		t.Fatalf("при равной нагрузке должен быть выбран первый координатор: got=%d want=%d",
+			firstAssignedCuratorID, fixture.curator1ID)
+	}
+
+	var courseMode string
+	var courseCuratorID pgtype.Int8
+	if err := pool.QueryRow(ctx, `
+		SELECT mode, curator_staff_id FROM course_enrollments WHERE id = $1
+	`, courseRun.Enrollment.ID).Scan(&courseMode, &courseCuratorID); err != nil {
+		t.Fatalf("проверить сохранённый режим курса: %v", err)
+	}
+	if courseMode != "ai" || courseCuratorID.Valid {
+		t.Fatalf("обращение за поддержкой не должно менять режим самостоятельного курса: mode=%s curator=%+v",
+			courseMode, courseCuratorID)
+	}
+
+	secondStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "Второй ученик поддержки",
+	})
+	if err != nil {
+		t.Fatalf("создать второго ученика: %v", err)
+	}
+	secondMessage, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: secondStudent.ID, TelegramChatID: secondStudent.TelegramID,
+		TelegramMessageID: 887772, BodyText: "Второму ученику тоже нужна помощь.",
+	})
+	if err != nil {
+		t.Fatalf("назначить координатора второму ученику: %v", err)
+	}
+
+	var secondAssignedCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT curator_staff_id
+		FROM student_curator_assignments
+		WHERE student_id = $1 AND status = 'active'
+	`, secondStudent.ID).Scan(&secondAssignedCuratorID); err != nil {
+		t.Fatalf("получить координатора второго ученика: %v", err)
+	}
+	if secondAssignedCuratorID != fixture.curator2ID {
+		t.Fatalf("новое обращение должно направляться координатору с меньшей нагрузкой: got=%d want=%d",
+			secondAssignedCuratorID, fixture.curator2ID)
+	}
+
+	var firstRecipientID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient_staff_id
+		FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, firstMessage.ID).Scan(&firstRecipientID); err != nil {
+		t.Fatalf("получить адресата первого уведомления: %v", err)
+	}
+	var secondRecipientID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient_staff_id
+		FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, secondMessage.ID).Scan(&secondRecipientID); err != nil {
+		t.Fatalf("получить адресата второго уведомления: %v", err)
+	}
+	if firstRecipientID != fixture.curator1ID || secondRecipientID != fixture.curator2ID {
+		t.Fatalf("уведомления должны идти назначенным координаторам: first=%d second=%d",
+			firstRecipientID, secondRecipientID)
+	}
+
+	firstDialogs, err := repo.ListForCurator(ctx, fixture.curator1ID)
+	if err != nil || len(firstDialogs) != 1 || firstDialogs[0].StudentID != fixture.studentID {
+		t.Fatalf("первый координатор должен видеть только своего ученика: dialogs=%+v err=%v", firstDialogs, err)
+	}
+	secondDialogs, err := repo.ListForCurator(ctx, fixture.curator2ID)
+	if err != nil || len(secondDialogs) != 1 || secondDialogs[0].StudentID != secondStudent.ID {
+		t.Fatalf("второй координатор должен видеть только своего ученика: dialogs=%+v err=%v", secondDialogs, err)
+	}
+}
+
+func TestStudentMessageWithoutAvailableCoordinatorIsNotPersisted(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	fixture := createConversationFixture(t, pool, false)
 	repo := NewConversationRepository(pool)
 
-	message, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+	_, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
-		TelegramMessageID: 887771, BodyText: "Сообщение до назначения куратора",
+		TelegramMessageID: 887773, BodyText: "Это сообщение не должно потеряться.",
 	})
-	if err != nil {
-		t.Fatalf("сообщение ученика должно сохраниться до назначения куратора: %v", err)
+	if !errors.Is(err, domain.ErrInvalidState) {
+		t.Fatalf("без доступного координатора обращение должно быть отклонено: %v", err)
 	}
-	deliveryRepo := NewConversationDeliveryRepository(pool)
-	delivery, err := deliveryRepo.ClaimDueDelivery(ctx, time.Minute)
-	if err != nil {
-		t.Fatalf("захватить уведомление без назначенного куратора: %v", err)
+
+	var assignmentCount, messageCount, deliveryCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM student_curator_assignments WHERE student_id = $1 AND status = 'active'
+	`, fixture.studentID).Scan(&assignmentCount); err != nil {
+		t.Fatalf("проверить назначения: %v", err)
 	}
-	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_assignment_missing" {
-		t.Fatalf("ожидалась задача без адресата и с понятной ошибкой: %+v", delivery)
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM conversation_messages message
+		JOIN conversations conversation ON conversation.id = message.conversation_id
+		WHERE conversation.student_id = $1
+	`, fixture.studentID).Scan(&messageCount); err != nil {
+		t.Fatalf("проверить сохранённые сообщения: %v", err)
 	}
-	if err := deliveryRepo.MarkDeliveryFailed(ctx, delivery.ID, delivery.PreparationErrorCode); err != nil {
-		t.Fatalf("сохранить отсутствие назначенного куратора: %v", err)
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM conversation_message_deliveries delivery
+		JOIN conversation_messages message ON message.id = delivery.message_id
+		JOIN conversations conversation ON conversation.id = message.conversation_id
+		WHERE conversation.student_id = $1
+	`, fixture.studentID).Scan(&deliveryCount); err != nil {
+		t.Fatalf("проверить уведомления: %v", err)
 	}
-	if err := NewStaffManagementRepository(pool).AssignStudentCurator(ctx, fixture.adminID, fixture.studentID, fixture.curator1ID); err != nil {
-		t.Fatalf("назначить первого куратора: %v", err)
-	}
-	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+5000); err != nil {
-		t.Fatalf("привязать Telegram нового куратора: %v", err)
-	}
-	delivery, err = deliveryRepo.ClaimDueDelivery(ctx, time.Minute)
-	if err != nil {
-		t.Fatalf("повторно захватить задачу после назначения: %v", err)
-	}
-	if delivery.MessageID != message.ID || delivery.RecipientStaffID != fixture.curator1ID ||
-		delivery.RecipientChatID != fixture.telegramID+5000 || delivery.PreparationErrorCode != "" {
-		t.Fatalf("задача не была восстановлена для нового куратора: %+v", delivery)
+	if assignmentCount != 0 || messageCount != 0 || deliveryCount != 0 {
+		t.Fatalf("сообщение не должно считаться отправленным без адресата: assignments=%d messages=%d deliveries=%d",
+			assignmentCount, messageCount, deliveryCount)
 	}
 }
 
