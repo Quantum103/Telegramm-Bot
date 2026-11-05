@@ -930,14 +930,14 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referral
 func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code string) (string, bool) {
 	if b.studentReferrals == nil {
 		b.logger.Error("реферальный сервис Telegram-бота не подключён", "student_id", studentID)
-		return "Не удалось применить приглашение координатора. Каталог курсов открыт.", true
+		return "Не удалось применить приглашение координатора. Главное меню открыто.", true
 	}
 
 	result, err := b.studentReferrals.AssignStudentByReferral(ctx, studentID, code)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidInput), errors.Is(err, domain.ErrNotFound):
-			return "Ссылка приглашения недействительна или координатор больше неактивен. Каталог курсов открыт.", true
+			return "Ссылка приглашения недействительна или координатор больше неактивен. Главное меню открыто.", true
 		case errors.Is(err, domain.ErrConflict):
 			return "За вами уже закреплён другой координатор. Текущее назначение не изменено.", true
 		case errors.Is(err, domain.ErrInvalidState):
@@ -956,7 +956,7 @@ func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code st
 	}
 
 	b.logger.Warn("реферальный сервис вернул пустой результат назначения", "student_id", studentID)
-	return "Не удалось подтвердить назначение координатора. Каталог курсов открыт.", true
+	return "Не удалось подтвердить назначение координатора. Главное меню открыто.", true
 }
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
 	return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
