@@ -702,6 +702,7 @@ func TestSelectingCourseShowsOnlyThatCoursesLessons(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 
@@ -725,6 +726,7 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
 	last := lastEdit(t, api)
@@ -764,6 +766,7 @@ func TestOpeningLessonRendersFormattedPassageAndInlineChapterLink(t *testing.T) 
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
 	last := lastEdit(t, api)
@@ -811,6 +814,7 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
@@ -853,6 +857,7 @@ func TestLessonWithoutQuestionsShowsFriendlyMessage(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
@@ -932,6 +937,7 @@ func TestStaleNavigationDoesNotSkipQuestion(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 
@@ -950,6 +956,7 @@ func TestProgressPositionRestoredAfterNewBotInstance(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 
@@ -957,6 +964,7 @@ func TestProgressPositionRestoredAfterNewBotInstance(t *testing.T) {
 	restartedBot := newTestBot(api, students, catalog, learning)
 	restartedBot.handleUpdate(context.Background(), testUpdate(2, "/start", user))
 	newMessageID := api.messages[len(api.messages)-1].messageID
+	restartedBot.handleCallback(context.Background(), testCallback("home:lessons", user, newMessageID))
 	restartedBot.handleCallback(context.Background(), testCallback("course:10", user, newMessageID))
 	restartedBot.handleCallback(context.Background(), testCallback("lesson:10:100", user, newMessageID))
 
