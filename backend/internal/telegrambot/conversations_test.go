@@ -173,7 +173,7 @@ func TestLinkedCuratorStartKeepsCuratorMessage(t *testing.T) {
 		api, students, catalog, learning, nil, nil, nil, staffTelegram,
 	)
 	user := User{ID: 987656, Username: "curator"}
-	if !bot.handleUpdate(context.Background(), Update{UpdateID: 3, Message: &Message{
+	if !bot.handleUpdate(context.Background(), Update{UpdateID: 4, Message: &Message{
 		MessageID: 7, From: &user, Chat: Chat{ID: user.ID, Type: "private"}, Text: "/start",
 	}}) {
 		t.Fatal("кураторский /start не обработан")
@@ -238,11 +238,17 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 	user := testUser()
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
-	if !hasButton(api.messages[0].markup, "chat:start") {
-		t.Fatalf("в меню отсутствует кнопка переписки: %+v", api.messages[0].markup)
+	if len(api.messages) != 1 || !hasButton(api.messages[0].markup, "home:lessons") ||
+		hasButton(api.messages[0].markup, "chat:start") {
+		t.Fatalf("главное меню должно содержать только две основные кнопки: %+v", api.messages[0].markup)
+	}
+	bot.handleCallbackWithUpdateID(context.Background(), 2, testCallback("home:lessons", user, api.messages[0].messageID))
+	learningMenu := lastEdit(t, api)
+	if !hasButton(learningMenu.markup, "chat:start") {
+		t.Fatalf("в разделе обучения отсутствует связь с координатором: %+v", learningMenu.markup)
 	}
 
-	bot.handleCallbackWithUpdateID(context.Background(), 2, testCallback("chat:start", user, api.messages[0].messageID))
+	bot.handleCallbackWithUpdateID(context.Background(), 3, testCallback("chat:start", user, api.messages[0].messageID))
 	student := students.byID[user.ID]
 	if !conversations.chatMode[student.ID] {
 		t.Fatal("режим общения не включился")
