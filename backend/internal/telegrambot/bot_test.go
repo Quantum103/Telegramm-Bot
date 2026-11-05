@@ -881,6 +881,7 @@ func TestEmptyCourseShowsFriendlyMessage(t *testing.T) {
 	bot := newTestBot(api, students, catalog, learning)
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, api.messages[0].messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, api.messages[0].messageID))
 
 	last := lastEdit(t, api)
@@ -899,6 +900,7 @@ func TestInvalidCallbackIsAcknowledgedAndShowsCatalog(t *testing.T) {
 	bot := newTestBot(api, students, catalog, learning)
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, api.messages[0].messageID))
 
 	bot.handleCallback(context.Background(), testCallback("course:not-an-id", user, api.messages[0].messageID))
 
@@ -917,6 +919,7 @@ func TestLessonFromAnotherCourseCannotBeOpened(t *testing.T) {
 	bot := newTestBot(api, students, catalog, learning)
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, api.messages[0].messageID))
 
 	bot.handleCallback(context.Background(), testCallback("lesson:20:100", user, api.messages[0].messageID))
 
