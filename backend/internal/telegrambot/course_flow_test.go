@@ -267,7 +267,7 @@ func TestCuratorModeFailureDoesNotCreateRunOrSwitchToAI(t *testing.T) {
 	bot.handleCallback(context.Background(), testCallback("course:start:curator:10", user, messageID))
 
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "вам ещё не назначен активный координатор") ||
+	if !strings.Contains(last.text, "нет доступного координатора") ||
 		!strings.Contains(last.text, "Ваш выбор не изменён") {
 		t.Fatalf("curator failure is not explained safely: %q", last.text)
 	}
