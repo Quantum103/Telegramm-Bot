@@ -204,7 +204,7 @@ func (b *Bot) openLesson(ctx context.Context, chatID, studentID, courseID, lesso
 	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNoCurator) {
-			b.render(ctx, chatID, messageID, "Для прохождения с куратором сначала должен быть назначен активный куратор. Обратитесь к администратору платформы.", keyboard(
+			b.render(ctx, chatID, messageID, "Для прохождения с координатором сначала должно быть назначено ответственное лицо. Обратитесь к администратору платформы.", keyboard(
 				button("К курсам", "courses"),
 			))
 			return
@@ -372,7 +372,7 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 		if hasSaved {
 			message.text("\n\n💬 Ваш сохранённый ответ:\n" + truncate(state.SavedAnswer.AnswerText, 650))
 			if progress.Enrollment.Mode == "curator" {
-				message.text("\n\n✅ Ответ сохранён. После отправки урока куратор просмотрит все ваши ответы.")
+				message.text("\n\n✅ Ответ сохранён. После отправки урока координатор просмотрит все ваши ответы.")
 			} else {
 				message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ.")
 			}
@@ -621,10 +621,10 @@ func (b *Bot) finishLesson(ctx context.Context, chatID, studentID, messageID, en
 			return !isRetryableUpdateError(err)
 		}
 	}
-	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или написать куратору."
-	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Написать куратору", "chat:start")}}
+	text := "✅ Урок завершён!\n\nСпасибо за прохождение. Теперь можно выбрать следующий урок или связаться с координатором."
+	rows := [][]InlineKeyboardButton{{button("К курсам", "courses")}, {button("Связаться с координатором", "chat:start")}}
 	if completed.Mode == "curator" {
-		text = "✅ Урок отправлен куратору!\n\nОн больше не отображается среди доступных уроков. Куратор самостоятельно проверит ваши ответы и при необходимости свяжется с вами лично."
+		text = "✅ Урок отправлен координатору!\n\nОн больше не отображается среди доступных уроков. Координатор самостоятельно проверит ваши ответы и при необходимости свяжется с вами лично."
 		if completed.CourseEnrollmentID != nil {
 			if navigator, ok := b.learning.(CourseEnrollmentNavigator); ok {
 				lessons, lessonsErr := navigator.CourseLessons(ctx, studentID, *completed.CourseEnrollmentID)
