@@ -901,11 +901,13 @@ func TestInvalidCallbackIsAcknowledgedAndShowsCatalog(t *testing.T) {
 	user := testUser()
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	bot.handleCallback(context.Background(), testCallback("home:lessons", user, api.messages[0].messageID))
+	acknowledgedBeforeStale := len(api.answered)
 
 	bot.handleCallback(context.Background(), testCallback("course:not-an-id", user, api.messages[0].messageID))
 
-	if len(api.answered) != 1 || !strings.HasPrefix(api.answered[0], "callback-test-") {
-		t.Fatalf("callback was not acknowledged: %+v", api.answered)
+	if acknowledgedBeforeStale != 1 || len(api.answered) != acknowledgedBeforeStale+1 ||
+		!strings.HasPrefix(api.answered[len(api.answered)-1], "callback-test-") {
+		t.Fatalf("stale callback was not acknowledged: %+v", api.answered)
 	}
 	if !strings.Contains(lastEdit(t, api).text, "Выберите курс") {
 		t.Fatalf("stale callback did not return to catalog: %q", lastEdit(t, api).text)
