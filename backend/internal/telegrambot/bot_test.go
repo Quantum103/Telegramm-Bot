@@ -249,6 +249,9 @@ func (f *fakeCatalog) GetLessonDetail(_ context.Context, lessonID int64) (domain
 }
 
 type fakeLearning struct {
+	cabinet          domain.StudentCabinet
+	cabinetErr       error
+	cabinetCalls     int
 	mu               sync.Mutex
 	catalog          *fakeCatalog
 	nextEnrollmentID int64
@@ -271,6 +274,15 @@ func newFakeLearning(catalog *fakeCatalog) *fakeLearning {
 		progress:         make(map[int64]domain.Progress),
 		questions:        make(map[int64][]domain.LessonQuestion),
 	}
+}
+
+func (f *fakeLearning) GetStudentCabinet(_ context.Context, _ int64) (domain.StudentCabinet, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cabinetCalls++
+	cabinet := f.cabinet
+	cabinet.Courses = append([]domain.StudentCabinetCourse(nil), cabinet.Courses...)
+	return cabinet, f.cabinetErr
 }
 
 func (f *fakeLearning) StartLesson(ctx context.Context, studentID, lessonID int64, mode string) (domain.Progress, error) {
@@ -515,7 +527,7 @@ func testCallback(data string, user User, messageID int64) CallbackQuery {
 	}
 }
 
-func TestStartRegistersStudentAndShowsCourses(t *testing.T) {
+func TestStartRegistersStudentAndShowsMainMenu(t *testing.T) {
 	api := &fakeAPI{}
 	students := &fakeStudents{}
 	catalog, learning := fixture()
@@ -533,11 +545,54 @@ func TestStartRegistersStudentAndShowsCourses(t *testing.T) {
 	if len(api.messages) != 1 {
 		t.Fatalf("expected one main message, got %d", len(api.messages))
 	}
-	if !strings.Contains(api.messages[0].text, "Привет, Анна Иванова") {
-		t.Errorf("greeting is missing: %q", api.messages[0].text)
+	for _, expected := range []string{"Здравствуйте!", "спокойном для себя темпе", "полностью анонимно", "Связаться с координатором"} {
+		if !strings.Contains(api.messages[0].text, expected) {
+			t.Errorf("welcome text is missing %q: %q", expected, api.messages[0].text)
+		}
 	}
-	if !hasButton(api.messages[0].markup, "course:10") || !hasButton(api.messages[0].markup, "course:20") {
-		t.Fatalf("published courses not displayed: %+v", api.messages[0].markup)
+	if api.messages[0].markup == nil || len(api.messages[0].markup.InlineKeyboard) != 2 ||
+		!hasButton(api.messages[0].markup, "home:account") ||
+		!hasButton(api.messages[0].markup, "home:lessons") ||
+		hasButton(api.messages[0].markup, "course:10") {
+		t.Fatalf("main menu must show only the two requested actions: %+v", api.messages[0].markup)
+	}
+}
+
+func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	learning.cabinet = domain.StudentCabinet{
+		RegisteredAt: time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC),
+		CompletedCourses: 2,
+		CompletedLessons: 7,
+		Courses: []domain.StudentCabinetCourse{
+			{CourseID: 10, Title: "Основы Библии", Status: "completed", TotalLessons: 4, CompletedLessons: 4},
+			{CourseID: 20, Title: "Жизнь Иисуса Христа", Status: "in_progress", TotalLessons: 5, CompletedLessons: 3},
+		},
+	}
+	bot := newTestBot(api, students, catalog, learning)
+	user := testUser()
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	bot.handleCallback(context.Background(), testCallback("home:account", user, api.messages[0].messageID))
+
+	last := lastEdit(t, api)
+	for _, expected := range []string{
+		"Личный кабинет",
+		"Дата регистрации: 15.03.2026",
+		"Завершено курсов: 2",
+		"Завершено уроков: 7",
+		"Основы Библии",
+		"Завершён · 4 из 4 уроков",
+		"Жизнь Иисуса Христа",
+		"В процессе · 3 из 5 уроков",
+	} {
+		if !strings.Contains(last.text, expected) {
+			t.Errorf("cabinet is missing %q: %q", expected, last.text)
+		}
+	}
+	if learning.cabinetCalls != 1 || !hasButton(last.markup, "home:lessons") || !hasButton(last.markup, "home:main") {
+		t.Fatalf("cabinet navigation or single summary read is incorrect: calls=%d markup=%+v", learning.cabinetCalls, last.markup)
 	}
 }
 
@@ -563,7 +618,7 @@ func TestStartWithReferralAssignsCuratorWithoutChangingCourseMode(t *testing.T) 
 	if !strings.Contains(api.messages[0].text, "не меняет способ прохождения курса") {
 		t.Fatalf("referral must not select or change the course mode: %q", api.messages[0].text)
 	}
-	if !hasButton(api.messages[0].markup, "course:10") || learning.startCalls != 0 {
+	if !hasButton(api.messages[0].markup, "home:lessons") || learning.startCalls != 0 {
 		t.Fatalf("referral must show the catalog without starting a course: message=%+v starts=%d", api.messages[0], learning.startCalls)
 	}
 }
@@ -584,7 +639,7 @@ func TestStartWithInvalidReferralKeepsNormalCatalogFlow(t *testing.T) {
 	if len(api.messages) != 1 || !strings.Contains(api.messages[0].text, "недействительна") {
 		t.Fatalf("friendly invalid-referral response missing: %+v", api.messages)
 	}
-	if !hasButton(api.messages[0].markup, "course:10") || learning.startCalls != 0 {
+	if !hasButton(api.messages[0].markup, "home:lessons") || learning.startCalls != 0 {
 		t.Fatalf("invalid referral must not block the ordinary catalog: message=%+v starts=%d", api.messages[0], learning.startCalls)
 	}
 }
@@ -602,7 +657,7 @@ func TestStartWithReferralConflictDoesNotReplaceCurator(t *testing.T) {
 	if referrals.calls != 1 || !strings.Contains(api.messages[0].text, "Текущее назначение не изменено") {
 		t.Fatalf("existing curator assignment was not preserved: %+v", api.messages)
 	}
-	if !hasButton(api.messages[0].markup, "course:10") || learning.startCalls != 0 {
+	if !hasButton(api.messages[0].markup, "home:lessons") || learning.startCalls != 0 {
 		t.Fatalf("referral conflict must preserve normal catalog flow: message=%+v starts=%d", api.messages[0], learning.startCalls)
 	}
 }
@@ -628,12 +683,14 @@ func TestEmptyCatalogIsExplained(t *testing.T) {
 	bot := newTestBot(api, students, catalog, learning)
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", testUser()))
+	bot.handleCallback(context.Background(), testCallback("home:lessons", testUser(), api.messages[0].messageID))
+	last := lastEdit(t, api)
 
-	if len(api.messages) != 1 || !strings.Contains(api.messages[0].text, "нет опубликованных курсов") {
-		t.Fatalf("empty catalog message missing: %+v", api.messages)
+	if !strings.Contains(last.text, "нет опубликованных курсов") {
+		t.Fatalf("empty catalog message missing: %q", last.text)
 	}
-	if !hasButton(api.messages[0].markup, "courses") {
-		t.Fatal("empty catalog should allow refreshing the list")
+	if !hasButton(last.markup, "courses") || !hasButton(last.markup, "home:main") {
+		t.Fatal("empty catalog should allow refreshing the list and returning home")
 	}
 }
 
@@ -917,12 +974,11 @@ func TestDatabaseErrorDoesNotLeakDetailsToStudent(t *testing.T) {
 	bot := newTestBot(api, students, catalog, learning)
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", testUser()))
+	bot.handleCallback(context.Background(), testCallback("home:lessons", testUser(), api.messages[0].messageID))
+	last := lastEdit(t, api)
 
-	if len(api.messages) != 1 {
-		t.Fatalf("expected a safe response, messages=%d", len(api.messages))
-	}
-	if strings.Contains(api.messages[0].text, "private detail") || !strings.Contains(api.messages[0].text, "Не удалось загрузить каталог") {
-		t.Fatalf("database details leaked or friendly message missing: %q", api.messages[0].text)
+	if strings.Contains(last.text, "private detail") || !strings.Contains(last.text, "Не удалось загрузить каталог") {
+		t.Fatalf("database details leaked or friendly message missing: %q", last.text)
 	}
 }
 
