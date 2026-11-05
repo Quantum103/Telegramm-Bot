@@ -724,7 +724,7 @@ func (b *Bot) processUpdate(ctx context.Context, update Update) bool {
 	case "/link":
 		return b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
 	case "/help":
-		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть главное меню\n/chat — написать куратору\n/link КОД — привязать Telegram к учётной записи куратора\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
+		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с координатором.\n\n/start — открыть главное меню\n/chat — связаться с координатором\n/link КОД — привязать Telegram к учётной записи куратора\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с координатором сначала включите режим через /chat или меню.")
 		return true
 	case "/cancel":
 		return b.handleCancelCommand(ctx, message.Chat.ID, *message.From)
@@ -840,7 +840,7 @@ func (b *Bot) handleChatCommand(ctx context.Context, chatID int64, user User) bo
 
 func (b *Bot) startStudentChat(ctx context.Context, chatID, messageID int64, student domain.Student) bool {
 	if b.conversations == nil {
-		b.render(ctx, chatID, messageID, "Общение с куратором пока недоступно. Попробуйте позже.", keyboard(button("К курсам", "courses")))
+		b.render(ctx, chatID, messageID, "Общение с координатором пока недоступно. Попробуйте позже.", keyboard(button("К курсам", "courses")))
 		return true
 	}
 	if err := b.conversations.SetStudentChatMode(ctx, student.ID, true); err != nil {
@@ -890,7 +890,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	})
 	if errors.Is(err, domain.ErrInvalidState) {
 		// Не удаляем текст и не подтверждаем как отправленный: он остаётся в истории Telegram-чата.
-		b.send(ctx, message.Chat.ID, "Сейчас вам не назначен активный куратор. Сообщение НЕ отправлено и не сохранено. Оно остаётся в истории этого Telegram-чата: скопируйте его и отправьте повторно после назначения куратора.")
+		b.send(ctx, message.Chat.ID, "Сейчас вам не назначен активный координатор. Сообщение НЕ отправлено и не сохранено. Оно остаётся в истории этого Telegram-чата: скопируйте его и отправьте повторно после назначения куратора.")
 		return true
 	}
 	if errors.Is(err, domain.ErrInvalidInput) {
@@ -904,7 +904,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	if saved.Replayed {
 		b.send(ctx, message.Chat.ID, "Это сообщение уже принято и сохранено. Куратор увидит его в диалоге.")
 	} else {
-		b.send(ctx, message.Chat.ID, "Сообщение сохранено и передано куратору. Он обязательно вам ответит.")
+		b.send(ctx, message.Chat.ID, "Сообщение сохранено и передано координатору. Он обязательно вам ответит.")
 	}
 	return true
 }
