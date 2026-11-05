@@ -463,36 +463,57 @@ func TestCuratorNotificationRequiresLinkedActiveCurator(t *testing.T) {
 	defer cancel()
 	fixture := createConversationFixture(t, pool, true)
 	repo := NewConversationRepository(pool)
-	message, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+	deliveryRepo := NewConversationDeliveryRepository(pool)
+
+	unlinkedMessage, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
 		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
 		TelegramMessageID: 887769, BodyText: "Уведомление без привязки",
 	})
 	if err != nil {
 		t.Fatalf("создать сообщение ученика: %v", err)
 	}
-	delivery, err := NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
+	delivery, err := deliveryRepo.ClaimDueDelivery(ctx, time.Minute)
 	if err != nil {
 		t.Fatalf("захватить задачу без привязки: %v", err)
 	}
-	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_telegram_not_linked" {
+	if delivery.MessageID != unlinkedMessage.ID || delivery.PreparationErrorCode != "curator_telegram_not_linked" {
 		t.Fatalf("неверное состояние при отсутствии Telegram-привязки: %+v", delivery)
 	}
-	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET account_status = 'inactive', telegram_id = $2 WHERE id = $1", fixture.curator1ID, fixture.telegramID+4000); err != nil {
-		t.Fatalf("отключить куратора с привязанным Telegram: %v", err)
+	if err := deliveryRepo.MarkDeliveryFailed(ctx, delivery.ID, delivery.PreparationErrorCode); err != nil {
+		t.Fatalf("зафиксировать отсутствие Telegram-привязки: %v", err)
 	}
-	// Новое сообщение создаёт новую задачу, claim должен увидеть отключённую учётную запись.
-	message, err = repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
-		StudentID: fixture.studentID, TelegramChatID: fixture.telegramID,
-		TelegramMessageID: 887770, BodyText: "Уведомление отключённому куратору",
+
+	secondTelegramID := fixture.telegramID + 4000
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", fixture.curator2ID, secondTelegramID); err != nil {
+		t.Fatalf("привязать Telegram второго координатора: %v", err)
+	}
+	secondStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "Ученик отключённого координатора",
 	})
 	if err != nil {
-		t.Fatalf("создать второе сообщение ученика: %v", err)
+		t.Fatalf("создать второго ученика: %v", err)
 	}
-	delivery, err = NewConversationDeliveryRepository(pool).ClaimDueDelivery(ctx, time.Minute)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO student_curator_assignments (student_id, curator_staff_id)
+		VALUES ($1, $2)
+	`, secondStudent.ID, fixture.curator2ID); err != nil {
+		t.Fatalf("назначить второго координатора: %v", err)
+	}
+	inactiveMessage, err := repo.CreateStudentMessage(ctx, domain.CreateStudentConversationMessageParams{
+		StudentID: secondStudent.ID, TelegramChatID: secondStudent.TelegramID,
+		TelegramMessageID: 887770, BodyText: "Уведомление отключённому координатору",
+	})
 	if err != nil {
-		t.Fatalf("захватить задачу отключённого куратора: %v", err)
+		t.Fatalf("создать сообщение до отключения координатора: %v", err)
 	}
-	if delivery.MessageID != message.ID || delivery.PreparationErrorCode != "curator_account_inactive" {
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET account_status = 'inactive' WHERE id = $1", fixture.curator2ID); err != nil {
+		t.Fatalf("отключить второго координатора: %v", err)
+	}
+	delivery, err = deliveryRepo.ClaimDueDelivery(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("захватить задачу отключённого координатора: %v", err)
+	}
+	if delivery.MessageID != inactiveMessage.ID || delivery.PreparationErrorCode != "curator_account_inactive" {
 		t.Fatalf("отключённый сотрудник не был отклонён: %+v", delivery)
 	}
 }
