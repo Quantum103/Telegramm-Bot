@@ -66,7 +66,7 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	}
 	curatorID := createStaffForCourseTest(t, ctx, pool, "curator")
 	defer func() {
-			_, _ = pool.Exec(context.Background(), `
+		_, _ = pool.Exec(context.Background(), `
 			UPDATE staff_accounts SET account_status = 'inactive', telegram_id = NULL WHERE id = $1
 		`, curatorID)
 	}()
