@@ -6,7 +6,6 @@ import (
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // GetStudentCabinet читает профильную дату, общую статистику и последние запуски курсов одним SQL-запросом.
