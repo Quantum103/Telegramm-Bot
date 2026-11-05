@@ -717,6 +717,33 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 	`, params.CuratorStaffID, params.AttemptID, params.Decision, studentID); err != nil {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("записать аудит проверки ответа куратором", err)
 	}
+	if params.Decision == "needs_revision" {
+		var conversationID int64
+		err := tx.QueryRow(ctx, `
+			SELECT id
+			FROM conversations
+			WHERE student_id = $1
+			  AND assigned_curator_staff_id = $2
+			  AND status = 'active'
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+			FOR UPDATE
+		`, studentID, params.CuratorStaffID).Scan(&conversationID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.AnswerAttemptReview{}, ErrInvalidState
+		}
+		if err != nil {
+			return domain.AnswerAttemptReview{}, mapDatabaseError("получить диалог ученика для комментария проверки", err)
+		}
+
+		feedbackMessage := "Комментарий координатора к вашему ответу:\n\n" + params.Feedback
+		if _, err := NewConversationRepository(r.pool).createCuratorMessageTx(
+			ctx, tx, params.CuratorStaffID, conversationID, feedbackMessage,
+		); err != nil {
+			return domain.AnswerAttemptReview{}, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return domain.AnswerAttemptReview{}, mapDatabaseError("зафиксировать решение куратора", err)
 	}
