@@ -724,7 +724,7 @@ func (b *Bot) processUpdate(ctx context.Context, update Update) bool {
 	case "/link":
 		return b.handleStaffLinkCommand(ctx, message.Chat.ID, *message.From, fields)
 	case "/help":
-		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть каталог курсов\n/chat — написать куратору\n/link КОД — привязать Telegram к учётной записи куратора\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
+		b.send(ctx, message.Chat.ID, "Этот бот предназначен для изучения Библии через уроки и общения с куратором.\n\n/start — открыть главное меню\n/chat — написать куратору\n/link КОД — привязать Telegram к учётной записи куратора\n/help — показать эту справку\n/cancel — отменить текущее действие.\n\nВ текстовом вопросе отправьте ответ следующим сообщением. Для общения с куратором сначала включите режим через /chat или меню.")
 		return true
 	case "/cancel":
 		return b.handleCancelCommand(ctx, message.Chat.ID, *message.From)
@@ -916,27 +916,15 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referral
 		b.send(ctx, chatID, "Не удалось завершить регистрацию из-за временной ошибки. Попробуйте ещё раз немного позже.")
 		return !isRetryableUpdateError(err)
 	}
-	if b.conversations != nil {
-		if err := b.conversations.SetStudentChatMode(ctx, student.ID, false); err != nil {
-			b.logger.Warn("не удалось выключить режим общения при открытии каталога", "student_id", student.ID, "error", err)
-			b.send(ctx, chatID, "Не удалось переключить режим общения из-за временной ошибки. Повторите /start.")
-			return !isRetryableUpdateError(err)
-		}
-	}
-	name := student.DisplayName
-	if strings.TrimSpace(name) == "" {
-		name = displayName(user)
-	}
-	greeting := "Привет, " + name + "!"
+	notice := ""
 	if referralPayload != "" {
 		referralMessage, ok := b.applyStudentReferral(ctx, student.ID, referralPayload)
-		greeting += "\n\n" + referralMessage
+		notice = referralMessage
 		if !ok {
 			return false
 		}
 	}
-	b.showStudentHome(ctx, chatID, student.ID, 0, greeting)
-	return true
+	return b.showMainMenu(ctx, chatID, student.ID, 0, notice)
 }
 
 func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code string) (string, bool) {
