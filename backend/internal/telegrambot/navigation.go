@@ -61,7 +61,8 @@ func (b *Bot) renderCourses(ctx context.Context, chatID, studentID, messageID in
 		text += "\n\nПока нет опубликованных курсов. Попробуйте позже."
 		rows = append(rows, []InlineKeyboardButton{button("Обновить список", "courses")})
 	}
-	rows = append(rows, []InlineKeyboardButton{button("Написать куратору", "chat:start")})
+	rows = append(rows, []InlineKeyboardButton{button("Связаться с координатором", "chat:start")})
+	rows = append(rows, []InlineKeyboardButton{button("Главное меню", "home:main")})
 	b.render(ctx, chatID, messageID, text, markup(rows))
 }
 
@@ -449,6 +450,7 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 			Text: map[bool]string{true: "Отправить урок", false: "Завершить урок"}[progress.Enrollment.Mode == "curator"], CallbackData: fmt.Sprintf("lesson:finish:%d", progress.Enrollment.ID),
 		}})
 	}
+	rows = append(rows, []InlineKeyboardButton{button("Связаться с координатором", "chat:start")})
 	if courseID > 0 {
 		rows = append(rows, []InlineKeyboardButton{button("К урокам", fmt.Sprintf("lessons:%d", courseID))})
 	} else {
@@ -498,6 +500,13 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 	parts := strings.Split(callback.Data, ":")
 	switch {
 	case callback.Data == "home:refresh":
+		b.showStudentHome(ctx, chatID, student.ID, messageID, "")
+		return true
+	case callback.Data == "home:main":
+		return b.showMainMenu(ctx, chatID, student.ID, messageID, "")
+	case callback.Data == "home:account":
+		return b.showStudentCabinet(ctx, chatID, student.ID, messageID)
+	case callback.Data == "home:lessons":
 		b.showStudentHome(ctx, chatID, student.ID, messageID, "")
 		return true
 	case callback.Data == "course:continue":
