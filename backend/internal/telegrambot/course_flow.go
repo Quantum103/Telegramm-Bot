@@ -182,7 +182,7 @@ func (b *Bot) startCourseWithMode(
 				return !isRetryableUpdateError(currentErr)
 			}
 			b.render(ctx, chatID, messageID,
-				"Пока не удалось начать курс с координатором: вам ещё не назначен активный координатор. Администратор платформы должен назначить его. Ваш выбор не изменён — после назначения можно будет повторить попытку.",
+				"Сейчас нет доступного координатора с подключённым Telegram. Курс не начат, а ваш выбор не изменён. Можно повторить попытку позже или выбрать самостоятельное прохождение.",
 				markup([][]InlineKeyboardButton{
 					{button("Повторить выбор способа", fmt.Sprintf("course:%d", courseID))},
 					{button("К курсам", "courses")},
@@ -236,7 +236,7 @@ func (b *Bot) continueCurrentCourse(ctx context.Context, chatID, studentID, mess
 	run, err := nav.StartCourse(ctx, studentID, active.Enrollment.CourseID, active.Enrollment.Mode)
 	if errors.Is(err, domain.ErrNoCurator) {
 		b.render(ctx, chatID, messageID,
-			"Не удалось продолжить курс с координатором: назначение сейчас неактивно. Администратор платформы должен восстановить назначение. Режим обучения не изменён.",
+			"Сейчас нет доступного координатора для продолжения курса. Ваш прогресс и выбранный способ обучения сохранены. Попробуйте позже или обратитесь к администратору платформы.",
 			keyboard(button("Повторить", "course:continue"), button("К курсам", "courses")))
 		return true
 	}
