@@ -190,26 +190,27 @@ func TestCourseModeChoiceStartsAICourseAndFirstLesson(t *testing.T) {
 
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	bot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 
 	choice := lastEdit(t, api)
 	if !strings.Contains(choice.text, "Как вы хотите проходить этот курс?") ||
-		!strings.Contains(choice.text, "специалист будет проверять ваши ответы") ||
-		!strings.Contains(choice.text, "искусственный интеллект будет проверять ваши ответы") {
+		!strings.Contains(choice.text, "С координатором") ||
+		!strings.Contains(choice.text, "Самостоятельно") {
 		t.Fatalf("mode choice screen is incomplete: %q", choice.text)
 	}
 	curatorButton, ok := findButton(choice.markup, "course:start:curator:10")
-	if !ok || curatorButton.Text != "⭐ С куратором" {
+	if !ok || curatorButton.Text != "⭐ С координатором" {
 		t.Fatalf("curator choice must have a star: %+v", curatorButton)
 	}
 	if !hasButton(choice.markup, "course:start:ai:10") {
-		t.Fatal("AI choice is missing")
+		t.Fatal("self-study choice is missing")
 	}
 
 	bot.handleCallback(context.Background(), testCallback("course:start:ai:10", user, messageID))
 	firstQuestion := lastEdit(t, api)
 	if !strings.Contains(firstQuestion.text, "ВОПРОС 1 / 2") ||
-		!strings.Contains(firstQuestion.text, "Вы выбрали прохождение курса с ИИ") ||
+		!strings.Contains(firstQuestion.text, "Вы выбрали самостоятельное прохождение") ||
 		!strings.Contains(firstQuestion.text, "Кто написал Евангелие от Марка?") {
 		t.Fatalf("AI course did not open the first question: %q", firstQuestion.text)
 	}
@@ -236,7 +237,7 @@ func TestCuratorModeSelectionConfirmsAndOpensFirstLesson(t *testing.T) {
 	bot.handleCallback(context.Background(), testCallback("course:start:curator:10", user, messageID))
 
 	firstQuestion := lastEdit(t, api)
-	if !strings.Contains(firstQuestion.text, "Вы будете проходить этот курс с куратором") ||
+	if !strings.Contains(firstQuestion.text, "Вы будете проходить этот курс с координатором") ||
 		!strings.Contains(firstQuestion.text, "ВОПРОС 1 / 2") {
 		t.Fatalf("curator selection was not confirmed before the first lesson: %q", firstQuestion.text)
 	}
@@ -264,7 +265,7 @@ func TestCuratorModeFailureDoesNotCreateRunOrSwitchToAI(t *testing.T) {
 	bot.handleCallback(context.Background(), testCallback("course:start:curator:10", user, messageID))
 
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "вам ещё не назначен активный куратор") ||
+	if !strings.Contains(last.text, "вам ещё не назначен активный координатор") ||
 		!strings.Contains(last.text, "Ваш выбор не изменён") {
 		t.Fatalf("curator failure is not explained safely: %q", last.text)
 	}
@@ -289,6 +290,7 @@ func TestStartRestoresSavedCourseAndQuestionAfterBotRestart(t *testing.T) {
 	firstBot := newCourseTestBot(api, students, catalog, learning)
 	firstBot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	messageID := api.messages[0].messageID
+	firstBot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
 	firstBot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	firstBot.handleCallback(context.Background(), testCallback("course:start:ai:10", user, messageID))
 	firstBot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
@@ -299,13 +301,21 @@ func TestStartRestoresSavedCourseAndQuestionAfterBotRestart(t *testing.T) {
 	// A new bot instance shares only the database-backed service state.
 	restartedBot := newCourseTestBot(api, students, catalog, learning)
 	restartedBot.handleUpdate(context.Background(), testUpdate(2, "/start", user))
-	home := api.messages[len(api.messages)-1]
+	welcome := api.messages[len(api.messages)-1]
+	if !strings.Contains(welcome.text, "Здравствуйте!") ||
+		!hasButton(welcome.markup, "home:lessons") ||
+		hasButton(welcome.markup, "course:continue") {
+		t.Fatalf("repeated /start must show the welcome menu, not skip it: %+v", welcome)
+	}
+
+	restartedBot.handleCallback(context.Background(), testCallback("home:lessons", user, welcome.messageID))
+	home := lastEdit(t, api)
 	if !strings.Contains(home.text, "Ваш текущий курс: „Курс о Евангелиях“") ||
 		!strings.Contains(home.text, "Прогресс: 0 из 1 уроков завершено") ||
-		!strings.Contains(home.text, "Способ обучения: с ИИ") ||
+		!strings.Contains(home.text, "Способ обучения: самостоятельно") ||
 		strings.Contains(home.text, "Как вы хотите проходить этот курс?") ||
 		!hasButton(home.markup, "course:continue") {
-		t.Fatalf("restart did not restore the current course: %+v", home)
+		t.Fatalf("learning menu did not restore the current course: %+v", home)
 	}
 
 	restartedBot.handleCallback(context.Background(), testCallback("course:continue", user, home.messageID))
