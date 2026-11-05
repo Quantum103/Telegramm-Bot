@@ -58,7 +58,7 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	}
 
 	curatorStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
-		TelegramID: time.Now().UnixNano() + 1,
+		TelegramID:  time.Now().UnixNano() + 1,
 		DisplayName: "student-cabinet-curator-integration",
 	})
 	if err != nil {
