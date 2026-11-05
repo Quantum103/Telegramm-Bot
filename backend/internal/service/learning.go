@@ -23,6 +23,10 @@ type AnswerStore interface {
 	ListAttemptHistory(context.Context, int64, int64, int64) ([]domain.AnswerAttempt, error)
 }
 
+type studentCabinetStore interface {
+	GetStudentCabinet(context.Context, int64) (domain.StudentCabinet, error)
+}
+
 type CourseRunLearningStore interface {
 	Start(context.Context, int64, int64, string) (domain.CourseEnrollmentProgress, error)
 	GetActiveForStudent(context.Context, int64) (domain.CourseEnrollmentProgress, error)
@@ -642,6 +646,18 @@ func (s *LearningService) ensureCourseRunActive(ctx context.Context, enrollment 
 		return domain.ErrInvalidState
 	}
 	return nil
+}
+
+// GetStudentCabinet returns a compact student overview without loading lesson content.
+func (s *LearningService) GetStudentCabinet(ctx context.Context, studentID int64) (domain.StudentCabinet, error) {
+	if studentID <= 0 {
+		return domain.StudentCabinet{}, domain.ErrInvalidInput
+	}
+	store, ok := s.courseEnrollments.(studentCabinetStore)
+	if !ok {
+		return domain.StudentCabinet{}, domain.ErrInvalidState
+	}
+	return store.GetStudentCabinet(ctx, studentID)
 }
 
 func (s *LearningService) requireActiveStudent(ctx context.Context, studentID int64) error {
