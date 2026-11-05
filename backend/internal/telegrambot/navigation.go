@@ -419,7 +419,7 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 		} else if hasSaved {
 			message.text("\n\nСохранённый выбор: " + truncate(optionSummary(question.Options, state.SavedAnswer.SelectedOptionIDs), 650))
 			if progress.Enrollment.Mode == "curator" {
-				message.text("\n\n✅ Ответ сохранён. После отправки урока куратор просмотрит все ваши ответы.")
+				message.text("\n\n✅ Ответ сохранён. После отправки урока координатор просмотрит все ваши ответы.")
 			} else {
 				message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена.")
 			}
