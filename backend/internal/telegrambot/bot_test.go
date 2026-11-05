@@ -563,7 +563,7 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 	students := &fakeStudents{}
 	catalog, learning := fixture()
 	learning.cabinet = domain.StudentCabinet{
-		RegisteredAt: time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC),
+		RegisteredAt:     time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC),
 		CompletedCourses: 2,
 		CompletedLessons: 7,
 		Courses: []domain.StudentCabinetCourse{
