@@ -736,7 +736,8 @@ func (r *CuratorLearningRepository) ReviewAttempt(
 			return domain.AnswerAttemptReview{}, mapDatabaseError("получить диалог ученика для комментария проверки", err)
 		}
 
-		feedbackMessage := "Комментарий координатора к вашему ответу:\n\n" + params.Feedback
+		feedbackMessage := "Комментарий координатора к вашему ответу:\n\n" + params.Feedback +
+			"\n\nЧтобы обсудить замечание, нажмите кнопку «Написать куратору» под этим сообщением и ответьте в чате. Отправленный урок нельзя изменить — дальнейшие действия согласуйте с координатором."
 		if _, err := NewConversationRepository(r.pool).createCuratorMessageTx(
 			ctx, tx, params.CuratorStaffID, conversationID, feedbackMessage,
 		); err != nil {

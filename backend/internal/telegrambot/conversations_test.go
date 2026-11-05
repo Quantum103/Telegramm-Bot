@@ -253,8 +253,16 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 	if !conversations.chatMode[student.ID] {
 		t.Fatal("режим общения не включился")
 	}
-	if !strings.Contains(lastEdit(t, api).text, "Напишите сообщение") {
-		t.Fatalf("не показана инструкция для общения: %q", lastEdit(t, api).text)
+	chatInstruction := lastEdit(t, api).text
+	for _, expected := range []string{
+		"Напишите сообщение",
+		"Если за вами уже закреплён координатор, сообщение будет направлено ему",
+		"Если действующего назначения ещё нет",
+		"Выбранный режим прохождения курса не изменится",
+	} {
+		if !strings.Contains(chatInstruction, expected) {
+			t.Errorf("инструкция чата не содержит %q: %q", expected, chatInstruction)
+		}
 	}
 
 	incoming := Update{UpdateID: 4, Message: &Message{

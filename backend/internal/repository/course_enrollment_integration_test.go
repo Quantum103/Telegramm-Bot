@@ -432,7 +432,8 @@ func TestCuratorTransferReviewAndCourseSubmission(t *testing.T) {
 			`, student.ID, secondCuratorID).Scan(&messageBody, &deliveryStatus, &recipientChatID); err != nil {
 				t.Fatalf("не удалось получить сообщение с комментарием координатора: %v", err)
 			}
-			expectedMessage := "Комментарий координатора к вашему ответу:\n\n" + feedback
+			expectedMessage := "Комментарий координатора к вашему ответу:\n\n" + feedback +
+				"\n\nЧтобы обсудить замечание, нажмите кнопку «Написать куратору» под этим сообщением и ответьте в чате. Отправленный урок нельзя изменить — дальнейшие действия согласуйте с координатором."
 			if messageBody != expectedMessage || deliveryStatus != "pending" ||
 				recipientChatID != student.TelegramID {
 				t.Fatalf("комментарий должен попасть в чат и Telegram outbox ученика: body=%q status=%q chat_id=%d", messageBody, deliveryStatus, recipientChatID)
