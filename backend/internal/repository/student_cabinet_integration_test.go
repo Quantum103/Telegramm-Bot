@@ -57,14 +57,29 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 		t.Fatalf("неверная сводка активного курса: %+v", course)
 	}
 
-	if _, err := pool.Exec(ctx, "UPDATE course_enrollments SET mode = 'curator' WHERE id = $1", run.Enrollment.ID); err != nil {
-		t.Fatalf("перевести тестовое прохождение в режим координатора: %v", err)
-	}
-	cabinet, err = cabinetRepository.GetStudentCabinet(ctx, student.ID)
+	curatorStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano() + 1,
+		DisplayName: "student-cabinet-curator-integration",
+	})
 	if err != nil {
-		t.Fatalf("повторно получить личный кабинет: %v", err)
+		t.Fatalf("создать ученика для режима координатора: %v", err)
 	}
-	if len(cabinet.Courses) != 1 || cabinet.Courses[0].Mode != "curator" {
-		t.Fatalf("режим координатора не отражён в личном кабинете: %+v", cabinet.Courses)
+	curatorID := createStaffForCourseTest(t, ctx, pool, "curator")
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", curatorID, time.Now().UnixNano()+2); err != nil {
+		t.Fatalf("привязать Telegram координатора: %v", err)
+	}
+	curatorRun, err := cabinetRepository.Start(ctx, curatorStudent.ID, courseID, "curator")
+	if err != nil {
+		t.Fatalf("начать курс с координатором: %v", err)
+	}
+	if curatorRun.Enrollment.Mode != "curator" {
+		t.Fatalf("курс должен быть запущен с координатором: %+v", curatorRun.Enrollment)
+	}
+	curatorCabinet, err := cabinetRepository.GetStudentCabinet(ctx, curatorStudent.ID)
+	if err != nil {
+		t.Fatalf("получить личный кабинет ученика с координатором: %v", err)
+	}
+	if len(curatorCabinet.Courses) != 1 || curatorCabinet.Courses[0].Mode != "curator" {
+		t.Fatalf("режим координатора не отражён в личном кабинете: %+v", curatorCabinet.Courses)
 	}
 }
