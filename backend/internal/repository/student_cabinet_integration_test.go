@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
 func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
