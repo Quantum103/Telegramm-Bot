@@ -182,7 +182,7 @@ func (b *Bot) startCourseWithMode(
 				return !isRetryableUpdateError(currentErr)
 			}
 			b.render(ctx, chatID, messageID,
-				"Сейчас нет доступного координатора с подключённым Telegram. Курс не начат, а ваш выбор не изменён. Можно повторить попытку позже или выбрать самостоятельное прохождение.",
+				"Сейчас нет доступного координатора с подключённым Telegram. Курс не начат. Ваш выбор не изменён. Можно повторить попытку позже или выбрать самостоятельное прохождение.",
 				markup([][]InlineKeyboardButton{
 					{button("Повторить выбор способа", fmt.Sprintf("course:%d", courseID))},
 					{button("К курсам", "courses")},
