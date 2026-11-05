@@ -567,8 +567,8 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 		CompletedCourses: 2,
 		CompletedLessons: 7,
 		Courses: []domain.StudentCabinetCourse{
-			{CourseID: 10, Title: "Основы Библии", Status: "completed", TotalLessons: 4, CompletedLessons: 4},
-			{CourseID: 20, Title: "Жизнь Иисуса Христа", Status: "in_progress", TotalLessons: 5, CompletedLessons: 3},
+			{CourseID: 10, Title: "Основы Библии", Mode: "ai", Status: "completed", TotalLessons: 4, CompletedLessons: 4},
+			{CourseID: 20, Title: "Жизнь Иисуса Христа", Mode: "curator", Status: "in_progress", TotalLessons: 5, CompletedLessons: 3},
 		},
 	}
 	bot := newTestBot(api, students, catalog, learning)
@@ -580,12 +580,12 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 	for _, expected := range []string{
 		"Личный кабинет",
 		"Дата регистрации: 15.03.2026",
-		"Завершено курсов: 2",
-		"Завершено уроков: 7",
+		"Завершено или передано координатору курсов: 2",
+		"Пройдено или отправлено координатору уроков: 7",
 		"Основы Библии",
-		"Завершён · 4 из 4 уроков",
+		"Завершён самостоятельно · 4 из 4 уроков пройдено",
 		"Жизнь Иисуса Христа",
-		"В процессе · 3 из 5 уроков",
+		"С координатором · в процессе · 3 из 5 уроков передано координатору",
 	} {
 		if !strings.Contains(last.text, expected) {
 			t.Errorf("cabinet is missing %q: %q", expected, last.text)

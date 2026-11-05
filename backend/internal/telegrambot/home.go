@@ -69,20 +69,25 @@ func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, message
 	var text strings.Builder
 	text.WriteString("👤 Личный кабинет\n\n")
 	fmt.Fprintf(&text, "Дата регистрации: %s\n", cabinet.RegisteredAt.Format("02.01.2006"))
-	fmt.Fprintf(&text, "Завершено курсов: %d\n", cabinet.CompletedCourses)
-	fmt.Fprintf(&text, "Завершено уроков: %d\n", cabinet.CompletedLessons)
+	fmt.Fprintf(&text, "Завершено или передано координатору курсов: %d\n", cabinet.CompletedCourses)
+	fmt.Fprintf(&text, "Пройдено или отправлено координатору уроков: %d\n", cabinet.CompletedLessons)
 	text.WriteString("\nВаши курсы:")
 	if len(cabinet.Courses) == 0 {
 		text.WriteString("\n\nВы пока не начали ни одного курса.")
 	} else {
 		for _, course := range cabinet.Courses {
+			progressVerb := "пройдено"
+			if course.Mode == "curator" {
+				progressVerb = "передано координатору"
+			}
 			fmt.Fprintf(
 				&text,
-				"\n\n• %s\n  %s · %d из %d уроков",
+				"\n\n• %s\n  %s · %d из %d уроков %s",
 				truncate(course.Title, 140),
-				studentCourseStatusLabel(course.Status),
+				studentCourseStatusLabel(course.Status, course.Mode),
 				course.CompletedLessons,
 				course.TotalLessons,
+				progressVerb,
 			)
 		}
 	}
@@ -94,12 +99,27 @@ func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, message
 	return true
 }
 
-func studentCourseStatusLabel(status string) string {
+func studentCourseStatusLabel(status, mode string) string {
+	if mode == "curator" {
+		switch status {
+		case "completed":
+			return "Все уроки отправлены"
+		case "in_progress":
+			return "С координатором · в процессе"
+		case "awaiting_curator":
+			return "Ожидает координатора"
+		case "paused":
+			return "Приостановлен"
+		default:
+			return "Статус неизвестен"
+		}
+	}
+
 	switch status {
 	case "completed":
-		return "Завершён"
+		return "Завершён самостоятельно"
 	case "in_progress":
-		return "В процессе"
+		return "Самостоятельно · в процессе"
 	case "awaiting_curator":
 		return "Ожидает координатора"
 	case "paused":

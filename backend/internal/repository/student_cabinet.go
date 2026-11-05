@@ -34,12 +34,14 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		       latest.course_id,
 		       latest.title,
 		       latest.status,
+		       latest.mode,
 		       latest.total_lessons,
 		       latest.completed_lessons
 		FROM students student
 		LEFT JOIN LATERAL (
 		    SELECT current_run.course_id,
 		           current_run.title,
+		           current_run.mode,
 		           current_run.status,
 		           count(course_lesson.lesson_id)::INTEGER AS total_lessons,
 		           count(course_lesson.lesson_id) FILTER (
@@ -52,6 +54,7 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		               enrollment.id,
 		               enrollment.course_id,
 		               course.title,
+		               enrollment.mode,
 		               enrollment.status,
 		               enrollment.updated_at
 		        FROM course_enrollments enrollment
@@ -66,7 +69,7 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		      ON lesson.course_enrollment_id = current_run.id
 		     AND lesson.lesson_id = course_lesson.lesson_id
 		     AND lesson.lesson_version_id = course_lesson.lesson_version_id
-		    GROUP BY current_run.course_id, current_run.title, current_run.status,
+		    GROUP BY current_run.course_id, current_run.title, current_run.mode, current_run.status,
 		             current_run.updated_at, current_run.id
 		    ORDER BY current_run.updated_at DESC, current_run.id DESC
 		) latest ON TRUE
@@ -86,12 +89,12 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		var registeredAt time.Time
 		var completedCourses, completedLessons int
 		var courseID pgtype.Int8
-		var title, status pgtype.Text
+		var title, mode, status pgtype.Text
 		var totalLessons, courseCompletedLessons pgtype.Int4
 
 		if err := rows.Scan(
 			&registeredAt, &completedCourses, &completedLessons,
-			&courseID, &title, &status, &totalLessons, &courseCompletedLessons,
+			&courseID, &title, &status, &mode, &totalLessons, &courseCompletedLessons,
 		); err != nil {
 			return domain.StudentCabinet{}, mapDatabaseError("прочитать данные личного кабинета", err)
 		}
@@ -103,6 +106,7 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 			cabinet.Courses = append(cabinet.Courses, domain.StudentCabinetCourse{
 				CourseID:         courseID.Int64,
 				Title:            title.String,
+				Mode:             mode.String,
 				Status:           status.String,
 				TotalLessons:     int(totalLessons.Int32),
 				CompletedLessons: int(courseCompletedLessons.Int32),

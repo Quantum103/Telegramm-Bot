@@ -51,9 +51,20 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 		t.Fatalf("число курсов = %d, ожидался 1: %+v", len(cabinet.Courses), cabinet.Courses)
 	}
 	course := cabinet.Courses[0]
-	if course.CourseID != courseID || course.Title != courseTitle ||
+	if course.CourseID != courseID || course.Title != courseTitle || course.Mode != "ai" ||
 		course.Status != "in_progress" || course.TotalLessons != 2 ||
 		course.CompletedLessons != 0 || run.Enrollment.CourseID != courseID {
 		t.Fatalf("неверная сводка активного курса: %+v", course)
+	}
+
+	if _, err := pool.Exec(ctx, "UPDATE course_enrollments SET mode = 'curator' WHERE id = $1", run.Enrollment.ID); err != nil {
+		t.Fatalf("перевести тестовое прохождение в режим координатора: %v", err)
+	}
+	cabinet, err = cabinetRepository.GetStudentCabinet(ctx, student.ID)
+	if err != nil {
+		t.Fatalf("повторно получить личный кабинет: %v", err)
+	}
+	if len(cabinet.Courses) != 1 || cabinet.Courses[0].Mode != "curator" {
+		t.Fatalf("режим координатора не отражён в личном кабинете: %+v", cabinet.Courses)
 	}
 }
