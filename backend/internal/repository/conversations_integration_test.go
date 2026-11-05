@@ -59,6 +59,26 @@ func createConversationFixture(t *testing.T, pool *pgxpool.Pool, withAssignment 
 		curator1ID: createStaff("Первый куратор", "curator", "conversation-curator-one"),
 		curator2ID: createStaff("Второй куратор", "curator", "conversation-curator-two"),
 	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE staff_accounts staff
+		SET account_status = 'inactive'
+		WHERE staff.id NOT IN ($1, $2)
+		  AND EXISTS (
+		      SELECT 1
+		      FROM staff_role_assignments assignment
+		      JOIN staff_roles role ON role.id = assignment.role_id
+		      WHERE assignment.staff_id = staff.id AND role.role_code = 'curator'
+		  )
+	`, fixture.curator1ID, fixture.curator2ID); err != nil {
+		t.Fatalf("изолировать координаторов тестовой фикстуры: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE staff_accounts
+		SET account_status = 'active', telegram_id = NULL
+		WHERE id IN ($1, $2)
+	`, fixture.curator1ID, fixture.curator2ID); err != nil {
+		t.Fatalf("подготовить координаторов тестовой фикстуры: %v", err)
+	}
 	if withAssignment {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO student_curator_assignments (student_id, curator_staff_id)
