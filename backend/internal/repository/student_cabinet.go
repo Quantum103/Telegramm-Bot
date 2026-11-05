@@ -143,11 +143,11 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		cabinet.CompletedLessons = completedLessons
 		if courseID.Valid && title.Valid && status.Valid {
 			cabinet.Courses = append(cabinet.Courses, domain.StudentCabinetCourse{
-				CourseID:         courseID.Int64,
-				Title:            title.String,
-				Mode:             mode.String,
-				Status:           status.String,
-				TotalLessons:     int(totalLessons.Int32),
+				CourseID:             courseID.Int64,
+				Title:                title.String,
+				Mode:                 mode.String,
+				Status:               status.String,
+				TotalLessons:         int(totalLessons.Int32),
 				CompletedLessons:     int(courseCompletedLessons.Int32),
 				PendingReviews:       int(pendingReviews.Int32),
 				NeedsRevisionAnswers: int(needsRevisionAnswers.Int32),
