@@ -75,6 +75,118 @@ func createStaffForCourseTest(t *testing.T, ctx context.Context, pool *pgxpool.P
 	return staffID
 }
 
+func TestCourseEnrollmentAutoAssignsLeastLoadedCoordinator(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	student, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "course-auto-curator-student",
+	})
+	if err != nil {
+		t.Fatalf("создать ученика курса: %v", err)
+	}
+	alreadyAssignedStudent, err := NewStudentRepository(pool).Create(ctx, CreateStudentParams{
+		TelegramID: time.Now().UnixNano() + 1, DisplayName: "course-auto-curator-loaded-student",
+	})
+	if err != nil {
+		t.Fatalf("создать уже закреплённого ученика: %v", err)
+	}
+
+	adminID := createStaffForCourseTest(t, ctx, pool, "administrator")
+	firstCuratorID := createStaffForCourseTest(t, ctx, pool, "curator")
+	secondCuratorID := createStaffForCourseTest(t, ctx, pool, "curator")
+	firstTelegramID := time.Now().UnixNano() + 10
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", firstCuratorID, firstTelegramID); err != nil {
+		t.Fatalf("привязать Telegram первого координатора: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE staff_accounts SET telegram_id = $2 WHERE id = $1", secondCuratorID, firstTelegramID+1); err != nil {
+		t.Fatalf("привязать Telegram второго координатора: %v", err)
+	}
+	// Не оставляем тестовых Telegram-координаторов активными для других интеграционных тестов.
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `
+			UPDATE staff_accounts
+			SET account_status = 'inactive', telegram_id = NULL
+			WHERE id IN ($1, $2)
+		`, firstCuratorID, secondCuratorID)
+	}()
+
+	if err := NewStaffManagementRepository(pool).AssignStudentCurator(
+		ctx, adminID, alreadyAssignedStudent.ID, firstCuratorID,
+	); err != nil {
+		t.Fatalf("создать нагрузку на первого координатора: %v", err)
+	}
+
+	courseID, _, _ := createCourseForEnrollmentTest(
+		t, ctx, pool, fmt.Sprintf("%d", time.Now().UnixNano()),
+		"Курс с автоматическим назначением координатора", 1,
+	)
+	run, err := NewCourseEnrollmentRepository(pool).Start(ctx, student.ID, courseID, "curator")
+	if err != nil {
+		t.Fatalf("начать курс с автоматическим координатором: %v", err)
+	}
+	if run.Enrollment.Mode != "curator" || run.Enrollment.CuratorStaffID == nil ||
+		*run.Enrollment.CuratorStaffID != secondCuratorID {
+		t.Fatalf("должен быть выбран наименее загруженный второй координатор: %+v", run.Enrollment)
+	}
+
+	var assignedCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT curator_staff_id
+		FROM student_curator_assignments
+		WHERE student_id = $1 AND status = 'active'
+		ORDER BY assigned_at DESC, id DESC LIMIT 1
+	`, student.ID).Scan(&assignedCuratorID); err != nil {
+		t.Fatalf("получить сохранённое назначение: %v", err)
+	}
+	if assignedCuratorID != secondCuratorID {
+		t.Fatalf("в назначении сохранён координатор %d, ожидался %d", assignedCuratorID, secondCuratorID)
+	}
+
+	var conversationCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(assigned_curator_staff_id, 0)
+		FROM conversations
+		WHERE student_id = $1 AND status = 'active'
+		ORDER BY created_at DESC, id DESC LIMIT 1
+	`, student.ID).Scan(&conversationCuratorID); err != nil {
+		t.Fatalf("получить диалог после автоназначения: %v", err)
+	}
+	if conversationCuratorID != secondCuratorID {
+		t.Fatalf("диалог закреплён за координатором %d, ожидался %d", conversationCuratorID, secondCuratorID)
+	}
+
+	var participantCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM conversations conversation
+		JOIN conversation_participants participant
+		  ON participant.conversation_id = conversation.id
+		WHERE conversation.student_id = $1
+		  AND conversation.status = 'active'
+		  AND participant.staff_id = $2
+		  AND participant.left_at IS NULL
+	`, student.ID, secondCuratorID).Scan(&participantCount); err != nil {
+		t.Fatalf("проверить участника диалога: %v", err)
+	}
+	if participantCount != 1 {
+		t.Fatalf("назначенный координатор не добавлен участником диалога: count=%d", participantCount)
+	}
+
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE action = 'student.curator.course_assign'
+		  AND entity_type = 'student' AND entity_id = $1
+	`, student.ID).Scan(&auditCount); err != nil {
+		t.Fatalf("проверить аудит автоматического назначения: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("событие автоназначения курса не записано ровно один раз: count=%d", auditCount)
+	}
+}
+
 func TestCourseEnrollmentPersistsModeAndRejectsSecondActiveCourse(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
