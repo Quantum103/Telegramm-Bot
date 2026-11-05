@@ -122,7 +122,11 @@ func currentCuratorTx(ctx context.Context, tx pgx.Tx, studentID int64) (int64, e
 	return curatorID, nil
 }
 
-func assignSupportCoordinatorTx(ctx context.Context, tx pgx.Tx, studentID int64) error {
+var errNoAvailableLinkedCoordinator = errors.New("no active Telegram-linked coordinator")
+
+// ensureCoordinatorAssignedTx reuses an active assignment or assigns the least-loaded
+// active coordinator who has linked Telegram. The student row must already be locked.
+func ensureCoordinatorAssignedTx(ctx context.Context, tx pgx.Tx, studentID int64, auditAction string) error {
 	if _, err := currentCuratorTx(ctx, tx, studentID); err == nil {
 		return nil
 	} else if !errors.Is(err, ErrInvalidState) {
@@ -168,16 +172,33 @@ func assignSupportCoordinatorTx(ctx context.Context, tx pgx.Tx, studentID int64)
 		LIMIT 1
 	`).Scan(&curatorStaffID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrInvalidState
+		return errNoAvailableLinkedCoordinator
 	}
 	if err != nil {
 		return mapDatabaseError("выбрать доступного координатора", err)
 	}
 
 	return assignStudentCuratorTx(
-		ctx, tx, studentID, curatorStaffID, nil, previousCuratorID,
-		"student.curator.support_assign",
+		ctx, tx, studentID, curatorStaffID, nil, previousCuratorID, auditAction,
 	)
+}
+
+func assignSupportCoordinatorTx(ctx context.Context, tx pgx.Tx, studentID int64) error {
+	err := ensureCoordinatorAssignedTx(ctx, tx, studentID, "student.curator.support_assign")
+	if errors.Is(err, errNoAvailableLinkedCoordinator) {
+		return ErrInvalidState
+	}
+	return err
+}
+
+// assignCourseCoordinatorTx is used only for curator-mode course runs. It does not
+// change the student's saved learning mode; it only ensures a current coordinator.
+func assignCourseCoordinatorTx(ctx context.Context, tx pgx.Tx, studentID int64) error {
+	err := ensureCoordinatorAssignedTx(ctx, tx, studentID, "student.curator.course_assign")
+	if errors.Is(err, errNoAvailableLinkedCoordinator) {
+		return domain.ErrNoCurator
+	}
+	return err
 }
 
 func getOrCreateConversationTx(ctx context.Context, tx pgx.Tx, studentID int64) (domain.Conversation, int64, int64, error) {
