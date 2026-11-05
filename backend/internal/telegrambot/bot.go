@@ -849,7 +849,7 @@ func (b *Bot) startStudentChat(ctx context.Context, chatID, messageID int64, stu
 		return !isRetryableUpdateError(err)
 	}
 	b.render(ctx, chatID, messageID,
-		"Режим общения с куратором включён.\n\nНапишите сообщение следующим сообщением. Оно будет сохранено и появится в диалоге вашего координатора.\n\nЧтобы вернуться к прохождению курсов, нажмите кнопку ниже или отправьте /cancel.",
+		"Режим общения с координатором включён.\n\nНапишите сообщение следующим сообщением. Оно будет сохранено и появится в диалоге вашего координатора.\n\nЧтобы вернуться к прохождению курсов, нажмите кнопку ниже или отправьте /cancel.",
 		keyboard(button("Вернуться к прохождению курсов", "chat:cancel")))
 	return true
 }
@@ -890,7 +890,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 	})
 	if errors.Is(err, domain.ErrInvalidState) {
 		// Не удаляем текст и не подтверждаем как отправленный: он остаётся в истории Telegram-чата.
-		b.send(ctx, message.Chat.ID, "Сейчас вам не назначен активный координатор. Сообщение НЕ отправлено и не сохранено. Оно остаётся в истории этого Telegram-чата: скопируйте его и отправьте повторно после назначения куратора.")
+		b.send(ctx, message.Chat.ID, "Сейчас вам не назначен активный координатор. Сообщение НЕ отправлено и не сохранено. Оно остаётся в истории этого Telegram-чата: скопируйте его и отправьте повторно после назначения координатора.")
 		return true
 	}
 	if errors.Is(err, domain.ErrInvalidInput) {
@@ -902,7 +902,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 		return false
 	}
 	if saved.Replayed {
-		b.send(ctx, message.Chat.ID, "Это сообщение уже принято и сохранено. Куратор увидит его в диалоге.")
+		b.send(ctx, message.Chat.ID, "Это сообщение уже принято и сохранено. Координатор увидит его в диалоге.")
 	} else {
 		b.send(ctx, message.Chat.ID, "Сообщение сохранено и передано координатору. Он обязательно вам ответит.")
 	}
@@ -930,16 +930,16 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referral
 func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code string) (string, bool) {
 	if b.studentReferrals == nil {
 		b.logger.Error("реферальный сервис Telegram-бота не подключён", "student_id", studentID)
-		return "Не удалось применить приглашение куратора. Каталог курсов открыт.", true
+		return "Не удалось применить приглашение координатора. Каталог курсов открыт.", true
 	}
 
 	result, err := b.studentReferrals.AssignStudentByReferral(ctx, studentID, code)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidInput), errors.Is(err, domain.ErrNotFound):
-			return "Ссылка приглашения недействительна или куратор больше неактивен. Каталог курсов открыт.", true
+			return "Ссылка приглашения недействительна или координатор больше неактивен. Каталог курсов открыт.", true
 		case errors.Is(err, domain.ErrConflict):
-			return "За вами уже закреплён другой куратор. Текущее назначение не изменено.", true
+			return "За вами уже закреплён другой координатор. Текущее назначение не изменено.", true
 		case errors.Is(err, domain.ErrInvalidState):
 			return "Не удалось применить приглашение: аккаунт ученика неактивен.", true
 		default:
@@ -949,14 +949,14 @@ func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code st
 	}
 
 	if result.Assigned {
-		return "Куратор закреплён за вами. Это не меняет способ прохождения курса.", true
+		return "Координатор закреплён за вами. Это не меняет способ прохождения курса.", true
 	}
 	if result.AlreadyAssigned {
-		return "Вы уже закреплены за этим куратором. Способ прохождения курса не изменён.", true
+		return "Вы уже закреплены за этим координатором. Способ прохождения курса не изменён.", true
 	}
 
 	b.logger.Warn("реферальный сервис вернул пустой результат назначения", "student_id", studentID)
-	return "Не удалось подтвердить назначение куратора. Каталог курсов открыт.", true
+	return "Не удалось подтвердить назначение координатора. Каталог курсов открыт.", true
 }
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
 	return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
