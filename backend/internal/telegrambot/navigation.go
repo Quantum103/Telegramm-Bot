@@ -61,6 +61,7 @@ func (b *Bot) renderCourses(ctx context.Context, chatID, studentID, messageID in
 		text += "\n\nПока нет опубликованных курсов. Попробуйте позже."
 		rows = append(rows, []InlineKeyboardButton{button("Обновить список", "courses")})
 	}
+	rows = append(rows, []InlineKeyboardButton{button("История переписки", "chat:history")})
 	rows = append(rows, []InlineKeyboardButton{button("Связаться с координатором", "chat:start")})
 	rows = append(rows, []InlineKeyboardButton{button("Главное меню", "home:main")})
 	b.render(ctx, chatID, messageID, text, markup(rows))
@@ -518,6 +519,15 @@ func (b *Bot) handleCallbackWithUpdateID(ctx context.Context, updateID int64, ca
 			return true
 		}
 		return b.startCourseWithMode(ctx, chatID, student.ID, courseID, messageID, parts[2])
+	case callback.Data == "chat:history":
+		return b.showStudentConversationHistory(ctx, chatID, student, messageID, 0)
+	case len(parts) == 4 && parts[0] == "chat" && parts[1] == "history" && parts[2] == "older":
+		beforeMessageID, ok := parsePositiveID(parts[3])
+		if !ok {
+			b.showStaleCallback(ctx, chatID, student.ID, messageID)
+			return true
+		}
+		return b.showStudentConversationHistory(ctx, chatID, student, messageID, beforeMessageID)
 	case callback.Data == "chat:start":
 		return b.startStudentChat(ctx, chatID, messageID, student)
 	case callback.Data == "chat:cancel":

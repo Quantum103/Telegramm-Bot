@@ -230,6 +230,33 @@ func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	if count, err := repo.UnreadCountForStudent(ctx, fixture.studentID); err != nil || count != 1 {
 		t.Fatalf("непрочитанные ученика: count=%d err=%v", count, err)
 	}
+	studentHistory, err := repo.ListMessagesForStudent(ctx, fixture.studentID, conversationID, 0, 50)
+	if err != nil || len(studentHistory) != 2 {
+		t.Fatalf("ученик не получил собственную историю: messages=%+v err=%v", studentHistory, err)
+	}
+	if studentHistory[0].ID != reply.ID || studentHistory[0].SenderType != "curator" ||
+		studentHistory[1].ID != first.ID || studentHistory[1].SenderType != "student" {
+		t.Fatalf("история ученика должна содержать последние сообщения в обратном хронологическом порядке: %+v", studentHistory)
+	}
+	var otherStudentID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO students (telegram_id, display_name)
+		VALUES ($1, $2) RETURNING id
+	`, fixture.telegramID+900000, "Другой тестовый ученик").Scan(&otherStudentID); err != nil {
+		t.Fatalf("создать постороннего ученика для проверки доступа: %v", err)
+	}
+	if _, err := repo.ListMessagesForStudent(ctx, otherStudentID, conversationID, 0, 50); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("другой ученик прочитал чужую историю: %v", err)
+	}
+	if _, err := repo.MarkReadForStudent(ctx, otherStudentID, conversationID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("другой ученик отметил чужие сообщения прочитанными: %v", err)
+	}
+	if marked, err := repo.MarkReadForStudent(ctx, fixture.studentID, conversationID); err != nil || marked != 1 {
+		t.Fatalf("ученик должен отметить ответ куратора прочитанным: marked=%d err=%v", marked, err)
+	}
+	if count, err := repo.UnreadCountForStudent(ctx, fixture.studentID); err != nil || count != 0 {
+		t.Fatalf("непрочитанные ученика после просмотра истории: count=%d err=%v", count, err)
+	}
 	history, err := repo.ListMessagesForCurator(ctx, fixture.curator1ID, conversationID, 0, 50)
 	if err != nil || len(history) != 2 {
 		t.Fatalf("история до передачи: messages=%+v err=%v", history, err)

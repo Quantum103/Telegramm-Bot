@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
@@ -20,6 +21,16 @@ type fakeStudentConversationService struct {
 	leaveCalls         int
 	chatModeOffCalls   int
 	lessonModeOffCalls int
+	history            fakeStudentConversationHistory
+}
+
+type fakeStudentConversationHistory struct {
+	conversation  domain.Conversation
+	messages      []domain.ConversationMessage
+	err           error
+	listCalls     int
+	beforeID      int64
+	markReadCalls int
 }
 
 func newFakeStudentConversationService() *fakeStudentConversationService {
@@ -77,6 +88,43 @@ func (f *fakeStudentConversationService) IsStudentChatMode(_ context.Context, st
 		return false, f.isModeErr
 	}
 	return f.chatMode[studentID], nil
+}
+
+func (f *fakeStudentConversationService) GetOrCreateForStudent(_ context.Context, studentID int64) (domain.Conversation, error) {
+	if f.history.err != nil {
+		return domain.Conversation{}, f.history.err
+	}
+	if f.history.conversation.ID == 0 {
+		f.history.conversation = domain.Conversation{ID: 10, StudentID: studentID, Status: "active"}
+	}
+	return f.history.conversation, nil
+}
+
+func (f *fakeStudentConversationService) ListMessagesForStudent(_ context.Context, studentID, conversationID, beforeMessageID int64, limit int) ([]domain.ConversationMessage, error) {
+	if f.history.err != nil {
+		return nil, f.history.err
+	}
+	f.history.listCalls++
+	f.history.beforeID = beforeMessageID
+	messages := make([]domain.ConversationMessage, 0, len(f.history.messages))
+	for _, message := range f.history.messages {
+		if beforeMessageID > 0 && message.ID >= beforeMessageID {
+			continue
+		}
+		messages = append(messages, message)
+		if limit > 0 && len(messages) >= limit {
+			break
+		}
+	}
+	return messages, nil
+}
+
+func (f *fakeStudentConversationService) MarkReadForStudent(_ context.Context, studentID, conversationID int64) (int64, error) {
+	if f.history.err != nil {
+		return 0, f.history.err
+	}
+	f.history.markReadCalls++
+	return 1, nil
 }
 
 type fakeStaffTelegramAPIForBinding struct {
@@ -283,6 +331,64 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 	if !strings.Contains(api.messages[len(api.messages)-1].text, "Сообщение сохранено") ||
 		!strings.Contains(api.messages[len(api.messages)-1].text, "обязательно вам ответит") {
 		t.Fatalf("бот должен подтвердить сохранение и сообщить, что координатор ответит: %q", api.messages[len(api.messages)-1].text)
+	}
+}
+
+func TestStudentCanViewConversationHistoryWithOlderMessagePagination(t *testing.T) {
+	api := &fakeAPI{}
+	students := &fakeStudents{}
+	catalog, learning := fixture()
+	conversations := newFakeStudentConversationService()
+	olderBody := strings.Repeat("У", 2100)
+	newerBody := strings.Repeat("К", 2100)
+	conversations.history.messages = []domain.ConversationMessage{
+		{
+			ID: 22, ConversationID: 10, SenderType: "curator", BodyText: &newerBody,
+			CreatedAt: time.Date(2026, 11, 6, 9, 30, 0, 0, time.UTC),
+		},
+		{
+			ID: 21, ConversationID: 10, SenderType: "student", BodyText: &olderBody,
+			CreatedAt: time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC),
+		},
+	}
+	bot := NewBotWithChapterPublisherAndConversations(api, students, catalog, learning, nil, nil, conversations)
+	user := testUser()
+
+	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
+	student := students.byID[user.ID]
+	messageID := api.messages[0].messageID
+	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
+	if !hasButton(lastEdit(t, api).markup, "chat:history") {
+		t.Fatal("в каталоге курсов должна быть доступна история переписки")
+	}
+
+	bot.handleCallback(context.Background(), testCallback("chat:history", user, messageID))
+	latestPage := lastEdit(t, api)
+	if !strings.Contains(latestPage.text, "История переписки с координатором") ||
+		!strings.Contains(latestPage.text, newerBody) ||
+		strings.Contains(latestPage.text, olderBody) {
+		t.Fatalf("первая страница должна показывать последние сообщения, не переполняя Telegram: text length=%d", len([]rune(latestPage.text)))
+	}
+	if conversations.history.listCalls != 1 || conversations.history.beforeID != 0 ||
+		conversations.history.markReadCalls != 1 {
+		t.Fatalf("неверные вызовы API истории: list=%d before=%d read=%d",
+			conversations.history.listCalls, conversations.history.beforeID, conversations.history.markReadCalls)
+	}
+	if conversations.chatMode[student.ID] {
+		t.Fatal("просмотр истории не должен сам включать режим отправки сообщений")
+	}
+	if !hasButton(latestPage.markup, "chat:history:older:22") {
+		t.Fatalf("для более старых сообщений нужна кнопка с курсором последнего показанного сообщения: %+v", latestPage.markup)
+	}
+
+	bot.handleCallback(context.Background(), testCallback("chat:history:older:22", user, messageID))
+	olderPage := lastEdit(t, api)
+	if conversations.history.beforeID != 22 || !strings.Contains(olderPage.text, olderBody) {
+		t.Fatalf("переход к более старым сообщениям не применил курсор: before=%d text length=%d",
+			conversations.history.beforeID, len([]rune(olderPage.text)))
+	}
+	if !hasButton(olderPage.markup, "chat:history") || !hasButton(olderPage.markup, "chat:start") {
+		t.Fatalf("на старой странице должны быть возврат к последним сообщениям и переход к чату: %+v", olderPage.markup)
 	}
 }
 
