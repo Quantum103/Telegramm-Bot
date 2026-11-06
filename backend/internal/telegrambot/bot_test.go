@@ -567,7 +567,7 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 		CompletedCourses:           2,
 		CompletedLessons:           7,
 		UnreadConversationMessages: 3,
-		Courses:                    []domain.StudentCabinetCourse{
+		Courses: []domain.StudentCabinetCourse{
 			{CourseID: 10, Title: "Основы Библии", Mode: "ai", Status: "completed", TotalLessons: 4, CompletedLessons: 4},
 			{CourseID: 20, Title: "Жизнь Иисуса Христа", Mode: "curator", Status: "in_progress", TotalLessons: 5, CompletedLessons: 3, PendingReviews: 2, NeedsRevisionAnswers: 1},
 		},
