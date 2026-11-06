@@ -563,10 +563,11 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 	students := &fakeStudents{}
 	catalog, learning := fixture()
 	learning.cabinet = domain.StudentCabinet{
-		RegisteredAt:     time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC),
-		CompletedCourses: 2,
-		CompletedLessons: 7,
-		Courses: []domain.StudentCabinetCourse{
+		RegisteredAt:               time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC),
+		CompletedCourses:           2,
+		CompletedLessons:           7,
+		UnreadConversationMessages: 3,
+		Courses:                    []domain.StudentCabinetCourse{
 			{CourseID: 10, Title: "Основы Библии", Mode: "ai", Status: "completed", TotalLessons: 4, CompletedLessons: 4},
 			{CourseID: 20, Title: "Жизнь Иисуса Христа", Mode: "curator", Status: "in_progress", TotalLessons: 5, CompletedLessons: 3, PendingReviews: 2, NeedsRevisionAnswers: 1},
 		},
@@ -582,6 +583,7 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 		"Дата регистрации: 15.03.2026",
 		"Завершено или передано координатору курсов: 2",
 		"Пройдено или отправлено координатору уроков: 7",
+		"Непрочитанные сообщения координатора: 3",
 		"Основы Библии",
 		"Завершён самостоятельно · 4 из 4 уроков пройдено",
 		"Жизнь Иисуса Христа",
@@ -593,8 +595,12 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 			t.Errorf("cabinet is missing %q: %q", expected, last.text)
 		}
 	}
-	if learning.cabinetCalls != 1 || !hasButton(last.markup, "home:lessons") || !hasButton(last.markup, "home:main") {
+	if learning.cabinetCalls != 1 || !hasButton(last.markup, "home:lessons") ||
+		!hasButton(last.markup, "chat:history") || !hasButton(last.markup, "home:main") {
 		t.Fatalf("cabinet navigation or single summary read is incorrect: calls=%d markup=%+v", learning.cabinetCalls, last.markup)
+	}
+	if got := last.markup.InlineKeyboard[1][0].Text; got != "История переписки · 3" {
+		t.Fatalf("кнопка истории должна показывать число непрочитанных сообщений: got=%q", got)
 	}
 }
 

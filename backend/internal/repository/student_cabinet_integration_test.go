@@ -28,7 +28,8 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 		t.Fatalf("получить пустой личный кабинет: %v", err)
 	}
 	if !empty.RegisteredAt.Equal(student.RegisteredAt) ||
-		empty.CompletedCourses != 0 || empty.CompletedLessons != 0 || len(empty.Courses) != 0 {
+		empty.CompletedCourses != 0 || empty.CompletedLessons != 0 ||
+		empty.UnreadConversationMessages != 0 || len(empty.Courses) != 0 {
 		t.Fatalf("неожиданный пустой личный кабинет: %+v", empty)
 	}
 
@@ -46,7 +47,8 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 		t.Fatalf("получить личный кабинет с курсом: %v", err)
 	}
 	if !cabinet.RegisteredAt.Equal(student.RegisteredAt) ||
-		cabinet.CompletedCourses != 0 || cabinet.CompletedLessons != 0 {
+		cabinet.CompletedCourses != 0 || cabinet.CompletedLessons != 0 ||
+		cabinet.UnreadConversationMessages != 0 {
 		t.Fatalf("неверная дата или общая статистика: %+v", cabinet)
 	}
 	if len(cabinet.Courses) != 1 {
@@ -105,7 +107,20 @@ func TestGetStudentCabinetReturnsStudentAndCourseSummary(t *testing.T) {
 	if len(curatorCabinet.Courses) != 1 ||
 		curatorCabinet.Courses[0].Mode != "curator" ||
 		curatorCabinet.Courses[0].PendingReviews != 1 ||
-		curatorCabinet.Courses[0].NeedsRevisionAnswers != 1 {
-		t.Fatalf("личный кабинет неверно показывает статусы проверки: %+v", curatorCabinet.Courses)
+		curatorCabinet.Courses[0].NeedsRevisionAnswers != 1 ||
+		curatorCabinet.UnreadConversationMessages != 1 {
+		t.Fatalf("личный кабинет неверно показывает статусы проверки и непрочитанные сообщения: %+v", curatorCabinet)
+	}
+
+	conversation, err := NewConversationRepository(pool).GetOrCreateForStudent(ctx, curatorStudent.ID)
+	if err != nil {
+		t.Fatalf("получить диалог ученика после замечания координатора: %v", err)
+	}
+	if marked, err := NewConversationRepository(pool).MarkReadForStudent(ctx, curatorStudent.ID, conversation.ID); err != nil || marked != 1 {
+		t.Fatalf("отметить замечание координатора прочитанным: marked=%d err=%v", marked, err)
+	}
+	readCabinet, err := cabinetRepository.GetStudentCabinet(ctx, curatorStudent.ID)
+	if err != nil || readCabinet.UnreadConversationMessages != 0 {
+		t.Fatalf("после просмотра истории непрочитанных сообщений должно быть 0: cabinet=%+v err=%v", readCabinet, err)
 	}
 }

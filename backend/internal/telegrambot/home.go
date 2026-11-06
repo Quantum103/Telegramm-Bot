@@ -71,6 +71,9 @@ func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, message
 	fmt.Fprintf(&text, "Дата регистрации: %s\n", cabinet.RegisteredAt.Format("02.01.2006"))
 	fmt.Fprintf(&text, "Завершено или передано координатору курсов: %d\n", cabinet.CompletedCourses)
 	fmt.Fprintf(&text, "Пройдено или отправлено координатору уроков: %d\n", cabinet.CompletedLessons)
+	if cabinet.UnreadConversationMessages > 0 {
+		fmt.Fprintf(&text, "Непрочитанные сообщения координатора: %d\n", cabinet.UnreadConversationMessages)
+	}
 	text.WriteString("\nВаши курсы:")
 	if len(cabinet.Courses) == 0 {
 		text.WriteString("\n\nВы пока не начали ни одного курса.")
@@ -100,8 +103,13 @@ func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, message
 		}
 	}
 
+	historyLabel := "История переписки"
+	if cabinet.UnreadConversationMessages > 0 {
+		historyLabel = fmt.Sprintf("История переписки · %d", cabinet.UnreadConversationMessages)
+	}
 	b.render(ctx, chatID, messageID, text.String(), markup([][]InlineKeyboardButton{
 		{button("Начать прохождение уроков", "home:lessons")},
+		{button(historyLabel, "chat:history")},
 		{button("Главное меню", "home:main")},
 	}))
 	return true

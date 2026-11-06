@@ -4,10 +4,11 @@ import "time"
 
 // StudentCabinet содержит краткую статистику и последние состояния курсов ученика.
 type StudentCabinet struct {
-	RegisteredAt     time.Time
-	CompletedCourses int
-	CompletedLessons int
-	Courses          []StudentCabinetCourse
+	RegisteredAt               time.Time
+	CompletedCourses           int
+	CompletedLessons           int
+	UnreadConversationMessages int
+	Courses                    []StudentCabinetCourse
 }
 
 // StudentCabinetCourse описывает последний запуск одного курса.

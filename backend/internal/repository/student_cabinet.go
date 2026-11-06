@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// GetStudentCabinet читает профильную дату, общую статистику и последние запуски курсов одним SQL-запросом.
+// GetStudentCabinet читает профильную дату, статистику, непрочитанные сообщения и последние запуски курсов одним SQL-запросом.
 func (r *CourseEnrollmentRepository) GetStudentCabinet(
 	ctx context.Context,
 	studentID int64,
@@ -31,6 +31,23 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		           WHERE completed_lesson.student_id = student.id
 		             AND completed_lesson.status = 'completed'
 		       ) AS completed_lessons,
+		       (
+		           SELECT count(*)::INTEGER
+		           FROM conversations unread_conversation
+		           JOIN conversation_participants student_participant
+		             ON student_participant.conversation_id = unread_conversation.id
+		            AND student_participant.student_id = student.id
+		           JOIN conversation_messages unread_message
+		             ON unread_message.conversation_id = unread_conversation.id
+		           WHERE unread_conversation.student_id = student.id
+		             AND unread_message.sender_participant_id <> student_participant.id
+		             AND NOT EXISTS (
+		                 SELECT 1
+		                 FROM conversation_message_reads read_mark
+		                 WHERE read_mark.message_id = unread_message.id
+		                   AND read_mark.participant_id = student_participant.id
+		             )
+		       ) AS unread_conversation_messages,
 		       latest.course_id,
 		       latest.title,
 		       latest.status,
@@ -124,14 +141,14 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 	for rows.Next() {
 		found = true
 		var registeredAt time.Time
-		var completedCourses, completedLessons int
+		var completedCourses, completedLessons, unreadConversationMessages int
 		var courseID pgtype.Int8
 		var title, mode, status pgtype.Text
 		var totalLessons, courseCompletedLessons pgtype.Int4
 		var pendingReviews, needsRevisionAnswers pgtype.Int4
 
 		if err := rows.Scan(
-			&registeredAt, &completedCourses, &completedLessons,
+			&registeredAt, &completedCourses, &completedLessons, &unreadConversationMessages,
 			&courseID, &title, &status, &mode, &totalLessons, &courseCompletedLessons,
 			&pendingReviews, &needsRevisionAnswers,
 		); err != nil {
@@ -141,6 +158,7 @@ func (r *CourseEnrollmentRepository) GetStudentCabinet(
 		cabinet.RegisteredAt = registeredAt
 		cabinet.CompletedCourses = completedCourses
 		cabinet.CompletedLessons = completedLessons
+		cabinet.UnreadConversationMessages = unreadConversationMessages
 		if courseID.Valid && title.Valid && status.Valid {
 			cabinet.Courses = append(cabinet.Courses, domain.StudentCabinetCourse{
 				CourseID:             courseID.Int64,
