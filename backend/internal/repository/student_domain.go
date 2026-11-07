@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -201,4 +202,34 @@ func (r *StudentRepository) UpdateProfile(ctx context.Context, params UpdateStud
 		return Student{}, mapDatabaseError("обновить профиль ученика", err)
 	}
 	return student, nil
+}
+
+// EnsureCuratorAssigned assigns an unassigned active student to the least-loaded
+// active curator with a linked Telegram account.
+func (r *StudentRepository) EnsureCuratorAssigned(ctx context.Context, studentID int64) error {
+	if studentID <= 0 {
+		return ErrInvalidInput
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return mapDatabaseError("начать автоматическое назначение куратора", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	if _, err := lockActiveStudent(ctx, tx, studentID); err != nil {
+		return err
+	}
+	if err := ensureCoordinatorAssignedTx(ctx, tx, studentID, "student.curator.auto_assign"); err != nil {
+		if errors.Is(err, errNoAvailableLinkedCoordinator) {
+			return domain.ErrNoCurator
+		}
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDatabaseError("зафиксировать автоматическое назначение куратора", err)
+	}
+	return nil
 }
