@@ -596,11 +596,15 @@ func TestStudentCabinetShowsRegistrationAndLearningSummary(t *testing.T) {
 		}
 	}
 	if learning.cabinetCalls != 1 || !hasButton(last.markup, "home:lessons") ||
-		!hasButton(last.markup, "chat:history") || !hasButton(last.markup, "home:main") {
+		!hasButton(last.markup, "chat:history") || !hasButton(last.markup, "chat:start") ||
+		!hasButton(last.markup, "home:main") || len(last.markup.InlineKeyboard) != 4 {
 		t.Fatalf("cabinet navigation or single summary read is incorrect: calls=%d markup=%+v", learning.cabinetCalls, last.markup)
 	}
 	if got := last.markup.InlineKeyboard[1][0].Text; got != "История переписки · 3" {
 		t.Fatalf("кнопка истории должна показывать число непрочитанных сообщений: got=%q", got)
+	}
+	if got := last.markup.InlineKeyboard[2][0].Text; got != "Написать координатору" {
+		t.Fatalf("в личном кабинете должна быть кнопка связи с координатором: got=%q", got)
 	}
 }
 

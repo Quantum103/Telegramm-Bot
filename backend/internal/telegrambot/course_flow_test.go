@@ -354,6 +354,13 @@ func TestSecondCourseIsBlockedButCatalogRemainsAvailable(t *testing.T) {
 	if !hasButton(catalogScreen.markup, "course:10") || !hasButton(catalogScreen.markup, "course:20") {
 		t.Fatalf("catalog must remain available during an active course: %+v", catalogScreen.markup)
 	}
+	if len(catalogScreen.markup.InlineKeyboard) != 3 ||
+		!hasButton(catalogScreen.markup, "home:main") ||
+		hasButton(catalogScreen.markup, "chat:history") ||
+		hasButton(catalogScreen.markup, "chat:start") ||
+		catalogScreen.markup.InlineKeyboard[2][0].Text != "Назад" {
+		t.Fatalf("catalog must contain only course buttons and one Back button: %+v", catalogScreen.markup)
+	}
 
 	bot.handleCallback(context.Background(), testCallback("course:20", user, messageID))
 	blocked := lastEdit(t, api)

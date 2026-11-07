@@ -110,6 +110,7 @@ func (b *Bot) showStudentCabinet(ctx context.Context, chatID, studentID, message
 	b.render(ctx, chatID, messageID, text.String(), markup([][]InlineKeyboardButton{
 		{button("Начать прохождение уроков", "home:lessons")},
 		{button(historyLabel, "chat:history")},
+		{button("Написать координатору", "chat:start")},
 		{button("Главное меню", "home:main")},
 	}))
 	return true

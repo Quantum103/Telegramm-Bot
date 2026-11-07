@@ -45,7 +45,7 @@ func (b *Bot) renderCourses(ctx context.Context, chatID, studentID, messageID in
 	courses, err := b.catalog.ListCourses(ctx)
 	if err != nil {
 		b.logger.Error("не удалось загрузить каталог курсов", "student_id", studentID, "error", err)
-		b.render(ctx, chatID, messageID, "Не удалось загрузить каталог. Попробуйте обновить список позже.", keyboard(button("Обновить список", "courses")))
+		b.render(ctx, chatID, messageID, "Не удалось загрузить каталог. Попробуйте позже.", keyboard(button("Назад", "home:main")))
 		return
 	}
 
@@ -59,11 +59,8 @@ func (b *Bot) renderCourses(ctx context.Context, chatID, studentID, messageID in
 	}
 	if len(courses) == 0 {
 		text += "\n\nПока нет опубликованных курсов. Попробуйте позже."
-		rows = append(rows, []InlineKeyboardButton{button("Обновить список", "courses")})
 	}
-	rows = append(rows, []InlineKeyboardButton{button("История переписки", "chat:history")})
-	rows = append(rows, []InlineKeyboardButton{button("Связаться с координатором", "chat:start")})
-	rows = append(rows, []InlineKeyboardButton{button("Главное меню", "home:main")})
+	rows = append(rows, []InlineKeyboardButton{button("Назад", "home:main")})
 	b.render(ctx, chatID, messageID, text, markup(rows))
 }
 
