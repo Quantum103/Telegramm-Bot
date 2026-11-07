@@ -386,10 +386,13 @@ func TestTelegramQuestionUsesCachedTelegraphLinkWithoutExternalRequests(t *testi
 
 	last := lastEdit(t, api)
 	for _, expected := range []string{
-		"Почему Иисус ответил словами Писания?",
-		"Откуда взято: Матфея 4:4-7",
-		"Библейский текст:",
-		"Он же сказал ему в ответ",
+		"Курс о Евангелиях",
+		"Задание: 1 / 2",
+		"❕<b>ВОПРОС</b>",
+		"- Почему Иисус ответил словами Писания?",
+		"• Прочтите Библейский текст:",
+		"<pre>Он же сказал ему в ответ",
+		"Матфея 4:4-7",
 	} {
 		if !strings.Contains(last.text, expected) {
 			t.Fatalf("question screen is missing %q: %s", expected, last.text)
@@ -446,9 +449,11 @@ func TestTelegramQuestionShowsPreparationNoticeWithoutExternalRequests(t *testin
 
 	last := lastEdit(t, api)
 	for _, expected := range []string{
-		"ВОПРОС",
-		"Откуда взято: Матфея 4:4-7",
+		"Задание: 1 / 2",
+		"❕<b>ВОПРОС</b>",
+		"• Прочтите Библейский текст:",
 		"Отрывок из Священного Писания.",
+		"Матфея 4:4-7",
 		"Ссылка на полную главу готовится",
 	} {
 		if !strings.Contains(last.text, expected) {

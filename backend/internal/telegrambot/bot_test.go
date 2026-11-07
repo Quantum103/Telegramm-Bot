@@ -744,8 +744,9 @@ func TestOpeningLessonShowsFirstQuestionAndNavigation(t *testing.T) {
 	bot.handleCallback(context.Background(), testCallback("lesson:10:100", user, messageID))
 
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "Евангелие от Марка") || !strings.Contains(last.text, "ВОПРОС 1 / 2") ||
-		!strings.Contains(last.text, "Кто написал Евангелие от Марка?") {
+	if !strings.Contains(last.text, "Курс о Евангелиях") || !strings.Contains(last.text, "Задание: 1 / 2") ||
+		!strings.Contains(last.text, "❕<b>ВОПРОС</b>") ||
+		!strings.Contains(last.text, "- Кто написал Евангелие от Марка?") {
 		t.Fatalf("question screen was not rendered correctly: %q", last.text)
 	}
 	if !hasButton(last.markup, "nav:next:701:1001:10") {
@@ -785,18 +786,21 @@ func TestOpeningLessonRendersFormattedPassageAndInlineChapterLink(t *testing.T) 
 
 	last := lastEdit(t, api)
 	for _, expected := range []string{
-		"<b>ВОПРОС</b>",
-		"<blockquote>Почему Иисус ответил словами Писания &lt;и не иначе&gt;?</blockquote>",
-		"Откуда взято: Матфея 4:4-7",
-		"Библейский текст:",
-		"<blockquote>Он же сказал ему в ответ: написано: не хлебом одним будет жить человек &lt;и словом&gt;.</blockquote>",
+		"Курс о Евангелиях",
+		"⚪️ Задание: 1 / 2",
+		"❕<b>ВОПРОС</b>",
+		"- Почему Иисус ответил словами Писания &lt;и не иначе&gt;?",
+		"• Прочтите Библейский текст:",
+		"<pre>Он же сказал ему в ответ: написано: не хлебом одним будет жить человек &lt;и словом&gt;.</pre>",
+		"Матфея 4:4-7",
 	} {
 		if !strings.Contains(last.text, expected) {
 			t.Fatalf("formatted question is missing %q: %s", expected, last.text)
 		}
 	}
-	if strings.Contains(last.text, "bible.by") || strings.Contains(last.text, "<и не иначе>") {
-		t.Fatal("question message must not contain an external Bible site URL or unescaped HTML")
+	if strings.Contains(last.text, "bible.by") || strings.Contains(last.text, "<и не иначе>") ||
+		strings.Contains(last.text, "—") {
+		t.Fatal("question message must not contain an external Bible site URL, unescaped HTML, or long dashes")
 	}
 	if last.parseMode != "HTML" {
 		t.Fatalf("question screen parse mode = %q, want HTML", last.parseMode)
@@ -833,7 +837,7 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "ВОПРОС 2 / 2") || !strings.Contains(last.text, "Как начинается повествование?") {
+	if !strings.Contains(last.text, "Задание: 2 / 2") || !strings.Contains(last.text, "Как начинается повествование?") {
 		t.Fatalf("next question not shown: %q", last.text)
 	}
 	if hasButtonPrefix(last.markup, "nav:next:") {
@@ -845,7 +849,7 @@ func TestNavigationMovesForwardAndBackwardInSingleMessage(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("nav:prev:701:1002:10", user, messageID))
 	last = lastEdit(t, api)
-	if !strings.Contains(last.text, "ВОПРОС 1 / 2") {
+	if !strings.Contains(last.text, "Задание: 1 / 2") {
 		t.Fatalf("previous question not shown: %q", last.text)
 	}
 	if len(api.messages) != 1 {
@@ -962,7 +966,7 @@ func TestStaleNavigationDoesNotSkipQuestion(t *testing.T) {
 
 	// Повторно доставленная старая кнопка не должна переводить ученика с вопроса 2 на другой вопрос.
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
-	if !strings.Contains(lastEdit(t, api).text, "ВОПРОС 2 / 2") {
+	if !strings.Contains(lastEdit(t, api).text, "Задание: 2 / 2") {
 		t.Fatalf("stale callback changed the saved position: %q", lastEdit(t, api).text)
 	}
 }
@@ -988,7 +992,7 @@ func TestProgressPositionRestoredAfterNewBotInstance(t *testing.T) {
 	restartedBot.handleCallback(context.Background(), testCallback("lesson:10:100", user, newMessageID))
 
 	last := lastEdit(t, api)
-	if !strings.Contains(last.text, "ВОПРОС 2 / 2") {
+	if !strings.Contains(last.text, "Задание: 2 / 2") {
 		t.Fatalf("saved question position was not restored: %q", last.text)
 	}
 }
@@ -1262,7 +1266,7 @@ func TestLessonCanBeCompletedOnlyAfterAllAnswersAreSaved(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, mainID))
 	secondQuestion := lastEdit(t, api.fakeAPI)
-	if !strings.Contains(secondQuestion.text, "ВОПРОС 2 / 2") {
+	if !strings.Contains(secondQuestion.text, "Задание: 2 / 2") {
 		t.Fatalf("после первого ответа должен открыться второй вопрос: %q", secondQuestion.text)
 	}
 	if hasButtonPrefix(secondQuestion.markup, "lesson:finish:") {

@@ -209,7 +209,7 @@ func TestCourseModeChoiceStartsAICourseAndFirstLesson(t *testing.T) {
 
 	bot.handleCallback(context.Background(), testCallback("course:start:ai:10", user, messageID))
 	firstQuestion := lastEdit(t, api)
-	if !strings.Contains(firstQuestion.text, "ВОПРОС 1 / 2") ||
+	if !strings.Contains(firstQuestion.text, "Задание: 1 / 2") ||
 		!strings.Contains(firstQuestion.text, "Вы выбрали самостоятельное прохождение") ||
 		!strings.Contains(firstQuestion.text, "Кто написал Евангелие от Марка?") {
 		t.Fatalf("AI course did not open the first question: %q", firstQuestion.text)
@@ -239,7 +239,7 @@ func TestCuratorModeSelectionConfirmsAndOpensFirstLesson(t *testing.T) {
 
 	firstQuestion := lastEdit(t, api)
 	if !strings.Contains(firstQuestion.text, "Вы будете проходить этот курс с координатором") ||
-		!strings.Contains(firstQuestion.text, "ВОПРОС 1 / 2") {
+		!strings.Contains(firstQuestion.text, "Задание: 1 / 2") {
 		t.Fatalf("curator selection was not confirmed before the first lesson: %q", firstQuestion.text)
 	}
 	active, err := learning.ActiveCourse(context.Background(), students.byID[user.ID].ID)
@@ -296,7 +296,7 @@ func TestStartRestoresSavedCourseAndQuestionAfterBotRestart(t *testing.T) {
 	firstBot.handleCallback(context.Background(), testCallback("course:10", user, messageID))
 	firstBot.handleCallback(context.Background(), testCallback("course:start:ai:10", user, messageID))
 	firstBot.handleCallback(context.Background(), testCallback("nav:next:701:1001:10", user, messageID))
-	if !strings.Contains(lastEdit(t, api).text, "ВОПРОС 2 / 2") {
+	if !strings.Contains(lastEdit(t, api).text, "Задание: 2 / 2") {
 		t.Fatal("test setup did not advance to the second question")
 	}
 
@@ -322,7 +322,7 @@ func TestStartRestoresSavedCourseAndQuestionAfterBotRestart(t *testing.T) {
 
 	restartedBot.handleCallback(context.Background(), testCallback("course:continue", user, home.messageID))
 	continued := lastEdit(t, api)
-	if !strings.Contains(continued.text, "ВОПРОС 2 / 2") ||
+	if !strings.Contains(continued.text, "Задание: 2 / 2") ||
 		!strings.Contains(continued.text, "Как начинается повествование?") {
 		t.Fatalf("course continuation did not restore the exact question: %q", continued.text)
 	}

@@ -306,11 +306,13 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 			lesson = &detail.Lesson
 		}
 	}
-	lessonTitle := "Урок"
+	courseTitle := "Курс"
 	courseID := int64(0)
 	if lesson != nil {
-		if strings.TrimSpace(lesson.Title) != "" {
-			lessonTitle = lesson.Title
+		if strings.TrimSpace(lesson.CourseTitle) != "" {
+			courseTitle = lesson.CourseTitle
+		} else if strings.TrimSpace(lesson.Title) != "" {
+			courseTitle = lesson.Title
 		}
 		courseID = lesson.CourseID
 	}
@@ -333,19 +335,19 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	if strings.TrimSpace(notice) != "" {
 		message.text(notice + "\n\n")
 	}
-	message.text(fmt.Sprintf("📚 %s\n🟣 ВОПРОС %d / %d\n\n", truncate(lessonTitle, 180), number, total))
-	message.raw("<b>ВОПРОС</b>\n")
-	message.raw("<blockquote>")
-	message.text(question.Prompt)
-	message.raw("</blockquote>")
+	message.text(fmt.Sprintf("%s\n⚪️ Задание: %d / %d\n\n", truncate(courseTitle, 180), number, total))
+	message.raw("❕<b>ВОПРОС</b>\n")
+	message.text("- " + question.Prompt)
 
 	for _, passage := range question.BiblePassages {
-		message.text("\n\n📍 Откуда взято: " + biblePassageReference(passage))
 		if passage.PassageText != nil && strings.TrimSpace(*passage.PassageText) != "" {
-			message.text("\n\n📜 Библейский текст:\n")
-			message.raw("<blockquote>")
+			message.text("\n\n• Прочтите Библейский текст:\n\n")
+			message.raw("<pre>")
 			message.text(truncate(*passage.PassageText, 1400))
-			message.raw("</blockquote>")
+			message.raw("</pre>")
+			message.text("\n\n" + biblePassageReference(passage))
+		} else {
+			message.text("\n\n" + biblePassageReference(passage))
 		}
 	}
 
@@ -375,7 +377,7 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 				message.text("\n\n✅ Ответ сохранён. Автоматическая проверка пока не выполнена. Отправьте новый текст, чтобы изменить ответ.")
 			}
 		} else {
-			message.text("\n\n✍️ Отправьте ответ следующим сообщением.")
+			message.text("\n\n🖊️ Отправьте ответ следующим сообщением:")
 		}
 	case "single_choice", "multiple_choice":
 		if showOptions {
@@ -454,7 +456,7 @@ func (b *Bot) renderQuestionMode(ctx context.Context, chatID, studentID, message
 	} else {
 		rows = append(rows, []InlineKeyboardButton{button("К курсам", "courses")})
 	}
-	b.renderHTML(ctx, chatID, messageID, message.String(), markup(rows))
+	b.renderHTML(ctx, chatID, messageID, strings.ReplaceAll(message.String(), "—", "-"), markup(rows))
 }
 func optionSummary(options []domain.QuestionOption, selectedIDs []int64) string {
 	selected := make(map[int64]struct{}, len(selectedIDs))
