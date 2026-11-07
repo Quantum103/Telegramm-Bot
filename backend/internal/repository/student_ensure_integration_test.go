@@ -279,6 +279,17 @@ func TestEnsureCuratorAssignedSelectsLeastLoadedCurator(t *testing.T) {
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM student_curator_assignments WHERE student_id = $1", studentID); err != nil {
 			t.Errorf("очистить автоматическое назначение: %v", err)
 		}
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM conversation_participants participant
+			USING conversations conversation
+			WHERE participant.conversation_id = conversation.id
+			  AND conversation.student_id = $1
+		`, studentID); err != nil {
+			t.Errorf("очистить участника автоматического диалога: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM conversations WHERE student_id = $1", studentID); err != nil {
+			t.Errorf("очистить автоматический диалог: %v", err)
+		}
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM students WHERE id = $1", studentID); err != nil {
 			t.Errorf("очистить тестового ученика: %v", err)
 		}
