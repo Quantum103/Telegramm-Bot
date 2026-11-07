@@ -290,10 +290,10 @@ func TestStudentCanEnterChatModeAndSendMessage(t *testing.T) {
 		hasButton(api.messages[0].markup, "chat:start") {
 		t.Fatalf("главное меню должно содержать только две основные кнопки: %+v", api.messages[0].markup)
 	}
-	bot.handleCallbackWithUpdateID(context.Background(), 2, testCallback("home:lessons", user, api.messages[0].messageID))
-	learningMenu := lastEdit(t, api)
-	if !hasButton(learningMenu.markup, "chat:start") {
-		t.Fatalf("в разделе обучения отсутствует связь с координатором: %+v", learningMenu.markup)
+	bot.handleCallbackWithUpdateID(context.Background(), 2, testCallback("home:account", user, api.messages[0].messageID))
+	cabinet := lastEdit(t, api)
+	if !hasButton(cabinet.markup, "chat:start") {
+		t.Fatalf("в личном кабинете отсутствует связь с координатором: %+v", cabinet.markup)
 	}
 
 	bot.handleCallbackWithUpdateID(context.Background(), 3, testCallback("chat:start", user, api.messages[0].messageID))
@@ -357,9 +357,10 @@ func TestStudentCanViewConversationHistoryWithOlderMessagePagination(t *testing.
 	bot.handleUpdate(context.Background(), testUpdate(1, "/start", user))
 	student := students.byID[user.ID]
 	messageID := api.messages[0].messageID
-	bot.handleCallback(context.Background(), testCallback("home:lessons", user, messageID))
-	if !hasButton(lastEdit(t, api).markup, "chat:history") {
-		t.Fatal("в каталоге курсов должна быть доступна история переписки")
+	bot.handleCallback(context.Background(), testCallback("home:account", user, messageID))
+	cabinet := lastEdit(t, api)
+	if !hasButton(cabinet.markup, "chat:history") || !hasButton(cabinet.markup, "chat:start") {
+		t.Fatalf("в личном кабинете должны быть история переписки и связь с координатором: %+v", cabinet.markup)
 	}
 
 	bot.handleCallback(context.Background(), testCallback("chat:history", user, messageID))

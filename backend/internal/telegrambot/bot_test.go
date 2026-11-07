@@ -701,8 +701,10 @@ func TestEmptyCatalogIsExplained(t *testing.T) {
 	if !strings.Contains(last.text, "нет опубликованных курсов") {
 		t.Fatalf("empty catalog message missing: %q", last.text)
 	}
-	if !hasButton(last.markup, "courses") || !hasButton(last.markup, "home:main") {
-		t.Fatal("empty catalog should allow refreshing the list and returning home")
+	if len(last.markup.InlineKeyboard) != 1 ||
+		!hasButton(last.markup, "home:main") || hasButton(last.markup, "courses") ||
+		last.markup.InlineKeyboard[0][0].Text != "Назад" {
+		t.Fatalf("empty catalog should contain only the Back button: %+v", last.markup)
 	}
 }
 
