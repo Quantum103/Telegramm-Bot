@@ -913,7 +913,7 @@ func (b *Bot) handleStudentConversationText(ctx context.Context, student domain.
 }
 
 func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referralPayload string) bool {
-	student, err := b.ensureStudent(ctx, user)
+	student, err := b.registerStudent(ctx, user)
 	if err != nil {
 		b.logger.Error("не удалось зарегистрировать ученика Telegram", "telegram_user_id", user.ID, "error", err)
 		b.send(ctx, chatID, "Не удалось завершить регистрацию из-за временной ошибки. Попробуйте ещё раз немного позже.")
@@ -927,6 +927,7 @@ func (b *Bot) handleStart(ctx context.Context, chatID int64, user User, referral
 			return false
 		}
 	}
+	b.ensureAutomaticCuratorAssignment(ctx, student.ID)
 	return b.showMainMenu(ctx, chatID, student.ID, 0, notice)
 }
 
@@ -962,10 +963,32 @@ func (b *Bot) applyStudentReferral(ctx context.Context, studentID int64, code st
 	return "Не удалось подтвердить назначение координатора. Главное меню открыто.", true
 }
 func (b *Bot) ensureStudent(ctx context.Context, user User) (domain.Student, error) {
+	student, err := b.registerStudent(ctx, user)
+	if err != nil {
+		return domain.Student{}, err
+	}
+	b.ensureAutomaticCuratorAssignment(ctx, student.ID)
+	return student, nil
+}
+
+func (b *Bot) registerStudent(ctx context.Context, user User) (domain.Student, error) {
 	return b.students.EnsureByTelegramID(ctx, domain.EnsureStudentParams{
 		TelegramID: user.ID, DisplayName: displayName(user),
 		TelegramUsername: optionalString(user.Username), PreferredName: optionalString(user.FirstName),
 	})
+}
+
+func (b *Bot) ensureAutomaticCuratorAssignment(ctx context.Context, studentID int64) {
+	assigner, ok := b.students.(interface {
+		EnsureCuratorAssigned(context.Context, int64) error
+	})
+	if !ok {
+		return
+	}
+	if err := assigner.EnsureCuratorAssigned(ctx, studentID); err != nil {
+		b.logger.Warn("не удалось автоматически назначить куратора ученику",
+			"student_id", studentID, "error", err)
+	}
 }
 
 func (b *Bot) send(ctx context.Context, chatID int64, text string) {
