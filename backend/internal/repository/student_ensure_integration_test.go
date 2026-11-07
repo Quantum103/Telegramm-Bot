@@ -239,3 +239,113 @@ func readStudentWriteState(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 func stringPointer(value string) *string {
 	return &value
 }
+
+func TestEnsureCuratorAssignedSelectsLeastLoadedCurator(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	var curatorRoleID, curatorID, studentID int64
+	if err := pool.QueryRow(ctx, "SELECT id FROM staff_roles WHERE role_code = 'curator'").Scan(&curatorRoleID); err != nil {
+		t.Fatalf("получить роль куратора: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO staff_accounts (display_name, email, password_hash, account_status, telegram_id)
+		VALUES ($1, $2, 'test-hash', 'active', $3)
+		RETURNING id
+	`, "auto-assignment-curator-"+suffix, "auto-assignment-"+suffix+"@example.test", time.Now().UnixNano()).Scan(&curatorID); err != nil {
+		t.Fatalf("создать тестового куратора: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO staff_role_assignments (staff_id, role_id) VALUES ($1, $2)
+	`, curatorID, curatorRoleID); err != nil {
+		t.Fatalf("назначить роль тестовому куратору: %v", err)
+	}
+	student, err := NewStudentRepository(pool).EnsureByTelegramID(ctx, EnsureStudentParams{
+		TelegramID: time.Now().UnixNano(), DisplayName: "Ученик для автоматического распределения",
+	})
+	if err != nil {
+		t.Fatalf("создать тестового ученика: %v", err)
+	}
+	studentID = student.ID
+
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM audit_events WHERE entity_type = 'student' AND entity_id = $1", studentID); err != nil {
+			t.Errorf("очистить аудит автоматического назначения: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM student_curator_assignments WHERE student_id = $1", studentID); err != nil {
+			t.Errorf("очистить автоматическое назначение: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM students WHERE id = $1", studentID); err != nil {
+			t.Errorf("очистить тестового ученика: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_role_assignments WHERE staff_id = $1", curatorID); err != nil {
+			t.Errorf("очистить роль тестового куратора: %v", err)
+		}
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM staff_accounts WHERE id = $1", curatorID); err != nil {
+			t.Errorf("очистить тестового куратора: %v", err)
+		}
+	})
+
+	var expectedCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT staff.id
+		FROM staff_accounts staff
+		WHERE staff.account_status = 'active'
+		  AND staff.telegram_id IS NOT NULL
+		  AND staff.telegram_id > 0
+		  AND EXISTS (
+		      SELECT 1
+		      FROM staff_role_assignments role_assignment
+		      JOIN staff_roles role ON role.id = role_assignment.role_id
+		      WHERE role_assignment.staff_id = staff.id
+		        AND role_assignment.revoked_at IS NULL
+		        AND role.role_code = 'curator'
+		  )
+		ORDER BY (
+		    SELECT count(*)
+		    FROM student_curator_assignments assignment
+		    JOIN students active_student ON active_student.id = assignment.student_id
+		    WHERE assignment.curator_staff_id = staff.id
+		      AND assignment.status = 'active'
+		      AND active_student.account_status = 'active'
+		), staff.id
+		LIMIT 1
+	`).Scan(&expectedCuratorID); err != nil {
+		t.Fatalf("определить наименее загруженного куратора: %v", err)
+	}
+
+	repo := NewStudentRepository(pool)
+	if err := repo.EnsureCuratorAssigned(ctx, studentID); err != nil {
+		t.Fatalf("автоматически назначить куратора: %v", err)
+	}
+	var assignedCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT curator_staff_id
+		FROM student_curator_assignments
+		WHERE student_id = $1 AND status = 'active'
+	`, studentID).Scan(&assignedCuratorID); err != nil {
+		t.Fatalf("получить назначенного куратора: %v", err)
+	}
+	if assignedCuratorID != expectedCuratorID {
+		t.Fatalf("назначен куратор %d вместо наименее загруженного %d", assignedCuratorID, expectedCuratorID)
+	}
+
+	if err := repo.EnsureCuratorAssigned(ctx, studentID); err != nil {
+		t.Fatalf("повторно проверить назначение: %v", err)
+	}
+	var stillAssignedCuratorID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT curator_staff_id
+		FROM student_curator_assignments
+		WHERE student_id = $1 AND status = 'active'
+	`, studentID).Scan(&stillAssignedCuratorID); err != nil {
+		t.Fatalf("проверить повторное назначение: %v", err)
+	}
+	if stillAssignedCuratorID != assignedCuratorID {
+		t.Fatalf("повторная проверка изменила назначение: было %d, стало %d", assignedCuratorID, stillAssignedCuratorID)
+	}
+}
