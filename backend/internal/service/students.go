@@ -31,6 +31,23 @@ func (s *StudentService) EnsureByTelegramID(ctx context.Context, params domain.E
 	return s.students.EnsureByTelegramID(ctx, params)
 }
 
+type studentCuratorAssignmentEnsurer interface {
+	EnsureCuratorAssigned(context.Context, int64) error
+}
+
+// EnsureCuratorAssigned preserves an existing curator assignment and balances
+// only students who do not have an active assignment yet.
+func (s *StudentService) EnsureCuratorAssigned(ctx context.Context, studentID int64) error {
+	if s == nil || s.students == nil || studentID <= 0 {
+		return domain.ErrInvalidInput
+	}
+	ensurer, ok := s.students.(studentCuratorAssignmentEnsurer)
+	if !ok {
+		return domain.ErrInvalidState
+	}
+	return ensurer.EnsureCuratorAssigned(ctx, studentID)
+}
+
 func (s *StudentService) GetByID(ctx context.Context, studentID int64) (domain.Student, error) {
 	if studentID <= 0 {
 		return domain.Student{}, domain.ErrInvalidInput
