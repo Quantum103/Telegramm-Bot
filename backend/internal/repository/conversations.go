@@ -133,6 +133,13 @@ func ensureCoordinatorAssignedTx(ctx context.Context, tx pgx.Tx, studentID int64
 		return err
 	}
 
+	// Serialize automatic allocations so concurrent registrations see the
+	// assignment committed by the previous allocation before counting loads.
+	const automaticAssignmentLock = "student_curator_assignments:automatic_least_loaded"
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", automaticAssignmentLock); err != nil {
+		return mapDatabaseError("сериализовать автоматическое распределение учеников", err)
+	}
+
 	var previousCuratorID pgtype.Int8
 	err := tx.QueryRow(ctx, `
 		SELECT curator_staff_id
