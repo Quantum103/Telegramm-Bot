@@ -1542,7 +1542,6 @@ func TestStaffRoleManagementRequiresAdministratorAndUsesSessionActor(t *testing.
 		}
 	})
 }
-
 func TestStaffListQuestionsForVersionRejectsCurator(t *testing.T) {
 	identity := domain.StaffSessionIdentity{
 		StaffID: 42, Roles: []string{"curator"}, DisplayName: "Curator", Email: "curator@example.test",
