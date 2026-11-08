@@ -527,7 +527,6 @@ function App() {
   const refreshChat = () => {
     void perform(async () => {
       const result = await api<ConversationResponse>('/api/v1/miniapp/conversation')
-      setConversationID(result.conversation.id)
       setConversationMessages((result.messages || []).slice().reverse())
       setConversationHasOlder(result.has_more)
       const updated = await loadBootstrap()
