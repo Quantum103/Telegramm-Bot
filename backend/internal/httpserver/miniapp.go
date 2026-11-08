@@ -199,6 +199,10 @@ type miniAppConversationMessagesResponse struct {
 	HasMore  bool                         `json:"has_more"`
 }
 
+type miniAppConversationUnreadResponse struct {
+	UnreadCount int64 `json:"unread_count"`
+}
+
 type miniAppConversationMessageRequest struct {
 	BodyText       string `json:"body_text"`
 	IdempotencyKey string `json:"idempotency_key"`
@@ -218,6 +222,7 @@ func NewHandlerWithTelegramMiniApp(next http.Handler, deps MiniAppDependencies) 
 func (h *miniAppHandler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/miniapp/bootstrap", h.bootstrap)
 	mux.HandleFunc("GET /api/v1/miniapp/conversation", h.studentConversation)
+	mux.HandleFunc("GET /api/v1/miniapp/conversation/unread", h.studentConversationUnread)
 	mux.HandleFunc("GET /api/v1/miniapp/conversation/messages", h.studentConversationMessages)
 	mux.HandleFunc("POST /api/v1/miniapp/conversation/messages", h.studentSendConversationMessage)
 	mux.HandleFunc("GET /api/v1/miniapp/courses/{courseID}", h.course)
@@ -258,6 +263,23 @@ func (h *miniAppHandler) registerStudent(w http.ResponseWriter, r *http.Request)
 		return domain.Student{}, false
 	}
 	return student, true
+}
+
+func (h *miniAppHandler) studentConversationUnread(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	if h.deps.Conversations == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "mini_app_unavailable"})
+		return
+	}
+	unread, err := h.deps.Conversations.UnreadCountForStudent(r.Context(), student.ID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppConversationUnreadResponse{UnreadCount: unread})
 }
 
 func (h *miniAppHandler) studentConversation(w http.ResponseWriter, r *http.Request) {
