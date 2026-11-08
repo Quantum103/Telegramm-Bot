@@ -200,7 +200,6 @@ func TestValidateTelegramWebAppInitDataRejectsDuplicateParameters(t *testing.T) 
 	}
 }
 
-
 func TestDecodeMiniAppJSONRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	tests := []struct {
 		name string
