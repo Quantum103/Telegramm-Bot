@@ -2,7 +2,7 @@ module github.com/Quantum103/Telegramm-Bot/backend
 
 go 1.27.0
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	github.com/coder/websocket v1.8.15
@@ -20,5 +20,5 @@ require (
 	go.uber.org/atomic v1.12.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
