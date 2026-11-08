@@ -198,6 +198,16 @@ function modeLabel(mode: string): string {
   return mode === 'curator' ? 'С координатором' : 'Самостоятельно'
 }
 
+function courseRunStatus(status: string): string {
+  switch (status) {
+    case 'completed': return 'Завершён'
+    case 'in_progress': return 'В процессе'
+    case 'awaiting_curator': return 'Ожидает проверки'
+    case 'paused': return 'Приостановлен'
+    default: return 'Статус неизвестен'
+  }
+}
+
 function lessonStatus(status: string): string {
   switch (status) {
     case 'completed': return 'Выполнено'
@@ -304,43 +314,90 @@ function App() {
     setRunLessons(result.lessons || [])
   }
 
-  const openCourse = (courseID: number) => perform(async () => {
-    const data = await api<CourseDetails>('/api/v1/miniapp/courses/' + courseID)
-    setCourseDetails(data)
-    if (data.active_course?.enrollment.course_id === courseID && data.active_course.enrollment.status === 'in_progress') {
-      setRunProgress(data.active_course)
-      await loadRunLessons(data.active_course.enrollment.id)
-      setView('lessons')
-    } else {
-      setRunProgress(data.active_course || null)
-      setView('course')
-    }
-  })
-
   const continueCourse = () => {
-    if (!bootstrap?.active_course) return
+    const active = bootstrap?.active_course
+    if (!active) return
+    if (active.enrollment.status === 'awaiting_curator') {
+      setNotice('Курс ожидает проверки ответов координатором. Новые уроки пока недоступны.')
+      return
+    }
+
     void perform(async () => {
-      const active = bootstrap.active_course!
-      setRunProgress(active)
-      await loadRunLessons(active.enrollment.id)
-      const details = await api<CourseDetails>('/api/v1/miniapp/courses/' + active.enrollment.course_id)
+      let run = active
+      if (active.enrollment.status === 'paused') {
+        run = await api<CourseRun>('/api/v1/miniapp/courses/' + active.enrollment.course_id + '/start', {
+          method: 'POST',
+          body: JSON.stringify({ mode: active.enrollment.mode }),
+        })
+      }
+
+      const [details, lessonResult] = await Promise.all([
+        api<CourseDetails>('/api/v1/miniapp/courses/' + run.enrollment.course_id),
+        api<{ lessons: RunLesson[] }>('/api/v1/miniapp/course-runs/' + run.enrollment.id + '/lessons'),
+      ])
+      setRunProgress(run)
+      setRunLessons(lessonResult.lessons || [])
       setCourseDetails(details)
       setTab('catalog')
       setView('lessons')
+
+      if (active.enrollment.status === 'paused') {
+        setBootstrap((previous) => previous ? { ...previous, active_course: run } : previous)
+        setNotice('Курс возобновлён.')
+      }
+    })
+  }
+
+  const openCourse = (courseID: number) => {
+    const active = bootstrap?.active_course
+    if (active && active.enrollment.course_id !== courseID) {
+      setError('Сначала завершите текущий курс «' + active.enrollment.course_title + '». После этого можно будет выбрать другой.')
+      return
+    }
+    if (active && active.enrollment.status !== 'awaiting_curator') {
+      continueCourse()
+      return
+    }
+
+    void perform(async () => {
+      const data = await api<CourseDetails>('/api/v1/miniapp/courses/' + courseID)
+      const current = data.active_course
+      if (current && current.enrollment.course_id !== courseID) {
+        setBootstrap((previous) => previous ? { ...previous, active_course: current } : previous)
+        setRunProgress(current)
+        setView('catalog')
+        setError('Сейчас вы проходите курс «' + current.enrollment.course_title + '». Сначала завершите его.')
+        return
+      }
+      setCourseDetails(data)
+      setRunProgress(current || null)
+      setView('course')
     })
   }
 
   const startCourse = (mode: 'ai' | 'curator') => {
     if (!courseDetails) return
+    const active = bootstrap?.active_course
+    if (active) {
+      if (active.enrollment.course_id === courseDetails.course.id) {
+        continueCourse()
+      } else {
+        setError('Сначала завершите текущий курс «' + active.enrollment.course_title + '».')
+      }
+      return
+    }
+
     void perform(async () => {
       const run = await api<CourseRun>('/api/v1/miniapp/courses/' + courseDetails.course.id + '/start', {
         method: 'POST',
         body: JSON.stringify({ mode }),
       })
+      const [, updated] = await Promise.all([
+        loadRunLessons(run.enrollment.id),
+        loadBootstrap(),
+      ])
       setRunProgress(run)
-      await loadRunLessons(run.enrollment.id)
       setView('lessons')
-      const updated = await loadBootstrap()
       setBootstrap(updated)
     })
   }
@@ -446,6 +503,12 @@ function App() {
 
   const displayName = bootstrap?.student.display_name || 'Ученик'
   const currentCourse = bootstrap?.active_course
+  const currentCourseStats = currentCourse
+    ? bootstrap?.cabinet.courses.find((course) => course.course_id === currentCourse.enrollment.course_id)
+    : undefined
+  const courseHistory = (bootstrap?.cabinet.courses || []).filter(
+    (course) => course.course_id !== currentCourse?.enrollment.course_id,
+  )
   const selectedCourse = courseDetails?.course
   const activeQuestion = questionState?.question
   const lessonTitle = runLessons.find((lesson) => lesson.lesson_id === activeLessonID)?.title || selectedCourse?.title || 'Урок'
@@ -489,7 +552,22 @@ function App() {
                   <div className="mini-course-meta"><span>{modeLabel(currentCourse.enrollment.mode)}</span><span>{currentCourse.completed_lessons} из {currentCourse.total_lessons} уроков</span></div>
                   <div className="mini-progress"><span style={{ width: progressPercent(currentCourse.completed_lessons, currentCourse.total_lessons) + '%' }} /></div>
                   <div className="mini-progress-caption"><span>Ваш прогресс</span><strong>{progressPercent(currentCourse.completed_lessons, currentCourse.total_lessons)}%</strong></div>
-                  <button className="mini-primary-button mini-full-button" type="button" onClick={continueCourse} disabled={busy}>Продолжить курс <span>→</span></button>
+                  {currentCourse.enrollment.status === 'awaiting_curator' ? (
+                    <div className="mini-course-state-note">
+                      <strong>Курс ожидает проверки</strong>
+                      <p>Координатор проверяет отправленные ответы. Продолжить уроки можно будет после проверки.</p>
+                      {currentCourseStats && currentCourseStats.pending_reviews > 0 && (
+                        <small>Ответов ожидают проверки: {currentCourseStats.pending_reviews}</small>
+                      )}
+                      {currentCourseStats && currentCourseStats.needs_revision_answers > 0 && (
+                        <small>Ответов требуют доработки: {currentCourseStats.needs_revision_answers}</small>
+                      )}
+                    </div>
+                  ) : (
+                    <button className="mini-primary-button mini-full-button" type="button" onClick={continueCourse} disabled={busy}>
+                      {currentCourse.enrollment.status === 'paused' ? 'Возобновить курс' : 'Продолжить курс'} <span>→</span>
+                    </button>
+                  )}
                 </>
               ) : (
                 <div className="mini-empty">
@@ -506,6 +584,38 @@ function App() {
               <div className="mini-profile-row"><span>Дата регистрации</span><strong>{formatDate(bootstrap.cabinet.registered_at)}</strong></div>
               <div className="mini-profile-row"><span>Формат обучения</span><strong>{currentCourse ? modeLabel(currentCourse.enrollment.mode) : 'Не выбран'}</strong></div>
             </section>
+
+            {courseHistory.length > 0 && (
+              <section className="mini-panel mini-history-panel">
+                <div className="mini-panel-heading">
+                  <div><p className="mini-overline">ВАШ ПРОГРЕСС</p><h2>История курсов</h2></div>
+                  <span className="mini-count">{courseHistory.length}</span>
+                </div>
+                <div className="mini-history-list">
+                  {courseHistory.map((course) => (
+                    <article className="mini-history-course" key={course.course_id}>
+                      <div className="mini-history-heading">
+                        <strong>{course.title}</strong>
+                        <span className="mini-history-status">{courseRunStatus(course.status)}</span>
+                      </div>
+                      <div className="mini-course-meta">
+                        <span>{modeLabel(course.mode)}</span>
+                        <span>{course.completed_lessons} из {course.total_lessons} уроков</span>
+                      </div>
+                      <div className="mini-progress">
+                        <span style={{ width: progressPercent(course.completed_lessons, course.total_lessons) + '%' }} />
+                      </div>
+                      {(course.pending_reviews > 0 || course.needs_revision_answers > 0) && (
+                        <div className="mini-history-details">
+                          {course.pending_reviews > 0 && <small>Ожидают проверки: {course.pending_reviews}</small>}
+                          {course.needs_revision_answers > 0 && <small>Требуют доработки: {course.needs_revision_answers}</small>}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
           </section>
         )}
 
@@ -516,24 +626,56 @@ function App() {
               <h1>Курсы Библии</h1>
               <p>Выберите направление и проходите уроки последовательно.</p>
             </div>
+            {currentCourse && (
+              <div className="mini-warning-note mini-catalog-warning">
+                <strong>У вас уже есть активный курс</strong>
+                <p>«{currentCourse.enrollment.course_title}». Остальные курсы станут доступны после его завершения.</p>
+                <button className="mini-primary-button" type="button" onClick={() => openCourse(currentCourse.enrollment.course_id)} disabled={busy}>
+                  {currentCourse.enrollment.status === 'awaiting_curator'
+                    ? 'Посмотреть состояние курса'
+                    : currentCourse.enrollment.status === 'paused'
+                      ? 'Возобновить текущий курс'
+                      : 'Продолжить текущий курс'} →
+                </button>
+              </div>
+            )}
             {bootstrap.courses.length === 0 ? (
               <div className="mini-panel mini-empty"><div className="mini-empty-icon">✧</div><h3>Курсы скоро появятся</h3><p>Пока нет опубликованных курсов. Загляните сюда немного позже.</p></div>
             ) : (
               <div className="mini-course-grid">
-                {bootstrap.courses.map((course, index) => (
-                  <button className="mini-course-card" type="button" key={course.id} onClick={() => openCourse(course.id)} disabled={busy}>
-                    <div className={'mini-course-art mini-course-art-' + (index % 4)}>
-                      <span className="mini-art-symbol">{['✧', '⌖', '✦', '❋'][index % 4]}</span>
-                      <span className="mini-art-label">КУРС {String(index + 1).padStart(2, '0')}</span>
-                    </div>
-                    <div className="mini-course-card-body">
-                      <span className="mini-course-card-meta">{course.lesson_count} {course.lesson_count === 1 ? 'урок' : course.lesson_count >= 2 && course.lesson_count <= 4 ? 'урока' : 'уроков'}</span>
-                      <h3>{course.title}</h3>
-                      <p>{course.description || 'Последовательное изучение библейских тем и текстов.'}</p>
-                      <span className="mini-course-open">Открыть курс <b>→</b></span>
-                    </div>
-                  </button>
-                ))}
+                {bootstrap.courses.map((course, index) => {
+                  const isCurrentCourse = currentCourse?.enrollment.course_id === course.id
+                  const isLocked = Boolean(currentCourse && !isCurrentCourse)
+                  return (
+                    <button
+                      className={'mini-course-card' + (isLocked ? ' is-locked' : '')}
+                      type="button"
+                      key={course.id}
+                      onClick={() => openCourse(course.id)}
+                      disabled={busy || isLocked}
+                      aria-label={isLocked
+                        ? course.title + '. Недоступен до завершения текущего курса.'
+                        : course.title + '. Открыть курс.'}
+                    >
+                      <div className={'mini-course-art mini-course-art-' + (index % 4)}>
+                        <span className="mini-art-symbol">{['✧', '⌖', '✦', '❋'][index % 4]}</span>
+                        <span className="mini-art-label">КУРС {String(index + 1).padStart(2, '0')}</span>
+                      </div>
+                      <div className="mini-course-card-body">
+                        <span className="mini-course-card-meta">
+                          {course.lesson_count} {course.lesson_count === 1 ? 'урок' : course.lesson_count >= 2 && course.lesson_count <= 4 ? 'урока' : 'уроков'}
+                          {isCurrentCourse ? ' · Текущий курс' : isLocked ? ' · Временно недоступен' : ''}
+                        </span>
+                        <h3>{course.title}</h3>
+                        <p>{course.description || 'Последовательное изучение библейских тем и текстов.'}</p>
+                        <span className="mini-course-open">
+                          {isCurrentCourse ? 'Открыть текущий курс' : isLocked ? 'Сначала завершите текущий' : 'Открыть курс'}
+                          <b>{isLocked ? '⌑' : '→'}</b>
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             )}
           </section>
@@ -567,10 +709,30 @@ function App() {
               </div>
             </section>
             <div className="mini-bottom-action">
-              {runProgress?.enrollment.course_id === selectedCourse.id ? (
-                <button className="mini-primary-button mini-full-button" type="button" onClick={continueCourse} disabled={busy}>Продолжить курс <span>→</span></button>
+              {runProgress && runProgress.enrollment.course_id !== selectedCourse.id ? (
+                <button className="mini-primary-button mini-full-button" type="button" disabled>
+                  Сначала завершите текущий курс
+                </button>
+              ) : runProgress?.enrollment.status === 'awaiting_curator' ? (
+                <button className="mini-primary-button mini-full-button" type="button" disabled>
+                  Курс ожидает проверки
+                </button>
+              ) : runProgress?.enrollment.status === 'paused' ? (
+                <button className="mini-primary-button mini-full-button" type="button" onClick={continueCourse} disabled={busy}>
+                  Возобновить курс <span>→</span>
+                </button>
+              ) : runProgress ? (
+                <button className="mini-primary-button mini-full-button" type="button" onClick={continueCourse} disabled={busy}>
+                  Продолжить курс <span>→</span>
+                </button>
+              ) : currentCourse ? (
+                <button className="mini-primary-button mini-full-button" type="button" disabled>
+                  Сначала завершите текущий курс
+                </button>
               ) : (
-                <button className="mini-primary-button mini-full-button" type="button" onClick={() => setView('mode')} disabled={busy}>Начать обучение <span>→</span></button>
+                <button className="mini-primary-button mini-full-button" type="button" onClick={() => setView('mode')} disabled={busy}>
+                  Начать обучение <span>→</span>
+                </button>
               )}
             </div>
           </section>
