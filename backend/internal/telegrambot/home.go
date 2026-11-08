@@ -33,10 +33,15 @@ func (b *Bot) showMainMenu(ctx context.Context, chatID, studentID, messageID int
 	if strings.TrimSpace(notice) != "" {
 		text += "\n\n" + strings.TrimSpace(notice)
 	}
-	b.render(ctx, chatID, messageID, text, markup([][]InlineKeyboardButton{
-		{button("Личный кабинет", "home:account")},
-		{button("Начать прохождение уроков", "home:lessons")},
-	}))
+	rows := make([][]InlineKeyboardButton, 0, 3)
+	if b.webAppURL != "" {
+		rows = append(rows, []InlineKeyboardButton{{Text: "Открыть приложение", WebApp: &WebAppInfo{URL: b.webAppURL}}})
+	}
+	rows = append(rows,
+		[]InlineKeyboardButton{button("Личный кабинет", "home:account")},
+		[]InlineKeyboardButton{button("Начать прохождение уроков", "home:lessons")},
+	)
+	b.render(ctx, chatID, messageID, text, markup(rows))
 	return true
 }
 
