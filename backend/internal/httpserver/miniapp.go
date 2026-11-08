@@ -70,10 +70,29 @@ type miniAppStudentResponse struct {
 	DisplayName string `json:"display_name"`
 }
 
+type miniAppCabinetCourseResponse struct {
+	CourseID             int64  `json:"course_id"`
+	Title                string `json:"title"`
+	Mode                 string `json:"mode"`
+	Status               string `json:"status"`
+	TotalLessons         int    `json:"total_lessons"`
+	CompletedLessons     int    `json:"completed_lessons"`
+	PendingReviews       int    `json:"pending_reviews"`
+	NeedsRevisionAnswers int    `json:"needs_revision_answers"`
+}
+
+type miniAppCabinetResponse struct {
+	RegisteredAt               time.Time                      `json:"registered_at"`
+	CompletedCourses           int                            `json:"completed_courses"`
+	CompletedLessons           int                            `json:"completed_lessons"`
+	UnreadConversationMessages int                            `json:"unread_conversation_messages"`
+	Courses                    []miniAppCabinetCourseResponse `json:"courses"`
+}
+
 type miniAppBootstrapResponse struct {
 	Student      miniAppStudentResponse             `json:"student"`
 	Courses      []domain.Course                    `json:"courses"`
-	Cabinet      domain.StudentCabinet              `json:"cabinet"`
+	Cabinet      miniAppCabinetResponse             `json:"cabinet"`
 	ActiveCourse *domain.CourseEnrollmentProgress  `json:"active_course,omitempty"`
 }
 
@@ -216,7 +235,7 @@ func (h *miniAppHandler) bootstrap(w http.ResponseWriter, r *http.Request) {
 	response := miniAppBootstrapResponse{
 		Student: miniAppStudentResponse{DisplayName: student.DisplayName},
 		Courses: courses,
-		Cabinet: cabinet,
+		Cabinet: miniAppCabinetFromDomain(cabinet),
 	}
 	active, err := h.deps.Learning.ActiveCourse(r.Context(), student.ID)
 	if err == nil {
@@ -480,6 +499,29 @@ func (h *miniAppHandler) completeLesson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, miniAppCompleteResponse{Enrollment: enrollment})
+}
+
+func miniAppCabinetFromDomain(cabinet domain.StudentCabinet) miniAppCabinetResponse {
+	response := miniAppCabinetResponse{
+		RegisteredAt: cabinet.RegisteredAt,
+		CompletedCourses: cabinet.CompletedCourses,
+		CompletedLessons: cabinet.CompletedLessons,
+		UnreadConversationMessages: cabinet.UnreadConversationMessages,
+		Courses: make([]miniAppCabinetCourseResponse, 0, len(cabinet.Courses)),
+	}
+	for _, course := range cabinet.Courses {
+		response.Courses = append(response.Courses, miniAppCabinetCourseResponse{
+			CourseID: course.CourseID,
+			Title: course.Title,
+			Mode: course.Mode,
+			Status: course.Status,
+			TotalLessons: course.TotalLessons,
+			CompletedLessons: course.CompletedLessons,
+			PendingReviews: course.PendingReviews,
+			NeedsRevisionAnswers: course.NeedsRevisionAnswers,
+		})
+	}
+	return response
 }
 
 func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQuestionResponse {
