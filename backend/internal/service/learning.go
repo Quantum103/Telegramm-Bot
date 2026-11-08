@@ -73,9 +73,9 @@ type NavigationState struct {
 // LessonQuestionsState contains every question and its persisted answer/review state.
 // Loading this view does not change the learner's current question position.
 type LessonQuestionsState struct {
-	Progress         domain.Progress
+	Progress          domain.Progress
 	LessonDescription *string
-	Questions        []NavigationState
+	Questions         []NavigationState
 }
 
 type questionPositionStore interface {

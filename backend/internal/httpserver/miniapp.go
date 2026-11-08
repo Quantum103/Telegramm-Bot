@@ -144,7 +144,7 @@ type miniAppLessonQuestionsResponse struct {
 	Questions         []miniAppQuestion `json:"questions"`
 	Progress          domain.Progress   `json:"progress"`
 	LessonDescription *string           `json:"lesson_description,omitempty"`
-	AtEnd              bool              `json:"at_end"`
+	AtEnd             bool              `json:"at_end"`
 }
 
 type miniAppStartCourseRequest struct {
