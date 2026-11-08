@@ -160,7 +160,6 @@ func TestQuestionNavigationHonoursFirstAndLastBoundaries(t *testing.T) {
 	}
 }
 
-
 func TestListLessonQuestionsReturnsAllWithoutChangingCurrentPosition(t *testing.T) {
 	studentID, enrollmentID, versionID := int64(5), int64(9), int64(14)
 	firstID, secondID := int64(101), int64(102)

@@ -528,7 +528,7 @@ func (s *LearningService) loadNavigationState(
 }
 
 // ListLessonQuestions returns all questions and their saved/review states for an owned,
- // active lesson enrollment. It deliberately does not change current_question_id.
+// active lesson enrollment. It deliberately does not change current_question_id.
 func (s *LearningService) ListLessonQuestions(
 	ctx context.Context,
 	studentID, enrollmentID int64,
@@ -551,7 +551,7 @@ func (s *LearningService) ListLessonQuestions(
 		return LessonQuestionsState{}, err
 	}
 	result := LessonQuestionsState{
-		Progress: progress,
+		Progress:  progress,
 		Questions: make([]NavigationState, 0, len(questions)),
 	}
 	for _, question := range questions {
