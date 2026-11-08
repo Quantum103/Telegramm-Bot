@@ -46,6 +46,18 @@ type CreateStudentConversationMessageParams struct {
 	EscalationAfter     time.Duration
 }
 
+// CreateStudentMiniAppConversationMessageParams stores a message sent from the authenticated Mini App.
+// ClientMessageID makes retries idempotent without fabricating a Telegram update identifier.
+type CreateStudentMiniAppConversationMessageParams struct {
+	StudentID           int64
+	ConversationID      int64
+	ClientMessageID     string
+	BodyText            string
+	FirstReminderAfter  time.Duration
+	SecondReminderAfter time.Duration
+	EscalationAfter     time.Duration
+}
+
 // ConversationDelivery — задание на доставку ответа куратора в Telegram.
 type ConversationDelivery struct {
 	ID                       int64

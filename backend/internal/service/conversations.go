@@ -133,6 +133,39 @@ func (s *ConversationService) CreateStudentMessage(ctx context.Context, params d
 	return message, nil
 }
 
+type miniAppConversationMessageStore interface {
+	CreateStudentMiniAppMessage(context.Context, domain.CreateStudentMiniAppConversationMessageParams) (domain.ConversationMessage, error)
+}
+
+// CreateStudentMiniAppMessage stores a Mini App message in the same conversation
+// and notification outbox used by Telegram and the curator panel.
+func (s *ConversationService) CreateStudentMiniAppMessage(
+	ctx context.Context,
+	params domain.CreateStudentMiniAppConversationMessageParams,
+) (domain.ConversationMessage, error) {
+	params.BodyText = strings.TrimSpace(params.BodyText)
+	params.ClientMessageID = strings.TrimSpace(params.ClientMessageID)
+	if params.StudentID <= 0 || params.ConversationID <= 0 ||
+		params.ClientMessageID == "" || len(params.ClientMessageID) > 128 ||
+		params.BodyText == "" || !utf8.ValidString(params.BodyText) ||
+		utf8.RuneCountInString(params.BodyText) > maxConversationMessageRunes {
+		return domain.ConversationMessage{}, domain.ErrInvalidInput
+	}
+	store, ok := s.store.(miniAppConversationMessageStore)
+	if !ok {
+		return domain.ConversationMessage{}, domain.ErrInvalidState
+	}
+	params.FirstReminderAfter = s.policy.FirstReminderAfter
+	params.SecondReminderAfter = s.policy.SecondReminderAfter
+	params.EscalationAfter = s.policy.EscalationAfter
+	message, err := store.CreateStudentMiniAppMessage(ctx, params)
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	s.PublishConversationChanged()
+	return message, nil
+}
+
 func (s *ConversationService) SendCuratorMessage(ctx context.Context, curatorStaffID, conversationID int64, bodyText string) (domain.ConversationMessage, error) {
 	bodyText = strings.TrimSpace(bodyText)
 	if curatorStaffID <= 0 || conversationID <= 0 || bodyText == "" ||

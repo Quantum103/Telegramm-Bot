@@ -364,6 +364,92 @@ func (r *ConversationRepository) CreateStudentMessage(ctx context.Context, param
 	return message, nil
 }
 
+
+func (r *ConversationRepository) CreateStudentMiniAppMessage(
+	ctx context.Context,
+	params domain.CreateStudentMiniAppConversationMessageParams,
+) (domain.ConversationMessage, error) {
+	body := strings.TrimSpace(params.BodyText)
+	clientMessageID := strings.TrimSpace(params.ClientMessageID)
+	if params.StudentID <= 0 || params.ConversationID <= 0 ||
+		clientMessageID == "" || len(clientMessageID) > 128 || body == "" {
+		return domain.ConversationMessage{}, ErrInvalidInput
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.ConversationMessage{}, mapDatabaseError("начать сохранение сообщения Mini App", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := lockActiveStudent(ctx, tx, params.StudentID); err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	if err := assignSupportCoordinatorTx(ctx, tx, params.StudentID); err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	conversation, studentParticipantID, _, err := getOrCreateConversationTx(ctx, tx, params.StudentID)
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	if conversation.ID != params.ConversationID {
+		return domain.ConversationMessage{}, ErrNotFound
+	}
+
+	var message domain.ConversationMessage
+	message.SenderType, message.MessageType, message.BodyText = "student", "text", &body
+	err = tx.QueryRow(ctx, `
+		INSERT INTO conversation_messages
+			(conversation_id, sender_participant_id, message_type, body_text, client_message_id)
+		VALUES ($1, $2, 'text', $3, $4)
+		ON CONFLICT (conversation_id, sender_participant_id, client_message_id)
+		WHERE client_message_id IS NOT NULL
+		DO NOTHING
+		RETURNING id, created_at
+	`, conversation.ID, studentParticipantID, body, clientMessageID).Scan(&message.ID, &message.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var existingConversationID, existingSenderID int64
+		var existingBody string
+		err = tx.QueryRow(ctx, `
+			SELECT id, conversation_id, sender_participant_id, body_text, created_at
+			FROM conversation_messages
+			WHERE conversation_id = $1 AND sender_participant_id = $2 AND client_message_id = $3
+		`, conversation.ID, studentParticipantID, clientMessageID).Scan(
+			&message.ID, &existingConversationID, &existingSenderID, &existingBody, &message.CreatedAt,
+		)
+		if err != nil {
+			return domain.ConversationMessage{}, mapDatabaseError("прочитать повторное сообщение Mini App", err)
+		}
+		if existingConversationID != conversation.ID || existingSenderID != studentParticipantID || existingBody != body {
+			return domain.ConversationMessage{}, ErrConflict
+		}
+		message.Replayed = true
+	} else if err != nil {
+		return domain.ConversationMessage{}, mapDatabaseError("сохранить сообщение Mini App", err)
+	} else {
+		if _, err := tx.Exec(ctx, "UPDATE conversations SET updated_at = now() WHERE id = $1", conversation.ID); err != nil {
+			return domain.ConversationMessage{}, mapDatabaseError("обновить активность диалога", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_message_deliveries
+				(message_id, channel, recipient_staff_id, delivery_status, next_attempt_at)
+			VALUES ($1, 'curator_telegram', NULLIF($2, 0), 'pending', now())
+			ON CONFLICT (message_id, channel) DO NOTHING
+		`, message.ID, conversation.AssignedCuratorStaffID); err != nil {
+			return domain.ConversationMessage{}, mapDatabaseError("создать задачу уведомления куратора", err)
+		}
+		if err := scheduleResponseWaitTasksTx(
+			ctx, tx, conversation.ID, message.ID, conversation.AssignedCuratorStaffID,
+			params.FirstReminderAfter, params.SecondReminderAfter, params.EscalationAfter,
+		); err != nil {
+			return domain.ConversationMessage{}, err
+		}
+	}
+	message.ConversationID, message.SenderParticipantID = conversation.ID, studentParticipantID
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ConversationMessage{}, mapDatabaseError("зафиксировать сообщение Mini App", err)
+	}
+	return message, nil
+}
+
 func scheduleResponseWaitTasksTx(
 	ctx context.Context,
 	tx pgx.Tx,

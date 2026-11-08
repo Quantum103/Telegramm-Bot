@@ -32,6 +32,13 @@ func (s *conversationEventStoreStub) SendCuratorMessage(_ context.Context, _, _ 
 	return domain.ConversationMessage{ID: 202}, nil
 }
 
+func (s *conversationEventStoreStub) CreateStudentMiniAppMessage(_ context.Context, _ domain.CreateStudentMiniAppConversationMessageParams) (domain.ConversationMessage, error) {
+	if s.createErr != nil {
+		return domain.ConversationMessage{}, s.createErr
+	}
+	return domain.ConversationMessage{ID: 303, SenderType: "student"}, nil
+}
+
 func (s *conversationEventStoreStub) LeaveStudentInteraction(_ context.Context, studentID int64) error {
 	s.leaveCalls++
 	s.leaveStudentID = studentID
@@ -83,6 +90,38 @@ func TestConversationServicePublishesStudentAndCuratorMessages(t *testing.T) {
 		t.Fatalf("send curator message: %v", err)
 	}
 	waitForConversationEvent(t, events)
+}
+
+func TestConversationServicePublishesMiniAppMessagesAndValidatesInput(t *testing.T) {
+	store := &conversationEventStoreStub{}
+	conversations := NewConversationService(store)
+	events, unsubscribe := conversations.SubscribeConversationEvents()
+	defer unsubscribe()
+
+	message, err := conversations.CreateStudentMiniAppMessage(context.Background(), domain.CreateStudentMiniAppConversationMessageParams{
+		StudentID: 1, ConversationID: 2, ClientMessageID: "client-message-1", BodyText: " Сообщение из Mini App ",
+	})
+	if err != nil || message.ID != 303 {
+		t.Fatalf("create Mini App message: message=%+v err=%v", message, err)
+	}
+	waitForConversationEvent(t, events)
+
+	invalid := []domain.CreateStudentMiniAppConversationMessageParams{
+		{StudentID: 0, ConversationID: 2, ClientMessageID: "key", BodyText: "text"},
+		{StudentID: 1, ConversationID: 0, ClientMessageID: "key", BodyText: "text"},
+		{StudentID: 1, ConversationID: 2, ClientMessageID: " ", BodyText: "text"},
+		{StudentID: 1, ConversationID: 2, ClientMessageID: "key", BodyText: "   "},
+	}
+	for _, params := range invalid {
+		if _, err := conversations.CreateStudentMiniAppMessage(context.Background(), params); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("invalid Mini App message should be rejected: %+v err=%v", params, err)
+		}
+	}
+	select {
+	case <-events:
+		t.Fatal("invalid message unexpectedly published a conversation event")
+	default:
+	}
 }
 
 func TestConversationServiceCanPublishExternalAssignmentChanges(t *testing.T) {

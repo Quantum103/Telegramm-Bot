@@ -90,6 +90,64 @@ func createConversationFixture(t *testing.T, pool *pgxpool.Pool, withAssignment 
 	return fixture
 }
 
+
+func TestConversationMiniAppMessageSharesHistoryAndIsIdempotent(t *testing.T) {
+	pool := integrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture := createConversationFixture(t, pool, true)
+	repo := NewConversationRepository(pool)
+	conversation, err := repo.GetOrCreateForStudent(ctx, fixture.studentID)
+	if err != nil {
+		t.Fatalf("получить диалог ученика: %v", err)
+	}
+
+	params := domain.CreateStudentMiniAppConversationMessageParams{
+		StudentID: fixture.studentID, ConversationID: conversation.ID,
+		ClientMessageID: "miniapp-message-001", BodyText: "Сообщение из Mini App",
+		FirstReminderAfter: 4 * time.Hour, SecondReminderAfter: 24 * time.Hour, EscalationAfter: 48 * time.Hour,
+	}
+	first, err := repo.CreateStudentMiniAppMessage(ctx, params)
+	if err != nil {
+		t.Fatalf("сохранить сообщение Mini App: %v", err)
+	}
+	replay, err := repo.CreateStudentMiniAppMessage(ctx, params)
+	if err != nil {
+		t.Fatalf("повторить запрос Mini App: %v", err)
+	}
+	if replay.ID != first.ID || !replay.Replayed {
+		t.Fatalf("повтор создал дубликат: first=%+v replay=%+v", first, replay)
+	}
+	changed := params
+	changed.BodyText = "Другой текст с тем же ключом"
+	if _, err := repo.CreateStudentMiniAppMessage(ctx, changed); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("повтор ключа с другим текстом должен конфликтовать: %v", err)
+	}
+
+	messagesForStudent, err := repo.ListMessagesForStudent(ctx, fixture.studentID, conversation.ID, 0, 50)
+	if err != nil {
+		t.Fatalf("история ученика: %v", err)
+	}
+	messagesForCurator, err := repo.ListMessagesForCurator(ctx, fixture.curator1ID, conversation.ID, 0, 50)
+	if err != nil {
+		t.Fatalf("история куратора: %v", err)
+	}
+	if len(messagesForStudent) != 1 || len(messagesForCurator) != 1 ||
+		messagesForStudent[0].ID != first.ID || messagesForCurator[0].ID != first.ID {
+		t.Fatalf("у ученика и куратора должна быть одна общая запись: student=%+v curator=%+v", messagesForStudent, messagesForCurator)
+	}
+	var notificationCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM conversation_message_deliveries
+		WHERE message_id = $1 AND channel = 'curator_telegram'
+	`, first.ID).Scan(&notificationCount); err != nil {
+		t.Fatalf("проверить outbox уведомления: %v", err)
+	}
+	if notificationCount != 1 {
+		t.Fatalf("уведомление куратора должно создаваться один раз, получено %d", notificationCount)
+	}
+}
+
 func TestConversationLifecycleTransferAndIdempotency(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
