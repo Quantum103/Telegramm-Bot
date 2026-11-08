@@ -141,9 +141,10 @@ type miniAppQuestionResponse struct {
 }
 
 type miniAppLessonQuestionsResponse struct {
-	Questions []miniAppQuestion `json:"questions"`
-	Progress  domain.Progress   `json:"progress"`
-	AtEnd     bool              `json:"at_end"`
+	Questions         []miniAppQuestion `json:"questions"`
+	Progress          domain.Progress   `json:"progress"`
+	LessonDescription *string           `json:"lesson_description,omitempty"`
+	AtEnd              bool              `json:"at_end"`
 }
 
 type miniAppStartCourseRequest struct {
@@ -367,9 +368,10 @@ func (h *miniAppHandler) startLesson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := miniAppLessonQuestionsResponse{
-		Progress: lessonState.Progress,
-		Questions: make([]miniAppQuestion, 0, len(lessonState.Questions)),
-		AtEnd: len(lessonState.Questions) == 0,
+		Progress:          lessonState.Progress,
+		LessonDescription: lessonState.LessonDescription,
+		Questions:         make([]miniAppQuestion, 0, len(lessonState.Questions)),
+		AtEnd:             len(lessonState.Questions) == 0,
 	}
 	for _, state := range lessonState.Questions {
 		response.Questions = append(response.Questions, miniAppQuestionFromState(state))

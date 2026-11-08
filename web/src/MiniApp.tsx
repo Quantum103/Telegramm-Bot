@@ -130,6 +130,7 @@ type QuestionState = {
 type LessonQuestionsState = {
   questions: Question[]
   progress: Progress
+  lesson_description?: string | null
   at_end: boolean
 }
 
@@ -540,7 +541,6 @@ function App() {
     (course) => course.course_id !== currentCourse?.enrollment.course_id,
   )
   const selectedCourse = courseDetails?.course
-  const activeLesson = courseDetails?.lessons.find((lesson) => lesson.id === activeLessonID)
   const lessonTitle = runLessons.find((lesson) => lesson.lesson_id === activeLessonID)?.title || selectedCourse?.title || 'Урок'
   const answeredQuestionCount = lessonState?.questions.filter((question) => {
     const draft = answerDrafts[question.id]
@@ -849,10 +849,10 @@ function App() {
             </div>
             <div className="mini-progress"><span style={{ width: progressPercent(answeredQuestionCount, lessonState.questions.length) + '%' }} /></div>
 
-            {activeLesson?.description?.trim() && (
+            {lessonState.lesson_description?.trim() && (
               <section className="mini-panel mini-lesson-preface">
                 <p className="mini-overline">ПРЕДИСЛОВИЕ</p>
-                <div className="mini-lesson-preface-text">{activeLesson.description}</div>
+                <div className="mini-lesson-preface-text">{lessonState.lesson_description}</div>
               </section>
             )}
 

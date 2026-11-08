@@ -73,8 +73,9 @@ type NavigationState struct {
 // LessonQuestionsState contains every question and its persisted answer/review state.
 // Loading this view does not change the learner's current question position.
 type LessonQuestionsState struct {
-	Progress  domain.Progress
-	Questions []NavigationState
+	Progress         domain.Progress
+	LessonDescription *string
+	Questions        []NavigationState
 }
 
 type questionPositionStore interface {
@@ -546,13 +547,30 @@ func (s *LearningService) ListLessonQuestions(
 	if err := s.ensureCourseRunActive(ctx, progress.Enrollment); err != nil {
 		return LessonQuestionsState{}, err
 	}
+	var lessonDescription *string
+	if progress.Enrollment.CourseEnrollmentID != nil {
+		if s.courseEnrollments == nil {
+			return LessonQuestionsState{}, domain.ErrInvalidState
+		}
+		lesson, lessonErr := s.courseEnrollments.GetLessonForRun(
+			ctx, studentID, *progress.Enrollment.CourseEnrollmentID, progress.Enrollment.LessonID,
+		)
+		if lessonErr != nil {
+			return LessonQuestionsState{}, lessonErr
+		}
+		if lesson.LessonVersionID != progress.Enrollment.LessonVersionID {
+			return LessonQuestionsState{}, domain.ErrInvalidState
+		}
+		lessonDescription = lesson.Description
+	}
 	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
 	if err != nil {
 		return LessonQuestionsState{}, err
 	}
 	result := LessonQuestionsState{
-		Progress:  progress,
-		Questions: make([]NavigationState, 0, len(questions)),
+		Progress:          progress,
+		LessonDescription: lessonDescription,
+		Questions:         make([]NavigationState, 0, len(questions)),
 	}
 	for _, question := range questions {
 		state, stateErr := s.loadNavigationState(ctx, studentID, enrollmentID, question, progress)
