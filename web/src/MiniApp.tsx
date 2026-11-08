@@ -449,6 +449,8 @@ function App() {
   const selectedCourse = courseDetails?.course
   const activeQuestion = questionState?.question
   const lessonTitle = runLessons.find((lesson) => lesson.lesson_id === activeLessonID)?.title || selectedCourse?.title || 'Урок'
+  const completedRunLessons = runLessons.filter((lesson) => lesson.status === 'completed').length
+  const remainingRunLessons = runLessons.length - completedRunLessons
 
   return (
     <main className="mini-app">
@@ -601,9 +603,9 @@ function App() {
               <p>{modeLabel(runProgress.enrollment.mode)} · двигайтесь последовательно, урок за уроком.</p>
             </div>
             <div className="mini-panel mini-run-progress">
-              <div className="mini-progress-caption"><span>Прогресс курса</span><strong>{progressPercent(runProgress.completed_lessons, runProgress.total_lessons)}%</strong></div>
-              <div className="mini-progress"><span style={{ width: progressPercent(runProgress.completed_lessons, runProgress.total_lessons) + '%' }} /></div>
-              <div className="mini-course-meta"><span>{runProgress.completed_lessons} завершено</span><span>{runProgress.remaining_lessons} осталось</span></div>
+              <div className="mini-progress-caption"><span>Прогресс курса</span><strong>{progressPercent(completedRunLessons, runProgress.total_lessons)}%</strong></div>
+              <div className="mini-progress"><span style={{ width: progressPercent(completedRunLessons, runProgress.total_lessons) + '%' }} /></div>
+              <div className="mini-course-meta"><span>{completedRunLessons} завершено</span><span>{remainingRunLessons} осталось</span></div>
             </div>
             <section className="mini-panel">
               <div className="mini-panel-heading"><div><p className="mini-overline">ПОСЛЕДОВАТЕЛЬНОСТЬ</p><h2>Уроки курса</h2></div><span className="mini-count">{runLessons.length}</span></div>
