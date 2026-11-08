@@ -159,3 +159,46 @@ func TestQuestionNavigationHonoursFirstAndLastBoundaries(t *testing.T) {
 		t.Fatalf("предыдущий вопрос = %d, хотели %d", back.Question.ID, firstID)
 	}
 }
+
+
+func TestListLessonQuestionsReturnsAllWithoutChangingCurrentPosition(t *testing.T) {
+	studentID, enrollmentID, versionID := int64(5), int64(9), int64(14)
+	firstID, secondID := int64(101), int64(102)
+	questions := []domain.LessonQuestion{
+		{ID: firstID, LessonVersionID: versionID, QuestionNumber: 1, Prompt: "Первый вопрос", AnswerType: "text"},
+		{ID: secondID, LessonVersionID: versionID, QuestionNumber: 2, Prompt: "Второй вопрос", AnswerType: "single_choice"},
+	}
+	progress := domain.Progress{
+		Enrollment: domain.Enrollment{
+			ID: enrollmentID, StudentID: studentID, LessonID: 4,
+			LessonVersionID: versionID, Mode: "ai", Status: "in_progress",
+			CurrentQuestionID: &firstID,
+		},
+		TotalQuestions: 2, RemainingQuestions: 2,
+	}
+	enrollmentStore := &navigationEnrollmentStore{progress: progress}
+	learning := NewLearningService(
+		navigationStudentStore{student: domain.Student{
+			ID: studentID, TelegramID: 7001, DisplayName: "Ученик", AccountStatus: "active",
+		}},
+		navigationCatalogStore{lesson: domain.Lesson{ID: 4, LessonVersionID: versionID}},
+		navigationQuestionStore{questions: questions},
+		enrollmentStore,
+		navigationAnswerStore{},
+	)
+
+	state, err := learning.ListLessonQuestions(context.Background(), studentID, enrollmentID)
+	if err != nil {
+		t.Fatalf("ListLessonQuestions() error = %v", err)
+	}
+	if len(state.Questions) != 2 {
+		t.Fatalf("получено вопросов = %d, хотели 2", len(state.Questions))
+	}
+	if state.Questions[0].Question.ID != firstID || state.Questions[1].Question.ID != secondID {
+		t.Fatalf("неполный или неверно упорядоченный список вопросов: %+v", state.Questions)
+	}
+	if enrollmentStore.progress.Enrollment.CurrentQuestionID == nil ||
+		*enrollmentStore.progress.Enrollment.CurrentQuestionID != firstID {
+		t.Fatalf("загрузка всего урока изменила текущую позицию: %+v", enrollmentStore.progress.Enrollment.CurrentQuestionID)
+	}
+}

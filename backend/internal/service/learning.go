@@ -70,6 +70,13 @@ type NavigationState struct {
 	StaleCallback bool
 }
 
+// LessonQuestionsState contains every question and its persisted answer/review state.
+// Loading this view does not change the learner's current question position.
+type LessonQuestionsState struct {
+	Progress  domain.Progress
+	Questions []NavigationState
+}
+
 type questionPositionStore interface {
 	NavigateQuestion(context.Context, int64, int64, int64, int) (domain.Progress, bool, error)
 	OpenQuestionPosition(context.Context, int64, int64, int64) (domain.Progress, error)
@@ -518,6 +525,43 @@ func (s *LearningService) loadNavigationState(
 		state.LatestAttempt = &history[0]
 	}
 	return state, nil
+}
+
+// ListLessonQuestions returns all questions and their saved/review states for an owned,
+ // active lesson enrollment. It deliberately does not change current_question_id.
+func (s *LearningService) ListLessonQuestions(
+	ctx context.Context,
+	studentID, enrollmentID int64,
+) (LessonQuestionsState, error) {
+	if studentID <= 0 || enrollmentID <= 0 {
+		return LessonQuestionsState{}, domain.ErrInvalidInput
+	}
+	if err := s.requireActiveStudent(ctx, studentID); err != nil {
+		return LessonQuestionsState{}, err
+	}
+	progress, err := s.enrollments.GetProgress(ctx, studentID, enrollmentID)
+	if err != nil {
+		return LessonQuestionsState{}, err
+	}
+	if err := s.ensureCourseRunActive(ctx, progress.Enrollment); err != nil {
+		return LessonQuestionsState{}, err
+	}
+	questions, err := s.questions.ListQuestionsForVersion(ctx, progress.Enrollment.LessonVersionID)
+	if err != nil {
+		return LessonQuestionsState{}, err
+	}
+	result := LessonQuestionsState{
+		Progress: progress,
+		Questions: make([]NavigationState, 0, len(questions)),
+	}
+	for _, question := range questions {
+		state, stateErr := s.loadNavigationState(ctx, studentID, enrollmentID, question, progress)
+		if stateErr != nil {
+			return LessonQuestionsState{}, stateErr
+		}
+		result.Questions = append(result.Questions, state)
+	}
+	return result, nil
 }
 
 // SubmitAnswer сохраняет ответ и непроверенную попытку. Здесь намеренно нет эвристической оценки.

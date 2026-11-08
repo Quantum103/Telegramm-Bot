@@ -39,6 +39,7 @@ type MiniAppLearningAPI interface {
 	ActiveCourse(context.Context, int64) (domain.CourseEnrollmentProgress, error)
 	CourseLessons(context.Context, int64, int64) ([]domain.CourseEnrollmentLesson, error)
 	StartLessonForCourse(context.Context, int64, int64, int64, int64) (domain.Progress, error)
+	ListLessonQuestions(context.Context, int64, int64) (service.LessonQuestionsState, error)
 	GetProgress(context.Context, int64, int64) (domain.Progress, error)
 	OpenQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
 	NextQuestion(context.Context, int64, int64) (service.NavigationState, error)
@@ -137,6 +138,12 @@ type miniAppQuestionResponse struct {
 	Question *miniAppQuestion `json:"question"`
 	Progress domain.Progress  `json:"progress"`
 	AtEnd    bool             `json:"at_end"`
+}
+
+type miniAppLessonQuestionsResponse struct {
+	Questions []miniAppQuestion `json:"questions"`
+	Progress  domain.Progress   `json:"progress"`
+	AtEnd     bool              `json:"at_end"`
 }
 
 type miniAppStartCourseRequest struct {
@@ -354,20 +361,20 @@ func (h *miniAppHandler) startLesson(w http.ResponseWriter, r *http.Request) {
 		writeMiniAppDomainError(w, err)
 		return
 	}
-	questionID := progress.Enrollment.CurrentQuestionID
-	if questionID == nil {
-		questionID = progress.FirstQuestionID
-	}
-	if questionID == nil {
-		writeJSON(w, http.StatusOK, miniAppQuestionResponse{Progress: progress, AtEnd: true})
-		return
-	}
-	state, err := h.deps.Learning.OpenQuestion(r.Context(), student.ID, progress.Enrollment.ID, *questionID)
+	lessonState, err := h.deps.Learning.ListLessonQuestions(r.Context(), student.ID, progress.Enrollment.ID)
 	if err != nil {
 		writeMiniAppDomainError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, miniAppStateResponse(state, false))
+	response := miniAppLessonQuestionsResponse{
+		Progress: lessonState.Progress,
+		Questions: make([]miniAppQuestion, 0, len(lessonState.Questions)),
+		AtEnd: len(lessonState.Questions) == 0,
+	}
+	for _, state := range lessonState.Questions {
+		response.Questions = append(response.Questions, miniAppQuestionFromState(state))
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *miniAppHandler) openQuestion(w http.ResponseWriter, r *http.Request) {
@@ -525,8 +532,8 @@ func miniAppCabinetFromDomain(cabinet domain.StudentCabinet) miniAppCabinetRespo
 	return response
 }
 
-func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQuestionResponse {
-	question := &miniAppQuestion{
+func miniAppQuestionFromState(state service.NavigationState) miniAppQuestion {
+	question := miniAppQuestion{
 		ID: state.Question.ID, Number: state.Question.QuestionNumber,
 		Prompt: state.Question.Prompt, AnswerType: state.Question.AnswerType,
 		Options:       make([]miniAppOption, 0, len(state.Question.Options)),
@@ -553,7 +560,12 @@ func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQues
 			ReviewFeedback:   state.LatestAttempt.ReviewFeedback,
 		}
 	}
-	return miniAppQuestionResponse{Question: question, Progress: state.Progress, AtEnd: atEnd}
+	return question
+}
+
+func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQuestionResponse {
+	question := miniAppQuestionFromState(state)
+	return miniAppQuestionResponse{Question: &question, Progress: state.Progress, AtEnd: atEnd}
 }
 
 func miniAppPathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {

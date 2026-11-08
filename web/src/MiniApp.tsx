@@ -127,6 +127,18 @@ type QuestionState = {
   at_end: boolean
 }
 
+type LessonQuestionsState = {
+  questions: Question[]
+  progress: Progress
+  at_end: boolean
+}
+
+type AnswerDraft = {
+  answerText: string
+  selectedOptionIDs: number[]
+  dirty: boolean
+}
+
 type Bootstrap = {
   student: { display_name: string }
   courses: Course[]
@@ -244,10 +256,8 @@ function App() {
   const [runProgress, setRunProgress] = useState<CourseRun | null>(null)
   const [runLessons, setRunLessons] = useState<RunLesson[]>([])
   const [activeLessonID, setActiveLessonID] = useState<number | null>(null)
-  const [questionState, setQuestionState] = useState<QuestionState | null>(null)
-  const [answerText, setAnswerText] = useState('')
-  const [selectedOptions, setSelectedOptions] = useState<number[]>([])
-  const [answerDirty, setAnswerDirty] = useState(false)
+  const [lessonState, setLessonState] = useState<LessonQuestionsState | null>(null)
+  const [answerDrafts, setAnswerDrafts] = useState<Record<number, AnswerDraft>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -405,66 +415,85 @@ function App() {
   const startLesson = (lessonID: number) => {
     if (!runProgress) return
     void perform(async () => {
-      const state = await api<QuestionState>(
+      const state = await api<LessonQuestionsState>(
         '/api/v1/miniapp/course-runs/' + runProgress.enrollment.id + '/lessons/' + lessonID + '/start',
         { method: 'POST', body: '{}' },
       )
+      const initialDrafts: Record<number, AnswerDraft> = {}
+      for (const question of state.questions || []) {
+        initialDrafts[question.id] = {
+          answerText: question.saved_answer?.answer_text || '',
+          selectedOptionIDs: question.saved_answer?.selected_option_ids || [],
+          dirty: false,
+        }
+      }
+      setAnswerDrafts((previous) => {
+        if (activeLessonID !== lessonID) return initialDrafts
+        const unsavedDrafts = Object.fromEntries(
+          Object.entries(previous).filter(([, draft]) => draft.dirty),
+        ) as Record<number, AnswerDraft>
+        return { ...initialDrafts, ...unsavedDrafts }
+      })
       setActiveLessonID(lessonID)
-      setQuestionState(state)
-      setAnswerText(state.question?.saved_answer?.answer_text || '')
-      setSelectedOptions(state.question?.saved_answer?.selected_option_ids || [])
-      setAnswerDirty(false)
+      setLessonState(state)
       setView('lesson')
     })
   }
 
-  const saveAnswer = () => {
-    if (!questionState?.question) return
-    const question = questionState.question
-    if (question.answer_type === 'text' && !answerText.trim()) {
+  const saveAnswer = (questionID: number) => {
+    if (!lessonState) return
+    const question = lessonState.questions.find((item) => item.id === questionID)
+    if (!question) return
+    const draft = answerDrafts[questionID] || {
+      answerText: question.saved_answer?.answer_text || '',
+      selectedOptionIDs: question.saved_answer?.selected_option_ids || [],
+      dirty: false,
+    }
+    if (question.answer_type === 'text' && !draft.answerText.trim()) {
       setError('Напишите ответ перед отправкой.')
       return
     }
-    if (question.answer_type !== 'text' && selectedOptions.length === 0) {
+    if (question.answer_type !== 'text' && draft.selectedOptionIDs.length === 0) {
       setError('Выберите вариант ответа.')
       return
     }
     void perform(async () => {
-      const state = await api<QuestionState>(
-        '/api/v1/miniapp/lesson-enrollments/' + questionState.progress.enrollment.id + '/questions/' + question.id + '/answer',
+      const saved = await api<QuestionState>(
+        '/api/v1/miniapp/lesson-enrollments/' + lessonState.progress.enrollment.id + '/questions/' + question.id + '/answer',
         {
           method: 'POST',
           body: JSON.stringify({
-            answer_text: question.answer_type === 'text' ? answerText.trim() : '',
-            selected_option_ids: question.answer_type === 'text' ? [] : selectedOptions,
+            answer_text: question.answer_type === 'text' ? draft.answerText.trim() : '',
+            selected_option_ids: question.answer_type === 'text' ? [] : draft.selectedOptionIDs,
             idempotency_key: makeIdempotencyKey(),
           }),
         },
       )
-      setQuestionState(state)
-      setAnswerDirty(false)
-      setNotice('Ответ сохранён.')
-    })
-  }
-
-  const navigateQuestion = (direction: 'next' | 'previous') => {
-    if (!questionState) return
-    void perform(async () => {
-      const state = await api<QuestionState>(
-        '/api/v1/miniapp/lesson-enrollments/' + questionState.progress.enrollment.id + '/questions/navigate',
-        { method: 'POST', body: JSON.stringify({ direction }) },
-      )
-      setQuestionState(state)
-      setAnswerText(state.question?.saved_answer?.answer_text || '')
-      setSelectedOptions(state.question?.saved_answer?.selected_option_ids || [])
-      setAnswerDirty(false)
+      if (!saved.question) throw new Error('Сервер не вернул сохранённый вопрос.')
+      setLessonState((current) => current ? {
+        ...current,
+        progress: saved.progress,
+        questions: current.questions.map((item) => item.id === question.id ? saved.question! : item),
+      } : current)
+      setAnswerDrafts((current) => ({
+        ...current,
+        [question.id]: {
+          answerText: question.answer_type === 'text' ? draft.answerText.trim() : '',
+          selectedOptionIDs: question.answer_type === 'text' ? [] : [...draft.selectedOptionIDs],
+          dirty: false,
+        },
+      }))
+      setNotice('Ответ на вопрос ' + question.number + ' сохранён.')
     })
   }
 
   const finishLesson = () => {
-    if (!questionState) return
+    if (!lessonState || !allQuestionsAnswered) {
+      setError('Сначала сохраните ответы на все вопросы урока.')
+      return
+    }
     void perform(async () => {
-      await api('/api/v1/miniapp/lesson-enrollments/' + questionState.progress.enrollment.id + '/complete', {
+      await api('/api/v1/miniapp/lesson-enrollments/' + lessonState.progress.enrollment.id + '/complete', {
         method: 'POST',
       })
       if (runProgress) await loadRunLessons(runProgress.enrollment.id)
@@ -474,7 +503,8 @@ function App() {
       setNotice(runProgress?.enrollment.mode === 'curator'
         ? 'Урок отправлен координатору. Он проверит ваши ответы и при необходимости свяжется с вами.'
         : 'Урок завершён. Отличная работа!')
-      setQuestionState(null)
+      setLessonState(null)
+      setAnswerDrafts({})
       setActiveLessonID(null)
     })
   }
@@ -510,8 +540,17 @@ function App() {
     (course) => course.course_id !== currentCourse?.enrollment.course_id,
   )
   const selectedCourse = courseDetails?.course
-  const activeQuestion = questionState?.question
+  const activeLesson = courseDetails?.lessons.find((lesson) => lesson.id === activeLessonID)
   const lessonTitle = runLessons.find((lesson) => lesson.lesson_id === activeLessonID)?.title || selectedCourse?.title || 'Урок'
+  const answeredQuestionCount = lessonState?.questions.filter((question) => {
+    const draft = answerDrafts[question.id]
+    return Boolean(question.saved_answer && !draft?.dirty)
+  }).length || 0
+  const allQuestionsAnswered = Boolean(lessonState && (
+    lessonState.questions.length === 0
+      ? lessonState.at_end
+      : lessonState.questions.every((question) => Boolean(question.saved_answer && !answerDrafts[question.id]?.dirty))
+  ))
   const completedRunLessons = runLessons.filter((lesson) => lesson.status === 'completed').length
   const remainingRunLessons = runLessons.length - completedRunLessons
 
@@ -802,86 +841,119 @@ function App() {
           </section>
         )}
 
-        {!loading && view === 'lesson' && questionState && (
+        {!loading && view === 'lesson' && lessonState && (
           <section className="mini-page mini-lesson-page">
             <div className="mini-lesson-progress-head">
-              <div><p className="mini-overline">{lessonTitle}</p><h1>{questionState.at_end ? 'Урок пройден' : 'Вопрос ' + (activeQuestion?.number || 1)}</h1></div>
-              {!questionState.at_end && <span>{questionState.progress.answered_questions} / {questionState.progress.total_questions}</span>}
+              <div><p className="mini-overline">{lessonTitle}</p><h1>Прохождение урока</h1></div>
+              <span>{answeredQuestionCount} / {lessonState.questions.length} ответов</span>
             </div>
-            <div className="mini-progress"><span style={{ width: progressPercent(questionState.progress.answered_questions, questionState.progress.total_questions) + '%' }} /></div>
+            <div className="mini-progress"><span style={{ width: progressPercent(answeredQuestionCount, lessonState.questions.length) + '%' }} /></div>
 
-            {questionState.at_end || !activeQuestion ? (
-              <div className="mini-panel mini-finish-card">
-                <div className="mini-finish-icon">✦</div>
-                <p className="mini-overline">ПОСЛЕДНИЙ ШАГ</p>
-                <h2>Вы ответили на все вопросы</h2>
-                <p>{runProgress?.enrollment.mode === 'curator'
-                  ? 'Отправьте урок координатору. Он проверит ваши ответы и при необходимости свяжется с вами.'
-                  : 'Завершите урок, чтобы сохранить результат и перейти к следующему.'}</p>
-                <button className="mini-primary-button mini-full-button" type="button" onClick={finishLesson} disabled={busy}>Завершить урок <span>→</span></button>
-              </div>
-            ) : (
-              <article className="mini-panel mini-question-card">
-                <div className="mini-question-label">ВОПРОС {activeQuestion.number}</div>
-                <h2>{activeQuestion.prompt}</h2>
-
-                {activeQuestion.bible_passages.length > 0 && (
-                  <div className="mini-scripture-list">
-                    {activeQuestion.bible_passages.map((passage, index) => (
-                      <div className="mini-scripture" key={index}>
-                        <span>БИБЛЕЙСКИЙ ОТРЫВОК</span>
-                        <strong>{passage.book_name} {passage.chapter}:{passage.start_verse}{passage.end_verse > passage.start_verse ? '–' + passage.end_verse : ''}</strong>
-                        {passage.passage_text && <p>{passage.passage_text}</p>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {activeQuestion.answer_type === 'text' ? (
-                  <label className="mini-answer-field">
-                    <span>Ваш ответ</span>
-                    <textarea rows={5} value={answerText} placeholder="Напишите свой ответ…" onChange={(event) => { setAnswerText(event.target.value); setAnswerDirty(true); setError('') }} />
-                  </label>
-                ) : (
-                  <div className="mini-answer-options">
-                    <p>{activeQuestion.answer_type === 'multiple_choice' ? 'Выберите все подходящие варианты' : 'Выберите один вариант'}</p>
-                    {activeQuestion.options.map((option) => {
-                      const selected = selectedOptions.includes(option.id)
-                      return (
-                        <button className={'mini-answer-option' + (selected ? ' is-selected' : '')} type="button" key={option.id}
-                          onClick={() => {
-                            setSelectedOptions((current) => activeQuestion.answer_type === 'single_choice'
-                              ? [option.id]
-                              : selected ? current.filter((id) => id !== option.id) : [...current, option.id])
-                            setAnswerDirty(true)
-                            setError('')
-                          }}>
-                          <span className="mini-option-check">{selected ? '✓' : ''}</span><span>{option.text}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-
-                {activeQuestion.latest_attempt?.review_feedback && (
-                  <div className="mini-feedback-note">
-                    <strong>{activeQuestion.latest_attempt.review_decision === 'needs_revision' ? 'Комментарий координатора' : 'Ответ проверен'}</strong>
-                    <p>{activeQuestion.latest_attempt.review_feedback}</p>
-                  </div>
-                )}
-
-                {activeQuestion.saved_answer && !answerDirty && (
-                  <div className="mini-saved-note"><span>✓</span> Ответ сохранён</div>
-                )}
-                <button className="mini-primary-button mini-full-button" type="button" onClick={saveAnswer} disabled={busy}>
-                  {busy ? 'Сохраняем…' : 'Сохранить ответ'} <span>→</span>
-                </button>
-                <div className="mini-question-navigation">
-                  <button type="button" onClick={() => navigateQuestion('previous')} disabled={busy || !questionState.progress.previous_question_id}>← Назад</button>
-                  <button type="button" onClick={() => navigateQuestion('next')} disabled={busy || answerDirty || !activeQuestion.saved_answer}>Следующий вопрос →</button>
-                </div>
-              </article>
+            {activeLesson?.description?.trim() && (
+              <section className="mini-panel mini-lesson-preface">
+                <p className="mini-overline">ПРЕДИСЛОВИЕ</p>
+                <div className="mini-lesson-preface-text">{activeLesson.description}</div>
+              </section>
             )}
+
+            {lessonState.questions.map((question) => {
+              const draft = answerDrafts[question.id] || {
+                answerText: question.saved_answer?.answer_text || '',
+                selectedOptionIDs: question.saved_answer?.selected_option_ids || [],
+                dirty: false,
+              }
+              const isSaved = Boolean(question.saved_answer && !draft.dirty)
+              return (
+                <article className="mini-panel mini-question-card" key={question.id}>
+                  <div className="mini-question-label">ВОПРОС {question.number}</div>
+                  <h2>{question.prompt}</h2>
+
+                  {question.bible_passages.length > 0 && (
+                    <div className="mini-scripture-list">
+                      {question.bible_passages.map((passage, index) => (
+                        <div className="mini-scripture" key={index}>
+                          <span>БИБЛЕЙСКИЙ ОТРЫВОК</span>
+                          <strong>{passage.book_name} {passage.chapter}:{passage.start_verse}{passage.end_verse > passage.start_verse ? '–' + passage.end_verse : ''}</strong>
+                          {passage.passage_text && <p>{passage.passage_text}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {question.answer_type === 'text' ? (
+                    <label className="mini-answer-field">
+                      <span>Ваш ответ</span>
+                      <textarea
+                        rows={5}
+                        value={draft.answerText}
+                        placeholder="Напишите свой ответ…"
+                        onChange={(event) => {
+                          setAnswerDrafts((current) => ({
+                            ...current,
+                            [question.id]: { ...draft, answerText: event.target.value, dirty: true },
+                          }))
+                          setError('')
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <div className="mini-answer-options">
+                      <p>{question.answer_type === 'multiple_choice' ? 'Выберите все подходящие варианты' : 'Выберите один вариант'}</p>
+                      {question.options.map((option) => {
+                        const selected = draft.selectedOptionIDs.includes(option.id)
+                        return (
+                          <button
+                            className={'mini-answer-option' + (selected ? ' is-selected' : '')}
+                            type="button"
+                            key={option.id}
+                            onClick={() => {
+                              setAnswerDrafts((current) => {
+                                const currentDraft = current[question.id] || draft
+                                const selectedOptionIDs = question.answer_type === 'single_choice'
+                                  ? [option.id]
+                                  : selected
+                                    ? currentDraft.selectedOptionIDs.filter((id) => id !== option.id)
+                                    : [...currentDraft.selectedOptionIDs, option.id]
+                                return {
+                                  ...current,
+                                  [question.id]: { ...currentDraft, selectedOptionIDs, dirty: true },
+                                }
+                              })
+                              setError('')
+                            }}
+                          >
+                            <span className="mini-option-check">{selected ? '✓' : ''}</span><span>{option.text}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {question.latest_attempt?.review_feedback && (
+                    <div className="mini-feedback-note">
+                      <strong>{question.latest_attempt.review_decision === 'needs_revision' ? 'Комментарий координатора' : 'Ответ проверен'}</strong>
+                      <p>{question.latest_attempt.review_feedback}</p>
+                    </div>
+                  )}
+
+                  {isSaved && <div className="mini-saved-note"><span>✓</span> Ответ сохранён</div>}
+                  <button className="mini-primary-button mini-full-button" type="button" onClick={() => saveAnswer(question.id)} disabled={busy}>
+                    {busy ? 'Сохраняем…' : question.saved_answer ? 'Обновить ответ' : 'Сохранить ответ'} <span>→</span>
+                  </button>
+                </article>
+              )
+            })}
+
+            <div className="mini-panel mini-finish-card">
+              <div className="mini-finish-icon">✦</div>
+              <p className="mini-overline">ЗАВЕРШЕНИЕ УРОКА</p>
+              <h2>{allQuestionsAnswered ? 'Все ответы сохранены' : 'Ответьте на вопросы в удобном порядке'}</h2>
+              <p>Сохранено ответов: {answeredQuestionCount} из {lessonState.questions.length}. Каждый ответ можно сохранить отдельно.</p>
+              {!allQuestionsAnswered && <p>Чтобы отправить урок дальше, сначала сохраните ответ на каждый вопрос.</p>}
+              <button className="mini-primary-button mini-full-button" type="button" onClick={finishLesson} disabled={busy || !allQuestionsAnswered}>
+                Завершить урок <span>→</span>
+              </button>
+            </div>
           </section>
         )}
 
