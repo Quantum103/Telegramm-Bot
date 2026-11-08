@@ -126,13 +126,22 @@ func run(logger *slog.Logger) error {
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
-			pool, logger, catalogService,
-			service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
-			authoringService,
-			staffManagementService,
-			conversationService, staffTelegramService, curatorLearningService,
-			staffReferralService, botUsernameProvider, loginLimiter, true,
+		Handler: httpserver.NewHandlerWithTelegramMiniApp(
+			httpserver.NewHandlerWithStaffAuthAndAuthoringAndManagementAndLoginLimiterAndConversationsAndTelegramAndCourseLearningAndReferralLinks(
+				pool, logger, catalogService,
+				service.NewStaffAuthService(repository.NewStaffAuthRepository(pool)),
+				authoringService,
+				staffManagementService,
+				conversationService, staffTelegramService, curatorLearningService,
+				staffReferralService, botUsernameProvider, loginLimiter, true,
+			),
+			httpserver.MiniAppDependencies{
+				BotToken: cfg.TelegramBotToken,
+				Students: studentService,
+				Cabinet: learningService,
+				Catalog: catalogService,
+				Learning: learningService,
+			},
 		),
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
