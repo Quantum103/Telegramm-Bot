@@ -177,3 +177,26 @@ func TestMiniAppConversationUnreadRejectsMissingTelegramAuth(t *testing.T) {
 		t.Fatalf("запрос без Telegram initData должен быть отклонён: got %d body=%s", response.Code, response.Body.String())
 	}
 }
+
+
+func TestValidateTelegramWebAppInitDataRejectsDuplicateParameters(t *testing.T) {
+	now := time.Date(2026, time.November, 8, 12, 0, 0, 0, time.UTC)
+	raw := makeMiniAppInitData("bot-test-token", `{"id":123456,"first_name":"Иван"}`, now)
+
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "duplicate user", raw: raw + "&user=" + url.QueryEscape(`{"id":999999,"first_name":"Другой"}`)},
+		{name: "duplicate hash", raw: raw + "&hash=" + strings.Repeat("0", sha256.Size*2)},
+		{name: "duplicate auth date", raw: raw + "&auth_date=" + strconv.FormatInt(now.Unix(), 10)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := validateTelegramWebAppInitData(tt.raw, "bot-test-token", now); err == nil {
+				t.Fatal("expected duplicate Telegram init data parameter to be rejected")
+			}
+		})
+	}
+}
