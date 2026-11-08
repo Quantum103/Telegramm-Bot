@@ -189,9 +189,9 @@ type miniAppConversationMessage struct {
 
 type miniAppConversationResponse struct {
 	Conversation miniAppConversationInfo      `json:"conversation"`
-	Messages      []miniAppConversationMessage `json:"messages"`
-	HasMore       bool                         `json:"has_more"`
-	UnreadCount   int64                        `json:"unread_count"`
+	Messages     []miniAppConversationMessage `json:"messages"`
+	HasMore      bool                         `json:"has_more"`
+	UnreadCount  int64                        `json:"unread_count"`
 }
 
 type miniAppConversationMessagesResponse struct {
@@ -297,9 +297,9 @@ func (h *miniAppHandler) studentConversation(w http.ResponseWriter, r *http.Requ
 	}
 	response := miniAppConversationResponse{
 		Conversation: miniAppConversationInfo{ID: conversation.ID, Status: conversation.Status},
-		Messages: miniAppConversationMessagesFromDomain(messages),
-		HasMore: hasMore,
-		UnreadCount: unread,
+		Messages:     miniAppConversationMessagesFromDomain(messages),
+		HasMore:      hasMore,
+		UnreadCount:  unread,
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -341,7 +341,7 @@ func (h *miniAppHandler) studentConversationMessages(w http.ResponseWriter, r *h
 	}
 	writeJSON(w, http.StatusOK, miniAppConversationMessagesResponse{
 		Messages: miniAppConversationMessagesFromDomain(messages),
-		HasMore: hasMore,
+		HasMore:  hasMore,
 	})
 }
 
@@ -368,10 +368,10 @@ func (h *miniAppHandler) studentSendConversationMessage(w http.ResponseWriter, r
 		return
 	}
 	message, err := h.deps.Conversations.CreateStudentMiniAppMessage(r.Context(), domain.CreateStudentMiniAppConversationMessageParams{
-		StudentID: student.ID,
-		ConversationID: conversation.ID,
+		StudentID:       student.ID,
+		ConversationID:  conversation.ID,
 		ClientMessageID: input.IdempotencyKey,
-		BodyText: input.BodyText,
+		BodyText:        input.BodyText,
 	})
 	if err != nil {
 		writeMiniAppDomainError(w, err)
@@ -390,11 +390,11 @@ func miniAppConversationMessagesFromDomain(messages []domain.ConversationMessage
 
 func miniAppConversationMessageFromDomain(message domain.ConversationMessage) miniAppConversationMessage {
 	return miniAppConversationMessage{
-		ID: message.ID,
-		SenderType: message.SenderType,
+		ID:          message.ID,
+		SenderType:  message.SenderType,
 		MessageType: message.MessageType,
-		BodyText: message.BodyText,
-		CreatedAt: message.CreatedAt,
+		BodyText:    message.BodyText,
+		CreatedAt:   message.CreatedAt,
 	}
 }
 

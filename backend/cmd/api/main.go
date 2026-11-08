@@ -136,9 +136,9 @@ func run(logger *slog.Logger) error {
 				staffReferralService, botUsernameProvider, loginLimiter, true,
 			),
 			httpserver.MiniAppDependencies{
-				BotToken: cfg.TelegramBotToken,
-				Students: studentService,
-				Cabinet:  learningService,
+				BotToken:      cfg.TelegramBotToken,
+				Students:      studentService,
+				Cabinet:       learningService,
 				Catalog:       catalogService,
 				Learning:      learningService,
 				Conversations: conversationService,
