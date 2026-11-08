@@ -178,7 +178,6 @@ func TestMiniAppConversationUnreadRejectsMissingTelegramAuth(t *testing.T) {
 	}
 }
 
-
 func TestValidateTelegramWebAppInitDataRejectsDuplicateParameters(t *testing.T) {
 	now := time.Date(2026, time.November, 8, 12, 0, 0, 0, time.UTC)
 	raw := makeMiniAppInitData("bot-test-token", `{"id":123456,"first_name":"Иван"}`, now)
