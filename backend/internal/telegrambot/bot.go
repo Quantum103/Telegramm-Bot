@@ -478,7 +478,7 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 	}
 }
 
- // SetWebAppURL configures the HTTPS URL opened by the Telegram Mini App button.
+// SetWebAppURL configures the HTTPS URL opened by the Telegram Mini App button.
 func (b *Bot) SetWebAppURL(rawURL string) error {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
