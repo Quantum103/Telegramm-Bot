@@ -152,6 +152,12 @@ jobs:
         working-directory: backend
         run: go vet ./...
 
+      - name: Scan Go dependencies and reachable code for known vulnerabilities
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
   frontend:
     name: Frontend checks and Compose configuration
     runs-on: ubuntu-latest
@@ -168,6 +174,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: npm install --no-audit --no-fund
+
+      - name: Audit frontend dependencies for known vulnerabilities
+        working-directory: web
+        run: npm audit --no-package-lock --audit-level=high
 
       - name: Check TypeScript
         working-directory: web
