@@ -1,14 +1,20 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
 )
 
 func makeMiniAppInitData(botToken string, userJSON string, authDate time.Time) string {
@@ -91,5 +97,84 @@ func TestValidateTelegramWebAppInitDataRejectsMissingHashAndToken(t *testing.T) 
 	}
 	if _, err := validateTelegramWebAppInitData(raw, "", now); err == nil {
 		t.Fatal("expected missing bot token to be rejected")
+	}
+}
+
+
+type miniAppTestStudentRegistrar struct{}
+
+func (miniAppTestStudentRegistrar) EnsureByTelegramID(_ context.Context, params domain.EnsureStudentParams) (domain.Student, error) {
+	return domain.Student{
+		ID:          42,
+		TelegramID:  params.TelegramID,
+		DisplayName: params.DisplayName,
+	}, nil
+}
+
+type miniAppTestConversationAPI struct {
+	unreadCount int64
+}
+
+func (miniAppTestConversationAPI) GetOrCreateForStudent(context.Context, int64) (domain.Conversation, error) {
+	return domain.Conversation{}, nil
+}
+
+func (miniAppTestConversationAPI) ListMessagesForStudent(context.Context, int64, int64, int64, int) ([]domain.ConversationMessage, error) {
+	return nil, nil
+}
+
+func (miniAppTestConversationAPI) CreateStudentMiniAppMessage(context.Context, domain.CreateStudentMiniAppConversationMessageParams) (domain.ConversationMessage, error) {
+	return domain.ConversationMessage{}, nil
+}
+
+func (miniAppTestConversationAPI) MarkReadForStudent(context.Context, int64, int64) (int64, error) {
+	return 0, nil
+}
+
+func (api miniAppTestConversationAPI) UnreadCountForStudent(context.Context, int64) (int64, error) {
+	return api.unreadCount, nil
+}
+
+func TestMiniAppConversationUnreadRequiresTelegramAuthAndReturnsCount(t *testing.T) {
+	const botToken = "bot-test-token"
+	now := time.Now().UTC()
+	initData := makeMiniAppInitData(botToken, "{\"id\":123456,\"first_name\":\"Иван\"}", now)
+
+	handler := NewHandlerWithTelegramMiniApp(nil, MiniAppDependencies{
+		BotToken:      botToken,
+		Students:      miniAppTestStudentRegistrar{},
+		Conversations: miniAppTestConversationAPI{unreadCount: 7},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/miniapp/conversation/unread", nil)
+	request.Header.Set(miniAppInitDataHeader, initData)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("неожиданный HTTP статус: got %d body=%s", response.Code, response.Body.String())
+	}
+	var body miniAppConversationUnreadResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("декодировать ответ: %v", err)
+	}
+	if body.UnreadCount != 7 {
+		t.Fatalf("неверный счётчик непрочитанных: got %d want 7", body.UnreadCount)
+	}
+}
+
+func TestMiniAppConversationUnreadRejectsMissingTelegramAuth(t *testing.T) {
+	handler := NewHandlerWithTelegramMiniApp(nil, MiniAppDependencies{
+		BotToken:      "bot-test-token",
+		Students:      miniAppTestStudentRegistrar{},
+		Conversations: miniAppTestConversationAPI{unreadCount: 7},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/miniapp/conversation/unread", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("запрос без Telegram initData должен быть отклонён: got %d body=%s", response.Code, response.Body.String())
 	}
 }
