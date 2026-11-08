@@ -201,6 +201,9 @@ func run(logger *slog.Logger) error {
 			telegramAPI, studentService, catalogService, learningService,
 			logger, chapterPublisher, conversationService, staffTelegramService, staffReferralService,
 		)
+		if err := bot.SetWebAppURL(os.Getenv("TELEGRAM_WEBAPP_URL")); err != nil {
+			return err
+		}
 		if err := bot.ConfigureUpdateWorkerPool(cfg.TelegramUpdateWorkers, cfg.TelegramUpdateQueueCapacity); err != nil {
 			close(botDone)
 			componentErrors <- fmt.Errorf("конфигурация пула Telegram updates: %w", err)
