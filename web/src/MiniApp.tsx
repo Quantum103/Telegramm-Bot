@@ -140,7 +140,7 @@ type CourseDetails = {
   active_course?: CourseRun
 }
 
-type View = 'account' | 'catalog' | 'course' | 'mode' | 'lessons' | 'lesson'
+type View = 'account' | 'catalog' | 'course' | 'mode' | 'lessons' | 'lesson' | 'chat'
 
 const errorLabels: Record<string, string> = {
   mini_app_unavailable: 'Приложение временно недоступно. Попробуйте позже.',
@@ -239,7 +239,7 @@ function App() {
   const initData = webApp?.initData || ''
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null)
   const [view, setView] = useState<View>('account')
-  const [tab, setTab] = useState<'account' | 'catalog'>('account')
+  const [tab, setTab] = useState<'account' | 'catalog' | 'chat'>('account')
   const [courseDetails, setCourseDetails] = useState<CourseDetails | null>(null)
   const [runProgress, setRunProgress] = useState<CourseRun | null>(null)
   const [runLessons, setRunLessons] = useState<RunLesson[]>([])
@@ -309,6 +309,13 @@ function App() {
     setNotice('')
   }
 
+  const openChat = () => {
+    setTab('chat')
+    setView('chat')
+    setError('')
+    setNotice('')
+  }
+
   const loadRunLessons = async (runID: number) => {
     const result = await api<{ lessons: RunLesson[] }>('/api/v1/miniapp/course-runs/' + runID + '/lessons')
     setRunLessons(result.lessons || [])
@@ -335,7 +342,7 @@ function App() {
       await loadRunLessons(active.enrollment.id)
       const details = await api<CourseDetails>('/api/v1/miniapp/courses/' + active.enrollment.course_id)
       setCourseDetails(details)
-      setTab('courses')
+      setTab('catalog')
       setView('lessons')
     })
   }
@@ -465,8 +472,9 @@ function App() {
       <AppHeader displayName={displayName} subtitle={
         view === 'account' ? 'ЛИЧНЫЙ КАБИНЕТ'
           : view === 'catalog' ? 'БИБЛЕЙСКИЕ КУРСЫ'
-            : view === 'lesson' ? lessonTitle
-              : selectedCourse?.title || 'ОБУЧЕНИЕ'
+            : view === 'chat' ? 'СВЯЗЬ С КУРАТОРОМ'
+              : view === 'lesson' ? lessonTitle
+                : selectedCourse?.title || 'ОБУЧЕНИЕ'
       } onBack={view !== 'account' && view !== 'catalog' ? back : undefined} />
 
       <div className="mini-content">
@@ -513,6 +521,21 @@ function App() {
               <p className="mini-overline">ВАШ ПРОФИЛЬ</p>
               <div className="mini-profile-row"><span>Дата регистрации</span><strong>{formatDate(bootstrap.cabinet.registered_at)}</strong></div>
               <div className="mini-profile-row"><span>Формат обучения</span><strong>{currentCourse ? modeLabel(currentCourse.enrollment.mode) : 'Не выбран'}</strong></div>
+            </section>
+          </section>
+        )}
+
+        {!loading && bootstrap && view === 'chat' && (
+          <section className="mini-page">
+            <div className="mini-welcome mini-welcome-compact">
+              <p className="mini-overline">ОБЩЕНИЕ</p>
+              <h1>Связь с куратором</h1>
+              <p>Здесь будут история переписки и сообщения вашему куратору.</p>
+            </div>
+            <section className="mini-panel mini-empty">
+              <div className="mini-empty-icon">✉</div>
+              <h3>Раздел готовится к подключению</h3>
+              <p>На следующем этапе этот экран будет подключён к вашему существующему диалогу в Telegram. История сообщений останется общей.</p>
             </section>
           </section>
         )}
@@ -732,6 +755,9 @@ function App() {
         </button>
         <button type="button" className={tab === 'catalog' ? 'is-active' : ''} onClick={openCatalog}>
           <span className="mini-tab-icon">▤</span><strong>Курсы</strong>
+        </button>
+        <button type="button" className={tab === 'chat' ? 'is-active' : ''} onClick={openChat}>
+          <span className="mini-tab-icon">✉</span><strong>Связь с куратором</strong>
         </button>
       </nav>
     </main>

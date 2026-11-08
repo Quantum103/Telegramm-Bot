@@ -334,9 +334,9 @@ html:has(.mini-app), body:has(.mini-app), #root:has(.mini-app) {
   bottom: 0;
   left: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 9px 18px calc(9px + env(safe-area-inset-bottom));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 9px 10px calc(9px + env(safe-area-inset-bottom));
   border-top: 1px solid #e5ebe2;
   background: rgba(250, 251, 247, .95);
   backdrop-filter: blur(18px);
@@ -344,7 +344,7 @@ html:has(.mini-app), body:has(.mini-app), #root:has(.mini-app) {
 .mini-tabbar button { display: flex; min-height: 48px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 11px; background: transparent; color: #a0aa9c; }
 .mini-tabbar button.is-active { background: #eaf2e6; color: #347253; }
 .mini-tab-icon { font-size: 18px; line-height: 1; }
-.mini-tabbar strong { font-size: 8px; font-weight: 750; }
+.mini-tabbar strong { font-size: 8px; font-weight: 750; white-space: nowrap; }
 .mini-auth-required { display: grid; min-height: 100vh; min-height: 100dvh; place-items: center; padding: 24px; }
 .mini-auth-card { width: min(100%, 370px); padding: 29px; border: 1px solid #e6ece3; border-radius: 20px; background: #fff; text-align: center; box-shadow: 0 12px 35px rgba(40, 62, 45, .06); }
 .mini-auth-card .mini-brand-mark { margin: 0 auto 17px; }
