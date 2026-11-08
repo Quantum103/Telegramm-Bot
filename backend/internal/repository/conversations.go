@@ -364,7 +364,6 @@ func (r *ConversationRepository) CreateStudentMessage(ctx context.Context, param
 	return message, nil
 }
 
-
 func (r *ConversationRepository) CreateStudentMiniAppMessage(
 	ctx context.Context,
 	params domain.CreateStudentMiniAppConversationMessageParams,

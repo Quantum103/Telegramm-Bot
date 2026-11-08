@@ -90,7 +90,6 @@ func createConversationFixture(t *testing.T, pool *pgxpool.Pool, withAssignment 
 	return fixture
 }
 
-
 func TestConversationMiniAppMessageSharesHistoryAndIsIdempotent(t *testing.T) {
 	pool := integrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

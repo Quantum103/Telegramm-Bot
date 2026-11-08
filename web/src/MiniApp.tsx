@@ -280,7 +280,6 @@ function App() {
   const [activeLessonID, setActiveLessonID] = useState<number | null>(null)
   const [lessonState, setLessonState] = useState<LessonQuestionsState | null>(null)
   const [answerDrafts, setAnswerDrafts] = useState<Record<number, AnswerDraft>>({})
-  const [conversationID, setConversationID] = useState<number | null>(null)
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([])
   const [conversationHasOlder, setConversationHasOlder] = useState(false)
   const [conversationDraft, setConversationDraft] = useState('')
@@ -516,7 +515,6 @@ function App() {
   const openChat = () => {
     void perform(async () => {
       const result = await api<ConversationResponse>('/api/v1/miniapp/conversation')
-      setConversationID(result.conversation.id)
       setConversationMessages((result.messages || []).slice().reverse())
       setConversationHasOlder(result.has_more)
       const updated = await loadBootstrap()
