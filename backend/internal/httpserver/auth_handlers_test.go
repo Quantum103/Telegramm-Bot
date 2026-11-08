@@ -1542,3 +1542,30 @@ func TestStaffRoleManagementRequiresAdministratorAndUsesSessionActor(t *testing.
 		}
 	})
 }
+
+
+func TestStaffListQuestionsForVersionRejectsCurator(t *testing.T) {
+	identity := domain.StaffSessionIdentity{
+		StaffID: 42, Roles: []string{"curator"}, DisplayName: "Curator", Email: "curator@example.test",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	authAPI := &fakeStaffAuthAPI{authIdentity: identity}
+	authoring := &fakeStaffAuthoringAPI{}
+	handler := NewHandlerWithStaffAuthAndAuthoringAndLoginLimiter(
+		fakePinger{}, testLogger(), nil, authAPI, authoring, newStaffLoginLimiter(), true,
+	)
+
+	request := httptest.NewRequest(http.MethodGet,
+		"https://admin.example.test/api/v1/staff/admin/lesson-versions/93/questions", nil)
+	request.AddCookie(&http.Cookie{Name: staffSessionCookieName, Value: strings.Repeat("A", 43)})
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("curator status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	if authoring.listQuestionsCalls != 0 {
+		t.Fatal("curator request reached the internal authoring service")
+	}
+}
