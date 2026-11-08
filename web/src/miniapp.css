@@ -430,3 +430,214 @@ html:has(.mini-app), body:has(.mini-app), #root:has(.mini-app) {
 .mini-lesson-page .mini-finish-card p + p {
   margin-top: 8px;
 }
+
+
+.mini-message-button {
+  width: 100%;
+  align-items: center;
+  border: 1px solid #e6ecdc;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mini-message-button:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.mini-message-button div {
+  flex: 1;
+}
+
+.mini-message-button b {
+  color: #658267;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.mini-chat-page {
+  gap: 15px;
+}
+
+.mini-chat-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mini-chat-heading h1 {
+  margin: 6px 0;
+  color: #34483a;
+  font-family: Georgia, serif;
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -.04em;
+}
+
+.mini-chat-heading p:not(.mini-overline) {
+  margin: 0;
+  color: #8a978b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.mini-chat-refresh {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  flex: 0 0 39px;
+  place-items: center;
+  border: 1px solid #e4ebe1;
+  border-radius: 12px;
+  background: #fff;
+  color: #5c8267;
+  font-size: 22px;
+}
+
+.mini-chat-refresh:disabled {
+  opacity: .55;
+}
+
+.mini-chat-panel {
+  display: flex;
+  min-height: 420px;
+  flex-direction: column;
+  gap: 15px;
+  padding: 12px;
+}
+
+.mini-chat-thread {
+  display: flex;
+  min-height: 250px;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mini-chat-older {
+  align-self: center;
+  padding: 8px 12px;
+  border: 1px solid #e5ece3;
+  border-radius: 9px;
+  background: #f8faf6;
+  color: #64806a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mini-chat-empty {
+  display: flex;
+  min-height: 230px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 20px;
+  text-align: center;
+}
+
+.mini-chat-empty > span {
+  display: grid;
+  width: 45px;
+  height: 45px;
+  place-items: center;
+  border-radius: 15px;
+  background: #edf4e9;
+  color: #729071;
+  font-size: 22px;
+}
+
+.mini-chat-empty strong {
+  color: #435849;
+  font-family: Georgia, serif;
+  font-size: 17px;
+}
+
+.mini-chat-empty p {
+  max-width: 260px;
+  margin: 0;
+  color: #8c998e;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.mini-chat-bubble {
+  display: flex;
+  max-width: 88%;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1px solid #e8eee5;
+  border-radius: 13px 13px 13px 4px;
+  background: #f7f9f5;
+  align-self: flex-start;
+}
+
+.mini-chat-bubble.is-student {
+  border-color: #dce9dc;
+  border-radius: 13px 13px 4px 13px;
+  background: #edf5eb;
+  align-self: flex-end;
+}
+
+.mini-chat-bubble > span {
+  color: #6c886f;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.mini-chat-bubble p {
+  margin: 0;
+  color: #46574a;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mini-chat-bubble time {
+  align-self: flex-end;
+  color: #9aa59a;
+  font-size: 8px;
+}
+
+.mini-chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1e9;
+}
+
+.mini-chat-compose textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  padding: 11px 12px;
+  border: 1px solid #e1e9df;
+  border-radius: 11px;
+  outline: none;
+  background: #fcfdfb;
+  color: #405246;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mini-chat-compose textarea:focus {
+  border-color: #a8c2a6;
+  box-shadow: 0 0 0 3px rgba(102, 142, 103, .09);
+}
+
+.mini-chat-compose .mini-full-button {
+  margin-top: 0;
+}
+
+.mini-chat-footnote {
+  margin: -5px 2px 5px;
+  color: #9aa59a;
+  font-size: 9px;
+  line-height: 1.55;
+}

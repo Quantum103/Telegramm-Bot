@@ -147,13 +147,33 @@ type Bootstrap = {
   active_course?: CourseRun
 }
 
+type ConversationMessage = {
+  id: number
+  sender_type: 'student' | 'curator' | string
+  message_type: string
+  body_text?: string | null
+  created_at: string
+}
+
+type ConversationResponse = {
+  conversation: { id: number; status: string }
+  messages: ConversationMessage[]
+  has_more: boolean
+  unread_count: number
+}
+
+type ConversationMessagesResponse = {
+  messages: ConversationMessage[]
+  has_more: boolean
+}
+
 type CourseDetails = {
   course: Course
   lessons: CourseLesson[]
   active_course?: CourseRun
 }
 
-type View = 'account' | 'catalog' | 'course' | 'mode' | 'lessons' | 'lesson'
+type View = 'account' | 'catalog' | 'course' | 'mode' | 'lessons' | 'lesson' | 'chat'
 
 const errorLabels: Record<string, string> = {
   mini_app_unavailable: 'Приложение временно недоступно. Попробуйте позже.',
@@ -161,6 +181,7 @@ const errorLabels: Record<string, string> = {
   no_curator_available: 'Сейчас нет доступного координатора с подключённым Telegram. Курс не начат. Можно выбрать самостоятельное прохождение или повторить попытку позже.',
   active_course_exists: 'У вас уже есть незавершённый курс. Сначала продолжите его.',
   legacy_progress: 'Найдено старое прохождение, которое нужно восстановить через администратора.',
+  invalid_message: 'Проверьте текст сообщения и попробуйте снова.',
   invalid_state: 'Это действие сейчас недоступно. Обновите экран и попробуйте снова.',
   invalid_request: 'Проверьте ответ и попробуйте ещё раз.',
   not_found: 'Запрошенный материал больше недоступен.',
@@ -259,6 +280,10 @@ function App() {
   const [activeLessonID, setActiveLessonID] = useState<number | null>(null)
   const [lessonState, setLessonState] = useState<LessonQuestionsState | null>(null)
   const [answerDrafts, setAnswerDrafts] = useState<Record<number, AnswerDraft>>({})
+  const [conversationID, setConversationID] = useState<number | null>(null)
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([])
+  const [conversationHasOlder, setConversationHasOlder] = useState(false)
+  const [conversationDraft, setConversationDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -488,6 +513,69 @@ function App() {
     })
   }
 
+  const openChat = () => {
+    void perform(async () => {
+      const result = await api<ConversationResponse>('/api/v1/miniapp/conversation')
+      setConversationID(result.conversation.id)
+      setConversationMessages((result.messages || []).slice().reverse())
+      setConversationHasOlder(result.has_more)
+      const updated = await loadBootstrap()
+      setBootstrap(updated)
+      setTab('account')
+      setView('chat')
+    })
+  }
+
+  const refreshChat = () => {
+    void perform(async () => {
+      const result = await api<ConversationResponse>('/api/v1/miniapp/conversation')
+      setConversationID(result.conversation.id)
+      setConversationMessages((result.messages || []).slice().reverse())
+      setConversationHasOlder(result.has_more)
+      const updated = await loadBootstrap()
+      setBootstrap(updated)
+      setNotice('Переписка обновлена.')
+    })
+  }
+
+  const loadOlderChatMessages = () => {
+    const oldest = conversationMessages[0]
+    if (!oldest || !conversationHasOlder) return
+    void perform(async () => {
+      const result = await api<ConversationMessagesResponse>(
+        '/api/v1/miniapp/conversation/messages?before_message_id=' + oldest.id,
+      )
+      const older = (result.messages || []).slice().reverse()
+      setConversationMessages((current) => {
+        const unique = new Map<number, ConversationMessage>()
+        for (const message of [...older, ...current]) unique.set(message.id, message)
+        return Array.from(unique.values()).sort((left, right) =>
+          new Date(left.created_at).getTime() - new Date(right.created_at).getTime() || left.id - right.id,
+        )
+      })
+      setConversationHasOlder(result.has_more)
+    })
+  }
+
+  const sendChatMessage = () => {
+    const bodyText = conversationDraft.trim()
+    if (!bodyText) return
+    void perform(async () => {
+      const message = await api<ConversationMessage>('/api/v1/miniapp/conversation/messages', {
+        method: 'POST',
+        body: JSON.stringify({ body_text: bodyText, idempotency_key: makeIdempotencyKey() }),
+      })
+      setConversationMessages((current) => {
+        if (current.some((item) => item.id === message.id)) return current
+        return [...current, message].sort((left, right) =>
+          new Date(left.created_at).getTime() - new Date(right.created_at).getTime() || left.id - right.id,
+        )
+      })
+      setConversationDraft('')
+      setNotice('Сообщение отправлено координатору.')
+    })
+  }
+
   const finishLesson = () => {
     if (!lessonState || !allQuestionsAnswered) {
       setError('Сначала сохраните ответы на все вопросы урока.')
@@ -560,7 +648,8 @@ function App() {
         view === 'account' ? 'ЛИЧНЫЙ КАБИНЕТ'
           : view === 'catalog' ? 'БИБЛЕЙСКИЕ КУРСЫ'
             : view === 'lesson' ? lessonTitle
-              : selectedCourse?.title || 'ОБУЧЕНИЕ'
+              : view === 'chat' ? 'ПЕРЕПИСКА С КООРДИНАТОРОМ'
+                : selectedCourse?.title || 'ОБУЧЕНИЕ'
       } onBack={view !== 'account' && view !== 'catalog' ? back : undefined} />
 
       <div className="mini-content">
@@ -579,9 +668,16 @@ function App() {
               <article className="mini-stat-card"><span>Пройдено уроков</span><strong>{bootstrap.cabinet.completed_lessons}</strong><small>Шаг за шагом</small></article>
             </div>
 
-            {bootstrap.cabinet.unread_conversation_messages > 0 && (
-              <div className="mini-message-note"><span>✦</span><div><strong>Новое сообщение</strong><small>У вас {bootstrap.cabinet.unread_conversation_messages} непрочитанных сообщений от координатора.</small></div></div>
-            )}
+            <button className="mini-message-note mini-message-button" type="button" onClick={openChat} disabled={busy}>
+              <span>✉</span>
+              <div>
+                <strong>Переписка с координатором</strong>
+                <small>{bootstrap.cabinet.unread_conversation_messages > 0
+                  ? 'Непрочитанных сообщений: ' + bootstrap.cabinet.unread_conversation_messages
+                  : 'История переписки и возможность задать вопрос'}</small>
+              </div>
+              <b>→</b>
+            </button>
 
             <section className="mini-panel mini-current-panel">
               <div className="mini-panel-heading"><div><p className="mini-overline">ВАШЕ ОБУЧЕНИЕ</p><h2>Текущий курс</h2></div><span className="mini-icon-bubble">✦</span></div>
@@ -838,6 +934,60 @@ function App() {
                 ? 'Все уроки отправлены координатору. Ожидайте проверки ответов.'
                 : 'Вы завершили все уроки курса. Можно вернуться в каталог и выбрать следующий курс.'}
             </div>}
+          </section>
+        )}
+
+        {!loading && view === 'chat' && (
+          <section className="mini-page mini-chat-page">
+            <div className="mini-chat-heading">
+              <div>
+                <p className="mini-overline">ОБЩЕНИЕ</p>
+                <h1>Координатор</h1>
+                <p>Здесь отображается общая история переписки из Telegram и Mini App.</p>
+              </div>
+              <button className="mini-chat-refresh" type="button" onClick={refreshChat} disabled={busy} aria-label="Обновить переписку">↻</button>
+            </div>
+
+            <section className="mini-panel mini-chat-panel">
+              <div className="mini-chat-thread" aria-live="polite" aria-label="История переписки">
+                {conversationHasOlder && (
+                  <button className="mini-chat-older" type="button" onClick={loadOlderChatMessages} disabled={busy}>
+                    Загрузить предыдущие сообщения
+                  </button>
+                )}
+                {conversationMessages.length === 0 && (
+                  <div className="mini-chat-empty">
+                    <span>✉</span>
+                    <strong>Переписка пока пуста</strong>
+                    <p>Напишите координатору — сообщение появится здесь и в его Telegram-диалоге.</p>
+                  </div>
+                )}
+                {conversationMessages.map((message) => (
+                  <article
+                    key={message.id}
+                    className={'mini-chat-bubble ' + (message.sender_type === 'student' ? 'is-student' : 'is-curator')}
+                  >
+                    <span>{message.sender_type === 'student' ? 'Вы' : 'Координатор'}</span>
+                    <p>{message.body_text || (message.message_type === 'text' ? 'Сообщение без текста' : 'Вложение из Telegram')}</p>
+                    <time>{new Date(message.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</time>
+                  </article>
+                ))}
+              </div>
+              <form className="mini-chat-compose" onSubmit={(event) => { event.preventDefault(); sendChatMessage() }}>
+                <textarea
+                  rows={3}
+                  maxLength={4000}
+                  value={conversationDraft}
+                  onChange={(event) => setConversationDraft(event.target.value)}
+                  placeholder="Напишите сообщение координатору…"
+                  aria-label="Сообщение координатору"
+                />
+                <button className="mini-primary-button mini-full-button" type="submit" disabled={busy || !conversationDraft.trim()}>
+                  {busy ? 'Отправляем…' : 'Отправить сообщение'} <span>→</span>
+                </button>
+              </form>
+            </section>
+            <p className="mini-chat-footnote">Сообщения сохраняются в одной истории. Координатор увидит ваше сообщение и получит уведомление в Telegram.</p>
           </section>
         )}
 
