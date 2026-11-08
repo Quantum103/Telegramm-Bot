@@ -63,6 +63,10 @@ jobs:
           cache: true
           cache-dependency-path: backend/go.sum
 
+      - name: Check Go module metadata
+        working-directory: backend
+        run: go mod tidy -diff
+
       - name: Apply SQL migrations to the test database
         run: >-
           docker run --rm --network host
