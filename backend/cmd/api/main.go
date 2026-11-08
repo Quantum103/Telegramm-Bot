@@ -138,8 +138,8 @@ func run(logger *slog.Logger) error {
 			httpserver.MiniAppDependencies{
 				BotToken: cfg.TelegramBotToken,
 				Students: studentService,
-				Cabinet: learningService,
-				Catalog: catalogService,
+				Cabinet:  learningService,
+				Catalog:  catalogService,
 				Learning: learningService,
 			},
 		),

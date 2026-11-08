@@ -48,11 +48,11 @@ type MiniAppLearningAPI interface {
 
 // MiniAppDependencies reuses the same student, catalogue and learning services as the Telegram bot.
 type MiniAppDependencies struct {
-	BotToken  string
-	Students  MiniAppStudentRegistrar
-	Cabinet   MiniAppCabinetReader
-	Catalog   CatalogAPI
-	Learning  MiniAppLearningAPI
+	BotToken string
+	Students MiniAppStudentRegistrar
+	Cabinet  MiniAppCabinetReader
+	Catalog  CatalogAPI
+	Learning MiniAppLearningAPI
 }
 
 type miniAppHandler struct {
@@ -90,15 +90,15 @@ type miniAppCabinetResponse struct {
 }
 
 type miniAppBootstrapResponse struct {
-	Student      miniAppStudentResponse             `json:"student"`
-	Courses      []domain.Course                    `json:"courses"`
-	Cabinet      miniAppCabinetResponse             `json:"cabinet"`
-	ActiveCourse *domain.CourseEnrollmentProgress  `json:"active_course,omitempty"`
+	Student      miniAppStudentResponse           `json:"student"`
+	Courses      []domain.Course                  `json:"courses"`
+	Cabinet      miniAppCabinetResponse           `json:"cabinet"`
+	ActiveCourse *domain.CourseEnrollmentProgress `json:"active_course,omitempty"`
 }
 
 type miniAppCourseResponse struct {
 	Course       domain.Course                    `json:"course"`
-	Lessons      []domain.Lesson                   `json:"lessons"`
+	Lessons      []domain.Lesson                  `json:"lessons"`
 	ActiveCourse *domain.CourseEnrollmentProgress `json:"active_course,omitempty"`
 }
 
@@ -135,7 +135,7 @@ type miniAppQuestion struct {
 type miniAppQuestionResponse struct {
 	Question *miniAppQuestion `json:"question"`
 	Progress domain.Progress  `json:"progress"`
-	AtEnd    bool              `json:"at_end"`
+	AtEnd    bool             `json:"at_end"`
 }
 
 type miniAppStartCourseRequest struct {
@@ -503,21 +503,21 @@ func (h *miniAppHandler) completeLesson(w http.ResponseWriter, r *http.Request) 
 
 func miniAppCabinetFromDomain(cabinet domain.StudentCabinet) miniAppCabinetResponse {
 	response := miniAppCabinetResponse{
-		RegisteredAt: cabinet.RegisteredAt,
-		CompletedCourses: cabinet.CompletedCourses,
-		CompletedLessons: cabinet.CompletedLessons,
+		RegisteredAt:               cabinet.RegisteredAt,
+		CompletedCourses:           cabinet.CompletedCourses,
+		CompletedLessons:           cabinet.CompletedLessons,
 		UnreadConversationMessages: cabinet.UnreadConversationMessages,
-		Courses: make([]miniAppCabinetCourseResponse, 0, len(cabinet.Courses)),
+		Courses:                    make([]miniAppCabinetCourseResponse, 0, len(cabinet.Courses)),
 	}
 	for _, course := range cabinet.Courses {
 		response.Courses = append(response.Courses, miniAppCabinetCourseResponse{
-			CourseID: course.CourseID,
-			Title: course.Title,
-			Mode: course.Mode,
-			Status: course.Status,
-			TotalLessons: course.TotalLessons,
-			CompletedLessons: course.CompletedLessons,
-			PendingReviews: course.PendingReviews,
+			CourseID:             course.CourseID,
+			Title:                course.Title,
+			Mode:                 course.Mode,
+			Status:               course.Status,
+			TotalLessons:         course.TotalLessons,
+			CompletedLessons:     course.CompletedLessons,
+			PendingReviews:       course.PendingReviews,
 			NeedsRevisionAnswers: course.NeedsRevisionAnswers,
 		})
 	}
@@ -528,7 +528,7 @@ func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQues
 	question := &miniAppQuestion{
 		ID: state.Question.ID, Number: state.Question.QuestionNumber,
 		Prompt: state.Question.Prompt, AnswerType: state.Question.AnswerType,
-		Options: make([]miniAppOption, 0, len(state.Question.Options)),
+		Options:       make([]miniAppOption, 0, len(state.Question.Options)),
 		BiblePassages: state.Question.BiblePassages,
 	}
 	for _, option := range state.Question.Options {
@@ -539,17 +539,17 @@ func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQues
 	}
 	if state.SavedAnswer != nil {
 		question.SavedAnswer = &miniAppAnswerState{
-			AnswerText: state.SavedAnswer.AnswerText,
+			AnswerText:        state.SavedAnswer.AnswerText,
 			SelectedOptionIDs: state.SavedAnswer.SelectedOptionIDs,
-			ProcessingStatus: state.SavedAnswer.ProcessingStatus,
-			UpdatedAt: state.SavedAnswer.UpdatedAt,
+			ProcessingStatus:  state.SavedAnswer.ProcessingStatus,
+			UpdatedAt:         state.SavedAnswer.UpdatedAt,
 		}
 	}
 	if state.LatestAttempt != nil {
 		question.LatestAttempt = &miniAppReviewState{
 			ProcessingStatus: state.LatestAttempt.ProcessingStatus,
-			ReviewDecision: state.LatestAttempt.ReviewDecision,
-			ReviewFeedback: state.LatestAttempt.ReviewFeedback,
+			ReviewDecision:   state.LatestAttempt.ReviewDecision,
+			ReviewFeedback:   state.LatestAttempt.ReviewFeedback,
 		}
 	}
 	return miniAppQuestionResponse{Question: question, Progress: state.Progress, AtEnd: atEnd}
@@ -654,4 +654,3 @@ func validateTelegramWebAppInitData(raw, botToken string, now time.Time) (telegr
 	}
 	return user, nil
 }
-
