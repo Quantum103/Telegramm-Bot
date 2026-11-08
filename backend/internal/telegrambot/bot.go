@@ -410,6 +410,7 @@ type Bot struct {
 	conversations    StudentConversationAPI
 	staffTelegram    StaffTelegramBotAPI
 	studentReferrals StudentReferralAssigner
+	webAppURL        string
 
 	updateWorkerCount   int
 	updateQueueCapacity int
