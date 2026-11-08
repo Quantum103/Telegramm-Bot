@@ -1,0 +1,599 @@
+package httpserver
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/domain"
+	"github.com/Quantum103/Telegramm-Bot/backend/internal/service"
+)
+
+const (
+	miniAppInitDataHeader = "X-Telegram-Init-Data"
+	miniAppMaxInitDataAge = 24 * time.Hour
+	miniAppMaxBodyBytes   = 16 << 10
+)
+
+type MiniAppStudentRegistrar interface {
+	EnsureByTelegramID(context.Context, domain.EnsureStudentParams) (domain.Student, error)
+}
+
+type MiniAppCabinetReader interface {
+	GetStudentCabinet(context.Context, int64) (domain.StudentCabinet, error)
+}
+
+type MiniAppLearningAPI interface {
+	StartCourse(context.Context, int64, int64, string) (domain.CourseEnrollmentProgress, error)
+	ActiveCourse(context.Context, int64) (domain.CourseEnrollmentProgress, error)
+	CourseLessons(context.Context, int64, int64) ([]domain.CourseEnrollmentLesson, error)
+	StartLessonForCourse(context.Context, int64, int64, int64, int64) (domain.Progress, error)
+	GetProgress(context.Context, int64, int64) (domain.Progress, error)
+	OpenQuestion(context.Context, int64, int64, int64) (service.NavigationState, error)
+	NextQuestion(context.Context, int64, int64) (service.NavigationState, error)
+	PreviousQuestion(context.Context, int64, int64) (service.NavigationState, error)
+	SubmitAnswer(context.Context, domain.AnswerSubmission) (service.SubmissionResult, error)
+	CompleteLesson(context.Context, int64, int64) (domain.Enrollment, error)
+}
+
+// MiniAppDependencies reuses the same student, catalogue and learning services as the Telegram bot.
+type MiniAppDependencies struct {
+	BotToken  string
+	Students  MiniAppStudentRegistrar
+	Cabinet   MiniAppCabinetReader
+	Catalog   CatalogAPI
+	Learning  MiniAppLearningAPI
+}
+
+type miniAppHandler struct {
+	deps MiniAppDependencies
+}
+
+type telegramWebAppUser struct {
+	ID        int64  `json:"id"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Username  string `json:"username"`
+}
+
+type miniAppStudentResponse struct {
+	DisplayName string `json:"display_name"`
+}
+
+type miniAppBootstrapResponse struct {
+	Student      miniAppStudentResponse             `json:"student"`
+	Courses      []domain.Course                    `json:"courses"`
+	Cabinet      domain.StudentCabinet              `json:"cabinet"`
+	ActiveCourse *domain.CourseEnrollmentProgress  `json:"active_course,omitempty"`
+}
+
+type miniAppCourseResponse struct {
+	Course       domain.Course                    `json:"course"`
+	Lessons      []domain.Lesson                   `json:"lessons"`
+	ActiveCourse *domain.CourseEnrollmentProgress `json:"active_course,omitempty"`
+}
+
+type miniAppAnswerState struct {
+	AnswerText        string    `json:"answer_text"`
+	SelectedOptionIDs []int64   `json:"selected_option_ids"`
+	ProcessingStatus  string    `json:"processing_status"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type miniAppReviewState struct {
+	ProcessingStatus string  `json:"processing_status"`
+	ReviewDecision   *string `json:"review_decision,omitempty"`
+	ReviewFeedback   *string `json:"review_feedback,omitempty"`
+}
+
+type miniAppOption struct {
+	ID   int64  `json:"id"`
+	Key  string `json:"key"`
+	Text string `json:"text"`
+}
+
+type miniAppQuestion struct {
+	ID            int64                 `json:"id"`
+	Number        int                   `json:"number"`
+	Prompt        string                `json:"prompt"`
+	AnswerType    string                `json:"answer_type"`
+	Options       []miniAppOption       `json:"options"`
+	BiblePassages []domain.BiblePassage `json:"bible_passages"`
+	SavedAnswer   *miniAppAnswerState   `json:"saved_answer,omitempty"`
+	LatestAttempt *miniAppReviewState   `json:"latest_attempt,omitempty"`
+}
+
+type miniAppQuestionResponse struct {
+	Question *miniAppQuestion `json:"question"`
+	Progress domain.Progress  `json:"progress"`
+	AtEnd    bool              `json:"at_end"`
+}
+
+type miniAppStartCourseRequest struct {
+	Mode string `json:"mode"`
+}
+
+type miniAppAnswerRequest struct {
+	AnswerText        string  `json:"answer_text"`
+	SelectedOptionIDs []int64 `json:"selected_option_ids"`
+	IdempotencyKey    string  `json:"idempotency_key"`
+}
+
+type miniAppNavigateRequest struct {
+	Direction string `json:"direction"`
+}
+
+type miniAppCompleteResponse struct {
+	Enrollment domain.Enrollment `json:"enrollment"`
+}
+
+func NewHandlerWithTelegramMiniApp(next http.Handler, deps MiniAppDependencies) http.Handler {
+	mux := http.NewServeMux()
+	h := &miniAppHandler{deps: deps}
+	h.register(mux)
+	if next == nil {
+		next = http.NotFoundHandler()
+	}
+	mux.Handle("/", next)
+	return securityHeaders(mux)
+}
+
+func (h *miniAppHandler) register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/miniapp/bootstrap", h.bootstrap)
+	mux.HandleFunc("GET /api/v1/miniapp/courses/{courseID}", h.course)
+	mux.HandleFunc("POST /api/v1/miniapp/courses/{courseID}/start", h.startCourse)
+	mux.HandleFunc("GET /api/v1/miniapp/course-runs/{runID}/lessons", h.courseRunLessons)
+	mux.HandleFunc("POST /api/v1/miniapp/course-runs/{runID}/lessons/{lessonID}/start", h.startLesson)
+	mux.HandleFunc("GET /api/v1/miniapp/lesson-enrollments/{enrollmentID}/questions/{questionID}", h.openQuestion)
+	mux.HandleFunc("POST /api/v1/miniapp/lesson-enrollments/{enrollmentID}/questions/{questionID}/answer", h.submitAnswer)
+	mux.HandleFunc("POST /api/v1/miniapp/lesson-enrollments/{enrollmentID}/questions/navigate", h.navigateQuestion)
+	mux.HandleFunc("POST /api/v1/miniapp/lesson-enrollments/{enrollmentID}/complete", h.completeLesson)
+}
+
+func (h *miniAppHandler) registerStudent(w http.ResponseWriter, r *http.Request) (domain.Student, bool) {
+	setNoStoreHeaders(w)
+	if h.deps.BotToken == "" || h.deps.Students == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "mini_app_unavailable"})
+		return domain.Student{}, false
+	}
+
+	initData := r.Header.Get(miniAppInitDataHeader)
+	user, err := validateTelegramWebAppInitData(initData, h.deps.BotToken, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "telegram_auth_invalid"})
+		return domain.Student{}, false
+	}
+
+	displayName := strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " "))
+	if displayName == "" {
+		displayName = "Ученик"
+	}
+	params := domain.EnsureStudentParams{TelegramID: user.ID, DisplayName: displayName}
+	if username := strings.TrimSpace(user.Username); username != "" {
+		params.TelegramUsername = &username
+	}
+	student, err := h.deps.Students.EnsureByTelegramID(r.Context(), params)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return domain.Student{}, false
+	}
+	return student, true
+}
+
+func (h *miniAppHandler) bootstrap(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	if h.deps.Catalog == nil || h.deps.Cabinet == nil || h.deps.Learning == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "mini_app_unavailable"})
+		return
+	}
+
+	courses, err := h.deps.Catalog.ListCourses(r.Context())
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	if courses == nil {
+		courses = make([]domain.Course, 0)
+	}
+	cabinet, err := h.deps.Cabinet.GetStudentCabinet(r.Context(), student.ID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	response := miniAppBootstrapResponse{
+		Student: miniAppStudentResponse{DisplayName: student.DisplayName},
+		Courses: courses,
+		Cabinet: cabinet,
+	}
+	active, err := h.deps.Learning.ActiveCourse(r.Context(), student.ID)
+	if err == nil {
+		response.ActiveCourse = &active
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *miniAppHandler) course(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	courseID, ok := miniAppPathID(w, r, "courseID")
+	if !ok {
+		return
+	}
+	course, err := h.deps.Catalog.GetCourse(r.Context(), courseID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	lessons, err := h.deps.Catalog.ListCourseLessons(r.Context(), courseID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	if lessons == nil {
+		lessons = make([]domain.Lesson, 0)
+	}
+	response := miniAppCourseResponse{Course: course, Lessons: lessons}
+	if active, activeErr := h.deps.Learning.ActiveCourse(r.Context(), student.ID); activeErr == nil {
+		response.ActiveCourse = &active
+	} else if !errors.Is(activeErr, domain.ErrNotFound) {
+		writeMiniAppDomainError(w, activeErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *miniAppHandler) startCourse(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	courseID, ok := miniAppPathID(w, r, "courseID")
+	if !ok {
+		return
+	}
+	var input miniAppStartCourseRequest
+	if !decodeMiniAppJSON(w, r, &input) {
+		return
+	}
+	if input.Mode != "curator" && input.Mode != "ai" {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_learning_mode"})
+		return
+	}
+	progress, err := h.deps.Learning.StartCourse(r.Context(), student.ID, courseID, input.Mode)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, progress)
+}
+
+func (h *miniAppHandler) courseRunLessons(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	runID, ok := miniAppPathID(w, r, "runID")
+	if !ok {
+		return
+	}
+	lessons, err := h.deps.Learning.CourseLessons(r.Context(), student.ID, runID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	if lessons == nil {
+		lessons = make([]domain.CourseEnrollmentLesson, 0)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lessons": lessons})
+}
+
+func (h *miniAppHandler) startLesson(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	runID, ok := miniAppPathID(w, r, "runID")
+	if !ok {
+		return
+	}
+	lessonID, ok := miniAppPathID(w, r, "lessonID")
+	if !ok {
+		return
+	}
+	progress, err := h.deps.Learning.StartLessonForCourse(r.Context(), student.ID, runID, courseIDFromRun(r, runID), lessonID)
+	if err != nil {
+		// The authoritative course ID is resolved from the student's persisted run below.
+		if errors.Is(err, domain.ErrInvalidInput) {
+			writeMiniAppDomainError(w, err)
+			return
+		}
+	}
+	_ = progress
+	writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+}
+
+func (h *miniAppHandler) openQuestion(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	enrollmentID, ok := miniAppPathID(w, r, "enrollmentID")
+	if !ok {
+		return
+	}
+	questionID, ok := miniAppPathID(w, r, "questionID")
+	if !ok {
+		return
+	}
+	state, err := h.deps.Learning.OpenQuestion(r.Context(), student.ID, enrollmentID, questionID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppStateResponse(state, false))
+}
+
+func (h *miniAppHandler) submitAnswer(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	enrollmentID, ok := miniAppPathID(w, r, "enrollmentID")
+	if !ok {
+		return
+	}
+	questionID, ok := miniAppPathID(w, r, "questionID")
+	if !ok {
+		return
+	}
+	var input miniAppAnswerRequest
+	if !decodeMiniAppJSON(w, r, &input) {
+		return
+	}
+	if strings.TrimSpace(input.IdempotencyKey) == "" || len(input.IdempotencyKey) > 128 || len(input.AnswerText) > 10000 {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_answer"})
+		return
+	}
+	_, err := h.deps.Learning.SubmitAnswer(r.Context(), domain.AnswerSubmission{
+		StudentID: student.ID, EnrollmentID: enrollmentID, QuestionID: questionID,
+		AnswerText: input.AnswerText, SelectedOptionIDs: input.SelectedOptionIDs,
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	state, err := h.deps.Learning.OpenQuestion(r.Context(), student.ID, enrollmentID, questionID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppStateResponse(state, false))
+}
+
+func (h *miniAppHandler) navigateQuestion(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	enrollmentID, ok := miniAppPathID(w, r, "enrollmentID")
+	if !ok {
+		return
+	}
+	var input miniAppNavigateRequest
+	if !decodeMiniAppJSON(w, r, &input) {
+		return
+	}
+
+	var state service.NavigationState
+	var err error
+	switch input.Direction {
+	case "next":
+		state, err = h.deps.Learning.NextQuestion(r.Context(), student.ID, enrollmentID)
+	case "previous":
+		state, err = h.deps.Learning.PreviousQuestion(r.Context(), student.ID, enrollmentID)
+	default:
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_direction"})
+		return
+	}
+	if errors.Is(err, domain.ErrNoNextQuestion) {
+		progress, progressErr := h.deps.Learning.GetProgress(r.Context(), student.ID, enrollmentID)
+		if progressErr != nil {
+			writeMiniAppDomainError(w, progressErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, miniAppQuestionResponse{Progress: progress, AtEnd: true})
+		return
+	}
+	if errors.Is(err, domain.ErrNoPreviousQuestion) {
+		progress, progressErr := h.deps.Learning.GetProgress(r.Context(), student.ID, enrollmentID)
+		if progressErr != nil {
+			writeMiniAppDomainError(w, progressErr)
+			return
+		}
+		if progress.Enrollment.CurrentQuestionID == nil {
+			writeMiniAppDomainError(w, domain.ErrInvalidState)
+			return
+		}
+		state, err = h.deps.Learning.OpenQuestion(r.Context(), student.ID, enrollmentID, *progress.Enrollment.CurrentQuestionID)
+	}
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppStateResponse(state, false))
+}
+
+func (h *miniAppHandler) completeLesson(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	enrollmentID, ok := miniAppPathID(w, r, "enrollmentID")
+	if !ok {
+		return
+	}
+	if r.Body != nil {
+		_ = r.Body.Close()
+	}
+	enrollment, err := h.deps.Learning.CompleteLesson(r.Context(), student.ID, enrollmentID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppCompleteResponse{Enrollment: enrollment})
+}
+
+func miniAppStateResponse(state service.NavigationState, atEnd bool) miniAppQuestionResponse {
+	question := &miniAppQuestion{
+		ID: state.Question.ID, Number: state.Question.QuestionNumber,
+		Prompt: state.Question.Prompt, AnswerType: state.Question.AnswerType,
+		Options: make([]miniAppOption, 0, len(state.Question.Options)),
+		BiblePassages: state.Question.BiblePassages,
+	}
+	for _, option := range state.Question.Options {
+		question.Options = append(question.Options, miniAppOption{ID: option.ID, Key: option.Key, Text: option.Text})
+	}
+	if question.BiblePassages == nil {
+		question.BiblePassages = make([]domain.BiblePassage, 0)
+	}
+	if state.SavedAnswer != nil {
+		question.SavedAnswer = &miniAppAnswerState{
+			AnswerText: state.SavedAnswer.AnswerText,
+			SelectedOptionIDs: state.SavedAnswer.SelectedOptionIDs,
+			ProcessingStatus: state.SavedAnswer.ProcessingStatus,
+			UpdatedAt: state.SavedAnswer.UpdatedAt,
+		}
+	}
+	if state.LatestAttempt != nil {
+		question.LatestAttempt = &miniAppReviewState{
+			ProcessingStatus: state.LatestAttempt.ProcessingStatus,
+			ReviewDecision: state.LatestAttempt.ReviewDecision,
+			ReviewFeedback: state.LatestAttempt.ReviewFeedback,
+		}
+	}
+	return miniAppQuestionResponse{Question: question, Progress: state.Progress, AtEnd: atEnd}
+}
+
+func miniAppPathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	value, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+	if err != nil || value <= 0 {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_id"})
+		return 0, false
+	}
+	return value, true
+}
+
+func decodeMiniAppJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, miniAppMaxBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+		return false
+	}
+	return true
+}
+
+func writeMiniAppDomainError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, apiErrorResponse{Error: "not_found"})
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_request"})
+	case errors.Is(err, domain.ErrNoCurator):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "no_curator_available"})
+	case errors.Is(err, domain.ErrActiveCourse):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "active_course_exists"})
+	case errors.Is(err, domain.ErrLegacyProgress):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "legacy_progress"})
+	case errors.Is(err, domain.ErrInvalidState), errors.Is(err, domain.ErrConflict):
+		writeJSON(w, http.StatusConflict, apiErrorResponse{Error: "invalid_state"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+	}
+}
+
+func validateTelegramWebAppInitData(raw, botToken string, now time.Time) (telegramWebAppUser, error) {
+	if strings.TrimSpace(raw) == "" || len(raw) > 8<<10 || strings.TrimSpace(botToken) == "" {
+		return telegramWebAppUser{}, errors.New("missing Telegram Web App data")
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return telegramWebAppUser{}, errors.New("invalid Telegram Web App data")
+	}
+	providedHash, err := hex.DecodeString(values.Get("hash"))
+	if err != nil || len(providedHash) != sha256.Size {
+		return telegramWebAppUser{}, errors.New("invalid Telegram Web App hash")
+	}
+
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if key != "hash" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		items := values[key]
+		if len(items) == 0 {
+			pairs = append(pairs, key+"=")
+			continue
+		}
+		pairs = append(pairs, key+"="+items[0])
+	}
+	dataCheckString := strings.Join(pairs, "\n")
+
+	secret := hmac.New(sha256.New, []byte("WebAppData"))
+	_, _ = secret.Write([]byte(botToken))
+	check := hmac.New(sha256.New, secret.Sum(nil))
+	_, _ = check.Write([]byte(dataCheckString))
+	if subtle.ConstantTimeCompare(check.Sum(nil), providedHash) != 1 {
+		return telegramWebAppUser{}, errors.New("Telegram Web App hash mismatch")
+	}
+
+	authDate, err := strconv.ParseInt(values.Get("auth_date"), 10, 64)
+	if err != nil || authDate <= 0 {
+		return telegramWebAppUser{}, errors.New("invalid Telegram Web App auth date")
+	}
+	issuedAt := time.Unix(authDate, 0)
+	age := now.Sub(issuedAt)
+	if age > miniAppMaxInitDataAge || age < -time.Minute {
+		return telegramWebAppUser{}, errors.New("Telegram Web App data is expired or from the future")
+	}
+
+	var user telegramWebAppUser
+	if err := json.Unmarshal([]byte(values.Get("user")), &user); err != nil || user.ID <= 0 {
+		return telegramWebAppUser{}, errors.New("invalid Telegram Web App user")
+	}
+	return user, nil
+}
+
+func (h *miniAppHandler) String() string {
+	return fmt.Sprintf("telegram mini app handler configured=%t", h.deps.BotToken != "")
+}
