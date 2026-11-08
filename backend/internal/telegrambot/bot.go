@@ -478,6 +478,21 @@ func NewBotWithChapterPublisherAndConversationsAndStaffTelegramAndStudentReferra
 	}
 }
 
+ // SetWebAppURL configures the HTTPS URL opened by the Telegram Mini App button.
+func (b *Bot) SetWebAppURL(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		b.webAppURL = ""
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return fmt.Errorf("TELEGRAM_WEBAPP_URL must be an absolute HTTPS URL without credentials or fragment")
+	}
+	b.webAppURL = parsed.String()
+	return nil
+}
+
 // ConfigureUpdateWorkerPool sets worker and per-worker queue limits. Configure
 // the pool before calling Run; the values are read once when Run starts.
 func (b *Bot) ConfigureUpdateWorkerPool(workerCount, queueCapacity int) error {
