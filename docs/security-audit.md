@@ -23,7 +23,7 @@ Review basis: repository state at `71d31090b9f982bfd5cc9feda615cd6ad55821c6` plu
 4. Automated AI evaluation is not implemented; answer attempts can remain `pending`. Student↔curator messaging is implemented through a shared PostgreSQL conversation history: Telegram and Mini App messages use the same conversation, Mini App sends use idempotency keys, and Telegram-authenticated endpoints expose history and unread counts. Mini App refreshes messages and unread counts by polling; this is near-real-time polling, not a push/WebSocket guarantee.
 5. Automated frontend unit/e2e tests are not configured. Backend unit and integration tests plus frontend typecheck/build/CI are required for every change; integration tests use `TEST_DATABASE_URL` and must point only to a disposable database.
 6. The current staff session has a 12-hour absolute expiry. A separately enforced idle timeout, MFA, and a production-grade password reset/incident-response policy should be considered before public deployment.
-7. Existing administrative read routes permit curators to read authoring content (which includes expected answers and correct-choice metadata). Confirm this is an intentional content permission before providing curator accounts to untrusted users; narrow the role policy if curators should not see answer keys.
+7. Curators previously could read internal authoring questions, including expected answers, grading criteria and correct-choice metadata, through the administrative questions endpoint. The endpoint now explicitly requires the administrator role; curators must use the assignment-scoped review API.
 8. The app relies on the configured reverse proxy/edge to terminate TLS and enforce HTTPS/HSTS. Do not expose the backend directly on a public interface without reviewing proxy-header trust, rate limiting and transport security.
 
 ## Mini App security and operational notes
@@ -33,6 +33,9 @@ Review basis: repository state at `71d31090b9f982bfd5cc9feda615cd6ad55821c6` plu
 - Mini App API responses are marked `no-store`; the Nginx frontend marks HTML entry points `no-store` and applies basic browser security headers.
 - The Mini App currently polls for conversation updates (5 seconds while the chat is open; 10 seconds for unread counts elsewhere). This creates periodic authenticated reads and should be load-tested at expected concurrent-user scale. It does not provide push delivery guarantees.
 - These controls do not replace per-user API rate limiting, MFA for staff, a reviewed TLS/reverse-proxy deployment, or independent penetration testing.
+
+- CI now includes `govulncheck` for reachable Go vulnerabilities and `npm audit` for high/critical frontend dependency advisories.
+- The frontend repository currently has no committed npm lockfile. CI's npm audit therefore resolves the dependency tree afresh; this detects advisories but does not provide reproducible, integrity-pinned transitive dependencies. Add and commit `web/package-lock.json`, then switch CI to `npm ci` and a normal locked `npm audit`.
 
 ## Checks still required before production
 
