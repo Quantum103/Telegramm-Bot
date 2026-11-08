@@ -824,6 +824,11 @@ func validateTelegramWebAppInitData(raw, botToken string, now time.Time) (telegr
 	if err != nil {
 		return telegramWebAppUser{}, errors.New("invalid Telegram Web App data")
 	}
+	for key, items := range values {
+		if len(items) != 1 {
+			return telegramWebAppUser{}, errors.New("duplicate Telegram Web App parameter")
+		}
+	}
 	providedHash, err := hex.DecodeString(values.Get("hash"))
 	if err != nil || len(providedHash) != sha256.Size {
 		return telegramWebAppUser{}, errors.New("invalid Telegram Web App hash")
