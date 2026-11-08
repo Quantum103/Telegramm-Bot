@@ -209,6 +209,18 @@ async function requestJSON<T>(initData: string, path: string, init: RequestInit 
   return body as T
 }
 
+function mergeConversationMessages(
+  current: ConversationMessage[],
+  incoming: ConversationMessage[],
+): ConversationMessage[] {
+  const unique = new Map<number, ConversationMessage>()
+  for (const message of current) unique.set(message.id, message)
+  for (const message of incoming) unique.set(message.id, message)
+  return Array.from(unique.values()).sort((left, right) =>
+    new Date(left.created_at).getTime() - new Date(right.created_at).getTime() || left.id - right.id,
+  )
+}
+
 function progressPercent(done: number, total: number): number {
   if (total <= 0) return 0
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
@@ -316,6 +328,65 @@ function App() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [api, initData, webApp])
+
+  useEffect(() => {
+    if (!initData || loading) return
+
+    let cancelled = false
+    let refreshing = false
+
+    const refreshConversationState = async () => {
+      if (cancelled || refreshing || document.visibilityState !== 'visible') return
+      refreshing = true
+      try {
+        if (view === 'chat') {
+          const result = await api<ConversationResponse>('/api/v1/miniapp/conversation')
+          if (cancelled) return
+          setConversationMessages((current) => mergeConversationMessages(
+            current,
+            (result.messages || []).slice().reverse(),
+          ))
+          setConversationHasOlder((current) => current || result.has_more)
+          setBootstrap((current) => current ? {
+            ...current,
+            cabinet: {
+              ...current.cabinet,
+              unread_conversation_messages: result.unread_count,
+            },
+          } : current)
+        } else {
+          const result = await api<{ unread_count: number }>('/api/v1/miniapp/conversation/unread')
+          if (cancelled) return
+          setBootstrap((current) => current ? {
+            ...current,
+            cabinet: {
+              ...current.cabinet,
+              unread_conversation_messages: result.unread_count,
+            },
+          } : current)
+        }
+      } catch {
+        // Temporary network errors must not interrupt reading or writing in the Mini App.
+      } finally {
+        refreshing = false
+      }
+    }
+
+    const interval = window.setInterval(
+      () => { void refreshConversationState() },
+      view === 'chat' ? 5000 : 10000,
+    )
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refreshConversationState()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [api, initData, loading, view])
 
   const perform = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -527,8 +598,11 @@ function App() {
   const refreshChat = () => {
     void perform(async () => {
       const result = await api<ConversationResponse>('/api/v1/miniapp/conversation')
-      setConversationMessages((result.messages || []).slice().reverse())
-      setConversationHasOlder(result.has_more)
+      setConversationMessages((current) => mergeConversationMessages(
+        current,
+        (result.messages || []).slice().reverse(),
+      ))
+      setConversationHasOlder((current) => current || result.has_more)
       const updated = await loadBootstrap()
       setBootstrap(updated)
       setNotice('Переписка обновлена.')
@@ -543,13 +617,7 @@ function App() {
         '/api/v1/miniapp/conversation/messages?before_message_id=' + oldest.id,
       )
       const older = (result.messages || []).slice().reverse()
-      setConversationMessages((current) => {
-        const unique = new Map<number, ConversationMessage>()
-        for (const message of [...older, ...current]) unique.set(message.id, message)
-        return Array.from(unique.values()).sort((left, right) =>
-          new Date(left.created_at).getTime() - new Date(right.created_at).getTime() || left.id - right.id,
-        )
-      })
+      setConversationMessages((current) => mergeConversationMessages(current, older))
       setConversationHasOlder(result.has_more)
     })
   }
@@ -984,7 +1052,7 @@ function App() {
                 </button>
               </form>
             </section>
-            <p className="mini-chat-footnote">Сообщения сохраняются в одной истории. Координатор увидит ваше сообщение и получит уведомление в Telegram.</p>
+            <p className="mini-chat-footnote">Сообщения сохраняются в одной истории. Новые сообщения и непрочитанные обновляются автоматически. Координатор увидит ваше сообщение и получит уведомление в Telegram.</p>
           </section>
         )}
 
