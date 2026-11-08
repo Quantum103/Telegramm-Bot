@@ -100,7 +100,6 @@ func TestValidateTelegramWebAppInitDataRejectsMissingHashAndToken(t *testing.T) 
 	}
 }
 
-
 type miniAppTestStudentRegistrar struct{}
 
 func (miniAppTestStudentRegistrar) EnsureByTelegramID(_ context.Context, params domain.EnsureStudentParams) (domain.Student, error) {
