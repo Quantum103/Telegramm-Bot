@@ -589,6 +589,12 @@ func (h handlers) staffListQuestionsForVersion(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusUnauthorized, apiErrorResponse{Error: "unauthorized"})
 		return
 	}
+	// This response includes expected answers, grading criteria and correct
+	// options. Curators must use the assignment-scoped review API instead.
+	if !staffHasRole(identity, "administrator") {
+		writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: "insufficient_permissions"})
+		return
+	}
 	versionID, ok := parsePositiveID(w, r.PathValue("versionID"))
 	if !ok {
 		return
