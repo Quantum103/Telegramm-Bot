@@ -49,12 +49,21 @@ type MiniAppLearningAPI interface {
 }
 
 // MiniAppDependencies reuses the same student, catalogue and learning services as the Telegram bot.
+type MiniAppConversationAPI interface {
+	GetOrCreateForStudent(context.Context, int64) (domain.Conversation, error)
+	ListMessagesForStudent(context.Context, int64, int64, int64, int) ([]domain.ConversationMessage, error)
+	CreateStudentMiniAppMessage(context.Context, domain.CreateStudentMiniAppConversationMessageParams) (domain.ConversationMessage, error)
+	MarkReadForStudent(context.Context, int64, int64) (int64, error)
+	UnreadCountForStudent(context.Context, int64) (int64, error)
+}
+
 type MiniAppDependencies struct {
-	BotToken string
-	Students MiniAppStudentRegistrar
-	Cabinet  MiniAppCabinetReader
-	Catalog  CatalogAPI
-	Learning MiniAppLearningAPI
+	BotToken      string
+	Students      MiniAppStudentRegistrar
+	Cabinet       MiniAppCabinetReader
+	Catalog       CatalogAPI
+	Learning      MiniAppLearningAPI
+	Conversations MiniAppConversationAPI
 }
 
 type miniAppHandler struct {
@@ -165,6 +174,36 @@ type miniAppCompleteResponse struct {
 	Enrollment domain.Enrollment `json:"enrollment"`
 }
 
+type miniAppConversationInfo struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+}
+
+type miniAppConversationMessage struct {
+	ID          int64     `json:"id"`
+	SenderType  string    `json:"sender_type"`
+	MessageType string    `json:"message_type"`
+	BodyText    *string   `json:"body_text,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type miniAppConversationResponse struct {
+	Conversation miniAppConversationInfo      `json:"conversation"`
+	Messages      []miniAppConversationMessage `json:"messages"`
+	HasMore       bool                         `json:"has_more"`
+	UnreadCount   int64                        `json:"unread_count"`
+}
+
+type miniAppConversationMessagesResponse struct {
+	Messages []miniAppConversationMessage `json:"messages"`
+	HasMore  bool                         `json:"has_more"`
+}
+
+type miniAppConversationMessageRequest struct {
+	BodyText       string `json:"body_text"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
 func NewHandlerWithTelegramMiniApp(next http.Handler, deps MiniAppDependencies) http.Handler {
 	mux := http.NewServeMux()
 	h := &miniAppHandler{deps: deps}
@@ -178,6 +217,9 @@ func NewHandlerWithTelegramMiniApp(next http.Handler, deps MiniAppDependencies) 
 
 func (h *miniAppHandler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/miniapp/bootstrap", h.bootstrap)
+	mux.HandleFunc("GET /api/v1/miniapp/conversation", h.studentConversation)
+	mux.HandleFunc("GET /api/v1/miniapp/conversation/messages", h.studentConversationMessages)
+	mux.HandleFunc("POST /api/v1/miniapp/conversation/messages", h.studentSendConversationMessage)
 	mux.HandleFunc("GET /api/v1/miniapp/courses/{courseID}", h.course)
 	mux.HandleFunc("POST /api/v1/miniapp/courses/{courseID}/start", h.startCourse)
 	mux.HandleFunc("GET /api/v1/miniapp/course-runs/{runID}/lessons", h.courseRunLessons)
@@ -216,6 +258,144 @@ func (h *miniAppHandler) registerStudent(w http.ResponseWriter, r *http.Request)
 		return domain.Student{}, false
 	}
 	return student, true
+}
+
+func (h *miniAppHandler) studentConversation(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	if h.deps.Conversations == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "mini_app_unavailable"})
+		return
+	}
+	conversation, err := h.deps.Conversations.GetOrCreateForStudent(r.Context(), student.ID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	if _, err := h.deps.Conversations.MarkReadForStudent(r.Context(), student.ID, conversation.ID); err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	messages, err := h.deps.Conversations.ListMessagesForStudent(r.Context(), student.ID, conversation.ID, 0, 51)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	hasMore := len(messages) > 50
+	if hasMore {
+		messages = messages[:50]
+	}
+	if messages == nil {
+		messages = []domain.ConversationMessage{}
+	}
+	unread, err := h.deps.Conversations.UnreadCountForStudent(r.Context(), student.ID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	response := miniAppConversationResponse{
+		Conversation: miniAppConversationInfo{ID: conversation.ID, Status: conversation.Status},
+		Messages: miniAppConversationMessagesFromDomain(messages),
+		HasMore: hasMore,
+		UnreadCount: unread,
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *miniAppHandler) studentConversationMessages(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	if h.deps.Conversations == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "mini_app_unavailable"})
+		return
+	}
+	beforeID, err := parseNonNegativeQueryID(r.URL.Query().Get("before_message_id"))
+	if err != nil || beforeID == 0 {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_before_message_id"})
+		return
+	}
+	conversation, err := h.deps.Conversations.GetOrCreateForStudent(r.Context(), student.ID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	if _, err := h.deps.Conversations.MarkReadForStudent(r.Context(), student.ID, conversation.ID); err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	messages, err := h.deps.Conversations.ListMessagesForStudent(r.Context(), student.ID, conversation.ID, beforeID, 51)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	hasMore := len(messages) > 50
+	if hasMore {
+		messages = messages[:50]
+	}
+	if messages == nil {
+		messages = []domain.ConversationMessage{}
+	}
+	writeJSON(w, http.StatusOK, miniAppConversationMessagesResponse{
+		Messages: miniAppConversationMessagesFromDomain(messages),
+		HasMore: hasMore,
+	})
+}
+
+func (h *miniAppHandler) studentSendConversationMessage(w http.ResponseWriter, r *http.Request) {
+	student, ok := h.registerStudent(w, r)
+	if !ok {
+		return
+	}
+	if h.deps.Conversations == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiErrorResponse{Error: "mini_app_unavailable"})
+		return
+	}
+	var input miniAppConversationMessageRequest
+	if !decodeMiniAppJSON(w, r, &input) {
+		return
+	}
+	if strings.TrimSpace(input.IdempotencyKey) == "" || len(input.IdempotencyKey) > 128 {
+		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid_message"})
+		return
+	}
+	conversation, err := h.deps.Conversations.GetOrCreateForStudent(r.Context(), student.ID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	message, err := h.deps.Conversations.CreateStudentMiniAppMessage(r.Context(), domain.CreateStudentMiniAppConversationMessageParams{
+		StudentID: student.ID,
+		ConversationID: conversation.ID,
+		ClientMessageID: input.IdempotencyKey,
+		BodyText: input.BodyText,
+	})
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, miniAppConversationMessageFromDomain(message))
+}
+
+func miniAppConversationMessagesFromDomain(messages []domain.ConversationMessage) []miniAppConversationMessage {
+	result := make([]miniAppConversationMessage, 0, len(messages))
+	for _, message := range messages {
+		result = append(result, miniAppConversationMessageFromDomain(message))
+	}
+	return result
+}
+
+func miniAppConversationMessageFromDomain(message domain.ConversationMessage) miniAppConversationMessage {
+	return miniAppConversationMessage{
+		ID: message.ID,
+		SenderType: message.SenderType,
+		MessageType: message.MessageType,
+		BodyText: message.BodyText,
+		CreatedAt: message.CreatedAt,
+	}
 }
 
 func (h *miniAppHandler) bootstrap(w http.ResponseWriter, r *http.Request) {
