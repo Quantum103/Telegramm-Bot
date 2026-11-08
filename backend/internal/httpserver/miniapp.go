@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -319,16 +318,36 @@ func (h *miniAppHandler) startLesson(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	progress, err := h.deps.Learning.StartLessonForCourse(r.Context(), student.ID, runID, courseIDFromRun(r, runID), lessonID)
+	active, err := h.deps.Learning.ActiveCourse(r.Context(), student.ID)
 	if err != nil {
-		// The authoritative course ID is resolved from the student's persisted run below.
-		if errors.Is(err, domain.ErrInvalidInput) {
-			writeMiniAppDomainError(w, err)
-			return
-		}
+		writeMiniAppDomainError(w, err)
+		return
 	}
-	_ = progress
-	writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: "internal_error"})
+	if active.Enrollment.ID != runID || active.Enrollment.Status != "in_progress" {
+		writeMiniAppDomainError(w, domain.ErrInvalidState)
+		return
+	}
+	progress, err := h.deps.Learning.StartLessonForCourse(
+		r.Context(), student.ID, runID, active.Enrollment.CourseID, lessonID,
+	)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	questionID := progress.Enrollment.CurrentQuestionID
+	if questionID == nil {
+		questionID = progress.FirstQuestionID
+	}
+	if questionID == nil {
+		writeJSON(w, http.StatusOK, miniAppQuestionResponse{Progress: progress, AtEnd: true})
+		return
+	}
+	state, err := h.deps.Learning.OpenQuestion(r.Context(), student.ID, progress.Enrollment.ID, *questionID)
+	if err != nil {
+		writeMiniAppDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppStateResponse(state, false))
 }
 
 func (h *miniAppHandler) openQuestion(w http.ResponseWriter, r *http.Request) {
@@ -594,6 +613,3 @@ func validateTelegramWebAppInitData(raw, botToken string, now time.Time) (telegr
 	return user, nil
 }
 
-func (h *miniAppHandler) String() string {
-	return fmt.Sprintf("telegram mini app handler configured=%t", h.deps.BotToken != "")
-}
