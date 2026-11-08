@@ -9,6 +9,7 @@ import StaffManagementPage from './StaffManagementPage'
 import ConversationsPage from './ConversationsPage'
 import TelegramSettingsPage from './TelegramSettingsPage'
 import PasswordChangePage from './PasswordChangePage'
+import MiniApp from './MiniApp'
 import './catalog.css'
 import './auth.css'
 
@@ -79,7 +80,7 @@ function LoginPage({
   </main>
 }
 
-function App() {
+function StaffApp() {
   const [authState, setAuthState] = useState<AuthState>('checking')
   const [staff, setStaff] = useState<StaffIdentity | null>(null)
   const [authError, setAuthError] = useState('')
@@ -410,4 +411,10 @@ function App() {
     </nav>
   </div>
 }
+
+function App() {
+  const isMiniApp = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/')
+  return isMiniApp ? <MiniApp /> : <StaffApp />
+}
+
 export default App
