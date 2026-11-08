@@ -34,7 +34,7 @@ func (b *Bot) showMainMenu(ctx context.Context, chatID, studentID, messageID int
 		text += "\n\n" + strings.TrimSpace(notice)
 	}
 	rows := make([][]InlineKeyboardButton, 0, 3)
-	if b.webAppURL != "" {
+	if b.webAppURL != "" && chatID > 0 {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Открыть приложение", WebApp: &WebAppInfo{URL: b.webAppURL}}})
 	}
 	rows = append(rows,
