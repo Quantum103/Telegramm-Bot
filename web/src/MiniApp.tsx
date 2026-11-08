@@ -198,16 +198,6 @@ function modeLabel(mode: string): string {
   return mode === 'curator' ? 'С координатором' : 'Самостоятельно'
 }
 
-function courseStatus(status: string): string {
-  switch (status) {
-    case 'completed': return 'Завершён'
-    case 'in_progress': return 'В процессе'
-    case 'awaiting_curator': return 'На проверке'
-    case 'paused': return 'Приостановлен'
-    default: return 'Ещё не начат'
-  }
-}
-
 function lessonStatus(status: string): string {
   switch (status) {
     case 'completed': return 'Выполнено'
