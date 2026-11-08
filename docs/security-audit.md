@@ -20,11 +20,19 @@ Review basis: repository state at `71d31090b9f982bfd5cc9feda615cd6ad55821c6` plu
 1. **MFA/2FA is not implemented. Do not expose the admin panel to the public internet or call this project production-ready until MFA is implemented with a maintained library/protocol, recovery procedures are reviewed, and independent security testing is performed.**
 2. The bootstrap administrator can still be initialized from environment configuration. If `BOOTSTRAP_ADMIN_PASSWORD` is explicitly set, it is treated as an administrator-selected password and is not forced to rotate. Keep this secret out of logs and deployment manifests; do not rely on bootstrap defaults for a public production system.
 3. Initial passwords are intentionally delivered out of band by an administrator; there is no email/SMS invitation channel. This avoids introducing an unconfigured email dependency but requires a private hand-off and an immediate password change.
-4. Automated AI evaluation is not implemented; answer attempts can remain `pending`. The conversation tables exist and curator assignments update their active owner, but the student↔curator chat/message delivery workflow is not a complete feature.
+4. Automated AI evaluation is not implemented; answer attempts can remain `pending`. Student↔curator messaging is implemented through a shared PostgreSQL conversation history: Telegram and Mini App messages use the same conversation, Mini App sends use idempotency keys, and Telegram-authenticated endpoints expose history and unread counts. Mini App refreshes messages and unread counts by polling; this is near-real-time polling, not a push/WebSocket guarantee.
 5. Automated frontend unit/e2e tests are not configured. Backend unit and integration tests plus frontend typecheck/build/CI are required for every change; integration tests use `TEST_DATABASE_URL` and must point only to a disposable database.
 6. The current staff session has a 12-hour absolute expiry. A separately enforced idle timeout, MFA, and a production-grade password reset/incident-response policy should be considered before public deployment.
 7. Existing administrative read routes permit curators to read authoring content (which includes expected answers and correct-choice metadata). Confirm this is an intentional content permission before providing curator accounts to untrusted users; narrow the role policy if curators should not see answer keys.
 8. The app relies on the configured reverse proxy/edge to terminate TLS and enforce HTTPS/HSTS. Do not expose the backend directly on a public interface without reviewing proxy-header trust, rate limiting and transport security.
+
+## Mini App security and operational notes
+
+- Mini App API requests validate Telegram Web App `initData` with HMAC-SHA256, reject duplicate parameters, enforce a 24-hour maximum age and reject timestamps more than one minute in the future.
+- Mini App JSON writes reject unknown fields and trailing JSON, and are bounded to 16 KiB. Conversation message text and idempotency keys have additional domain validation.
+- Mini App API responses are marked `no-store`; the Nginx frontend marks HTML entry points `no-store` and applies basic browser security headers.
+- The Mini App currently polls for conversation updates (5 seconds while the chat is open; 10 seconds for unread counts elsewhere). This creates periodic authenticated reads and should be load-tested at expected concurrent-user scale. It does not provide push delivery guarantees.
+- These controls do not replace per-user API rate limiting, MFA for staff, a reviewed TLS/reverse-proxy deployment, or independent penetration testing.
 
 ## Checks still required before production
 
