@@ -631,23 +631,33 @@ function App() {
             <section className="mini-panel">
               <div className="mini-panel-heading"><div><p className="mini-overline">ПОСЛЕДОВАТЕЛЬНОСТЬ</p><h2>Уроки курса</h2></div><span className="mini-count">{runLessons.length}</span></div>
               <div className="mini-run-lessons">
-                {runLessons.map((lesson, index) => {
-                  const completed = lesson.status === 'completed'
+                {runLessons.filter((lesson) => lesson.status !== 'completed').map((lesson, index) => {
                   const waiting = lesson.status === 'awaiting_curator'
-                  const disabled = completed || waiting || busy
                   return (
-                    <button className={'mini-run-lesson' + (completed ? ' is-completed' : '')} type="button" key={lesson.lesson_id}
-                      onClick={() => startLesson(lesson.lesson_id)} disabled={disabled}>
-                      <span className="mini-run-number">{completed ? '✓' : String(index + 1).padStart(2, '0')}</span>
+                    <button className="mini-run-lesson" type="button" key={lesson.lesson_id}
+                      onClick={() => startLesson(lesson.lesson_id)} disabled={waiting || busy}>
+                      <span className="mini-run-number">{String(index + 1).padStart(2, '0')}</span>
                       <span className="mini-run-copy"><strong>{lesson.title}</strong><small>{lesson.answered_questions} из {lesson.total_questions} вопросов · {lessonStatus(lesson.status)}</small></span>
-                      <span className="mini-run-arrow">{waiting ? '◷' : completed ? '✓' : '→'}</span>
+                      <span className="mini-run-arrow">{waiting ? '◷' : '→'}</span>
                     </button>
                   )
                 })}
               </div>
-              {runLessons.length === 0 && <p className="mini-empty-inline">В этом курсе пока нет доступных уроков.</p>}
+              {runLessons.filter((lesson) => lesson.status !== 'completed').length === 0 && (
+                <p className="mini-empty-inline">
+                  {runLessons.length === 0
+                    ? 'В этом курсе пока нет доступных уроков.'
+                    : runProgress.enrollment.mode === 'curator'
+                      ? 'Все уроки отправлены координатору. Он проверит ответы и при необходимости свяжется с вами.'
+                      : 'Вы завершили все уроки курса.'}
+                </p>
+              )}
             </section>
-            {runProgress.is_complete && <div className="mini-success-note">Вы завершили все уроки курса. Можно вернуться в каталог и выбрать следующий курс.</div>}
+            {runProgress.is_complete && <div className="mini-success-note">
+              {runProgress.enrollment.mode === 'curator'
+                ? 'Все уроки отправлены координатору. Ожидайте проверки ответов.'
+                : 'Вы завершили все уроки курса. Можно вернуться в каталог и выбрать следующий курс.'}
+            </div>}
           </section>
         )}
 
