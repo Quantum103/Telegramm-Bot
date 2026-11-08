@@ -199,3 +199,46 @@ func TestValidateTelegramWebAppInitDataRejectsDuplicateParameters(t *testing.T) 
 		})
 	}
 }
+
+
+func TestDecodeMiniAppJSONRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown field", body: `{"known":"value","unexpected":true}`},
+		{name: "trailing JSON", body: `{"known":"value"} {"known":"second"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			response := httptest.NewRecorder()
+			var decoded struct {
+				Known string `json:"known"`
+			}
+			if decodeMiniAppJSON(response, request, &decoded) {
+				t.Fatal("expected malformed or unexpected JSON to be rejected")
+			}
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("unexpected status: got %d want %d", response.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestDecodeMiniAppJSONRejectsOversizedBody(t *testing.T) {
+	body := strings.Repeat("x", miniAppMaxBodyBytes+1)
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	response := httptest.NewRecorder()
+	var decoded struct {
+		Known string `json:"known"`
+	}
+
+	if decodeMiniAppJSON(response, request, &decoded) {
+		t.Fatal("expected oversized request body to be rejected")
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: got %d want %d", response.Code, http.StatusBadRequest)
+	}
+}
