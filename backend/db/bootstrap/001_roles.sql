@@ -81,6 +81,19 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
   AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
   AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+  -- Serial/identity sequences are owned by their table. PostgreSQL transfers
+  -- them automatically when the table owner changes, so do not ALTER them alone.
+  AND NOT (
+      c.relkind = 'S'
+      AND EXISTS (
+          SELECT 1
+          FROM pg_depend d
+          WHERE d.classid = 'pg_class'::regclass
+            AND d.objid = c.oid
+            AND d.refclassid = 'pg_class'::regclass
+            AND d.deptype IN ('a', 'i')
+      )
+  )
 ORDER BY CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 2 ELSE 0 END
 \gexec
 
