@@ -85,6 +85,19 @@ ORDER BY CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 2 ELSE 0 END
 \gexec
 
 SELECT format(
+    'ALTER %s %I.%I OWNER TO bible_migrator',
+    CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = 'public'
+  AND t.typowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  AND t.typtype IN ('d', 'e', 'r', 'm')
+\gexec
+
+SELECT format(
     'ALTER %s %I.%I(%s) OWNER TO bible_migrator',
     CASE p.prokind
         WHEN 'p' THEN 'PROCEDURE'
@@ -102,19 +115,6 @@ WHERE n.nspname = 'public'
   AND p.prokind IN ('f', 'p', 'a', 'w')
 \gexec
 
-SELECT format(
-    'ALTER %s %I.%I OWNER TO bible_migrator',
-    CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
-    n.nspname,
-    t.typname
-)
-FROM pg_type t
-JOIN pg_namespace n ON n.oid = t.typnamespace
-WHERE n.nspname = 'public'
-  AND t.typowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
-  AND t.typtype IN ('d', 'e', 'r', 'm')
-\gexec
-
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO bible_runtime;
 GRANT USAGE, CREATE ON SCHEMA public TO bible_migrator;
@@ -126,6 +126,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE
     ON ALL TABLES IN SCHEMA public TO bible_runtime;
 GRANT USAGE, SELECT
     ON ALL SEQUENCES IN SCHEMA public TO bible_runtime;
+GRANT USAGE
+    ON ALL TYPES IN SCHEMA public TO bible_runtime;
 
 -- Objects created by future migrations automatically receive the same runtime grants.
 SET ROLE bible_migrator;
@@ -137,4 +139,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bible_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO bible_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE ON TYPES TO bible_runtime;
 RESET ROLE;
