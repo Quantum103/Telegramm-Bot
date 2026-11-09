@@ -79,8 +79,19 @@ SELECT format(
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
-  AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  -- Legacy objects may have been created by bible_app, bible_runtime, postgres,
+  -- or another historical role. Normalize every non-extension application
+  -- relation in public, not only objects owned by the current bootstrap role.
+  AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = 'bible_migrator')
   AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM pg_depend d
+      WHERE d.classid = 'pg_class'::regclass
+        AND d.objid = c.oid
+        AND d.refclassid = 'pg_extension'::regclass
+        AND d.deptype = 'e'
+  )
   -- Serial/identity sequences are owned by their table. PostgreSQL transfers
   -- them automatically when the table owner changes, so do not ALTER them alone.
   AND NOT (
@@ -118,8 +129,16 @@ SELECT format(
 FROM pg_type t
 JOIN pg_namespace n ON n.oid = t.typnamespace
 WHERE n.nspname = 'public'
-  AND t.typowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  AND t.typowner <> (SELECT oid FROM pg_roles WHERE rolname = 'bible_migrator')
   AND t.typtype IN ('d', 'e', 'r', 'm')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM pg_depend d
+      WHERE d.classid = 'pg_type'::regclass
+        AND d.objid = t.oid
+        AND d.refclassid = 'pg_extension'::regclass
+        AND d.deptype = 'e'
+  )
 \gexec
 
 SELECT format(
@@ -136,8 +155,16 @@ SELECT format(
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'
-  AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  AND p.proowner <> (SELECT oid FROM pg_roles WHERE rolname = 'bible_migrator')
   AND p.prokind IN ('f', 'p', 'a', 'w')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM pg_depend d
+      WHERE d.classid = 'pg_proc'::regclass
+        AND d.objid = p.oid
+        AND d.refclassid = 'pg_extension'::regclass
+        AND d.deptype = 'e'
+  )
 \gexec
 
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
