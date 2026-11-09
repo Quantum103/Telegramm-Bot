@@ -126,8 +126,16 @@ GRANT SELECT, INSERT, UPDATE, DELETE
     ON ALL TABLES IN SCHEMA public TO bible_runtime;
 GRANT USAGE, SELECT
     ON ALL SEQUENCES IN SCHEMA public TO bible_runtime;
-GRANT USAGE
-    ON ALL TYPES IN SCHEMA public TO bible_runtime;
+SELECT format(
+    'GRANT USAGE ON TYPE %I.%I TO bible_runtime',
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = 'public'
+  AND t.typtype IN ('d', 'e', 'r', 'm')
+\gexec
 
 -- Objects created by future migrations automatically receive the same runtime grants.
 SET ROLE bible_migrator;
