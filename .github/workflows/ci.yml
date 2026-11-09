@@ -279,4 +279,22 @@ jobs:
         run: cp .env.example .env
 
       - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
+        run: |
+          docker compose config --quiet
+          docker compose config --format json > /tmp/compose.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("/tmp/compose.json").read_text())
+          service = config["services"]["db-roles"]
+          command = service.get("command")
+          assert isinstance(command, list) and len(command) == 1, (
+              "db-roles command must be one shell script argument; "
+              f"got {command!r}"
+          )
+          assert "001_roles.sql" in command[0] and "psql" in command[0], (
+              "db-roles shell script must execute the PostgreSQL bootstrap SQL"
+          )
+          print("db-roles shell command is correctly passed as one script.")
+          PY
