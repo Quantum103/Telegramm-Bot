@@ -60,14 +60,61 @@ SELECT format(
 )
 \gexec
 
--- Transfer existing objects from the original bootstrap role without deleting data.
+-- Transfer only application objects in public; leave PostgreSQL system objects untouched.
+ALTER SCHEMA public OWNER TO bible_migrator;
+
 SELECT format(
-    'REASSIGN OWNED BY %I TO bible_migrator',
-    :'bootstrap_user'
+    'ALTER %s %I.%I OWNER TO bible_migrator',
+    CASE c.relkind
+        WHEN 'r' THEN 'TABLE'
+        WHEN 'p' THEN 'TABLE'
+        WHEN 'v' THEN 'VIEW'
+        WHEN 'm' THEN 'MATERIALIZED VIEW'
+        WHEN 'f' THEN 'FOREIGN TABLE'
+        WHEN 'S' THEN 'SEQUENCE'
+    END,
+    n.nspname,
+    c.relname
 )
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+ORDER BY CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 2 ELSE 0 END
 \gexec
 
-ALTER SCHEMA public OWNER TO bible_migrator;
+SELECT format(
+    'ALTER %s %I.%I(%s) OWNER TO bible_migrator',
+    CASE p.prokind
+        WHEN 'p' THEN 'PROCEDURE'
+        WHEN 'a' THEN 'AGGREGATE'
+        ELSE 'FUNCTION'
+    END,
+    n.nspname,
+    p.proname,
+    pg_get_function_identity_arguments(p.oid)
+)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  AND p.prokind IN ('f', 'p', 'a', 'w')
+\gexec
+
+SELECT format(
+    'ALTER %s %I.%I OWNER TO bible_migrator',
+    CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = 'public'
+  AND t.typowner = (SELECT oid FROM pg_roles WHERE rolname = :'bootstrap_user')
+  AND t.typtype IN ('d', 'e', 'r', 'm')
+\gexec
+
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO bible_runtime;
 GRANT USAGE, CREATE ON SCHEMA public TO bible_migrator;
