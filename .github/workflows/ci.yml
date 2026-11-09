@@ -69,12 +69,20 @@ jobs:
         working-directory: backend
         run: go mod tidy -diff
 
-      - name: Prepare legacy migration ledger and SERIAL sequence for role-bootstrap regression
+      - name: Prepare an existing SERIAL sequence for role-bootstrap regression
         run: |
           docker run --rm --network host postgres:18-alpine \
             psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
-              -c "CREATE TABLE public.bootstrap_sequence_fixture (id BIGSERIAL PRIMARY KEY)" \
-              -c "CREATE TABLE public.schema_migrations (version bigint NOT NULL, dirty boolean NOT NULL); INSERT INTO public.schema_migrations(version, dirty) VALUES (0, false)"
+              -c "CREATE TABLE public.bootstrap_sequence_fixture (id BIGSERIAL PRIMARY KEY)"
+
+      - name: Create a legacy schema and migration ledger as the bootstrap role
+        run: |
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 \
+            -path=/migrations \
+            -database "$TEST_DATABASE_URL" \
+            goto 11
 
       - name: Provision PostgreSQL least-privilege roles
         run: |
