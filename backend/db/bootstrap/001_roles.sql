@@ -97,6 +97,10 @@ WHERE n.nspname = 'public'
 ORDER BY CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 2 ELSE 0 END
 \gexec
 
+-- golang-migrate may have created this ledger under an earlier owner.
+-- Always transfer it explicitly so the migration role can inspect/update it.
+ALTER TABLE IF EXISTS public.schema_migrations OWNER TO bible_migrator;
+
 SELECT format(
     'ALTER %s %I.%I OWNER TO bible_migrator',
     CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
