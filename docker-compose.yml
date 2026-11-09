@@ -33,12 +33,12 @@ services:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-ec"]
     command: |
-      PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+      PGPASSWORD="$${POSTGRES_PASSWORD}" psql \
         --host=postgres --port=5432 \
-        --username="${POSTGRES_USER}" --dbname="${POSTGRES_DB}" \
-        --set=bootstrap_user="${POSTGRES_USER}" \
-        --set=runtime_password="${DATABASE_PASSWORD}" \
-        --set=migrations_password="${MIGRATIONS_PASSWORD}" \
+        --username="$${POSTGRES_USER}" --dbname="$${POSTGRES_DB}" \
+        --set=bootstrap_user="$${POSTGRES_USER}" \
+        --set=runtime_password="$${DATABASE_PASSWORD}" \
+        --set=migrations_password="$${MIGRATIONS_PASSWORD}" \
         --file=/bootstrap/001_roles.sql
 
   redis:
