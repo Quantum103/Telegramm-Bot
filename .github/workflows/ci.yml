@@ -50,6 +50,8 @@ jobs:
           --health-retries 20
     env:
       TEST_DATABASE_URL: postgres://bible_app:ci-only-password@127.0.0.1:5432/bible_platform_test?sslmode=disable
+      MIGRATIONS_DATABASE_URL: postgres://bible_migrator:ci-migrations-password@127.0.0.1:5432/bible_platform_test?sslmode=disable
+      RUNTIME_DATABASE_URL: postgres://bible_runtime:ci-runtime-password@127.0.0.1:5432/bible_platform_test?sslmode=disable
       UPGRADE_DATABASE_URL: postgres://bible_app:ci-only-password@127.0.0.1:5432/bible_platform_upgrade_test?sslmode=disable
       TEST_REDIS_ADDR: 127.0.0.1:6379
     steps:
@@ -67,14 +69,44 @@ jobs:
         working-directory: backend
         run: go mod tidy -diff
 
-      - name: Apply SQL migrations to the test database
+      - name: Provision PostgreSQL least-privilege roles
+        run: |
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/bootstrap:/bootstrap:ro" \
+            -e PGPASSWORD=ci-only-password \
+            postgres:18-alpine \
+            psql --host=127.0.0.1 --username=bible_app --dbname=bible_platform_test \
+              --set=bootstrap_user=bible_app \
+              --set=runtime_password=ci-runtime-password \
+              --set=migrations_password=ci-migrations-password \
+              --file=/bootstrap/001_roles.sql
+
+      - name: Apply SQL migrations using the dedicated migration role
         run: >-
           docker run --rm --network host
           -v "$GITHUB_WORKSPACE/backend/db/migrations:/migrations:ro"
           migrate/migrate:v4.20.1
           -path=/migrations
-          -database "$TEST_DATABASE_URL"
+          -database "$MIGRATIONS_DATABASE_URL"
           up
+
+      - name: Verify backend runtime role cannot perform DDL
+        run: |
+          set -euo pipefail
+          role_flags="$(docker run --rm --network host postgres:18-alpine \
+            psql "$RUNTIME_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
+            "SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls FROM pg_roles WHERE rolname = current_user")"
+          test "$role_flags" = "t"
+          dml_rights="$(docker run --rm --network host postgres:18-alpine \
+            psql "$RUNTIME_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
+            "SELECT has_schema_privilege(current_user, 'public', 'USAGE') AND NOT has_schema_privilege(current_user, 'public', 'CREATE') AND has_table_privilege(current_user, 'public.students', 'SELECT,INSERT,UPDATE,DELETE')")"
+          test "$dml_rights" = "t"
+          if docker run --rm --network host postgres:18-alpine \
+            psql "$RUNTIME_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE public.runtime_role_must_not_create(id INTEGER)"; then
+            echo "ERROR: bible_runtime unexpectedly created a table"
+            exit 1
+          fi
 
       - name: Verify data-preserving migration upgrade (schema v11 to latest)
         run: |

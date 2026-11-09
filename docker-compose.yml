@@ -17,6 +17,30 @@ services:
       retries: 20
       start_period: 5s
 
+  db-roles:
+    image: postgres:18-alpine
+    restart: "no"
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-bible_platform}"
+      POSTGRES_USER: "${POSTGRES_USER:-bible_app}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:?Укажите DATABASE_PASSWORD в .env}"
+      MIGRATIONS_PASSWORD: "${MIGRATIONS_PASSWORD:?Укажите MIGRATIONS_PASSWORD в .env}"
+    volumes:
+      - ./backend/db/bootstrap:/bootstrap:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+        --host=postgres --port=5432 \
+        --username="${POSTGRES_USER}" --dbname="${POSTGRES_DB}" \
+        --set=bootstrap_user="${POSTGRES_USER}" \
+        --set=runtime_password="${DATABASE_PASSWORD}" \
+        --set=migrations_password="${MIGRATIONS_PASSWORD}" \
+        --file=/bootstrap/001_roles.sql
+
   redis:
     image: redis:8-alpine
     restart: unless-stopped
@@ -52,8 +76,8 @@ services:
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${POSTGRES_DB:-bible_platform}"
-      DATABASE_USER: "${POSTGRES_USER:-bible_app}"
-      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}"
+      DATABASE_USER: "${DATABASE_USER:-bible_runtime}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:?Укажите DATABASE_PASSWORD в .env}"
       DATABASE_SSLMODE: "${DATABASE_SSLMODE:-disable}"
       DATABASE_CONNECT_TIMEOUT: "${DATABASE_CONNECT_TIMEOUT:-5s}"
       DATABASE_MAX_CONNS: "${DATABASE_MAX_CONNS:-10}"
@@ -77,6 +101,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-roles:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -98,11 +124,11 @@ services:
     volumes:
       - ./backend/db/migrations:/migrations:ro
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-roles:
+        condition: service_completed_successfully
     command:
       - "-path=/migrations"
-      - "-database=${MIGRATIONS_DATABASE_URL:-postgres://${POSTGRES_USER:-bible_app}:${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}@postgres:5432/${POSTGRES_DB:-bible_platform}?sslmode=disable}"
+      - "-database=${MIGRATIONS_DATABASE_URL:-postgres://bible_migrator:${MIGRATIONS_PASSWORD:?Укажите MIGRATIONS_PASSWORD в .env}@postgres:5432/${POSTGRES_DB:-bible_platform}?sslmode=disable}"
       - "up"
 
 volumes:

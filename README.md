@@ -32,15 +32,17 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-Измени `POSTGRES_PASSWORD` на локальный пароль. Не публикуй `.env` и не храни реальные секреты в Git: файл игнорируется через `.gitignore`. Для запуска Telegram-бота укажи `TELEGRAM_BOT_TOKEN` из `@BotFather`; если значение пустое, бот отключён, а HTTP API продолжает работать.
+Задай три разных длинных случайных пароля: `POSTGRES_PASSWORD` для административной учётной записи PostgreSQL, `DATABASE_PASSWORD` для ограниченной роли backend и `MIGRATIONS_PASSWORD` для роли миграций. Не используй один пароль для нескольких ролей. Не публикуй `.env` и не храни реальные секреты в Git: файл игнорируется через `.gitignore`. Для запуска Telegram-бота укажи `TELEGRAM_BOT_TOKEN` из `@BotFather`; если значение пустое, бот отключён, а HTTP API продолжает работать.
+
+**Важно для существующей базы:** не меняй `POSTGRES_USER` и `POSTGRES_PASSWORD` наугад. Эти значения должны соответствовать административной роли, созданной при первой инициализации текущего Docker volume. Приложение больше не использует эту роль.
 
 Если пароль содержит зарезервированные символы URI (например, `@`, `:`, `/`, `?` или `#`), укажи в `MIGRATIONS_DATABASE_URL` отдельный URI подключения с percent-encoded паролем. Пример формы URI:
 
 ```text
-postgres://bible_app:URL_ENCODED_PASSWORD@postgres:5432/bible_platform?sslmode=disable
+postgres://bible_migrator:URL_ENCODED_PASSWORD@postgres:5432/bible_platform?sslmode=disable
 ```
 
-Если `MIGRATIONS_DATABASE_URL` пуст, Compose собирает адрес мигратора из `POSTGRES_USER`, `POSTGRES_PASSWORD` и `POSTGRES_DB`. Для примера из `.env.example` этого достаточно.
+Если `MIGRATIONS_DATABASE_URL` пуст, Compose собирает адрес из `bible_migrator`, `MIGRATIONS_PASSWORD` и `POSTGRES_DB`. Для backend используется только роль `bible_runtime`; административный пароль не передаётся контейнеру приложения.
 
 ## Запуск проекта и миграции
 
@@ -48,12 +50,15 @@ postgres://bible_app:URL_ENCODED_PASSWORD@postgres:5432/bible_platform?sslmode=d
 
 Текущая схема включает миграции `000001`–`000012`; последние добавляют напоминания кураторам, состояние экрана урока и прохождения курсов (`000012_course_enrollments`). На существующей БД сначала сделай резервную копию, затем примени все неприменённые миграции отдельной командой. Миграция завершается ошибкой, если найдёт email сотрудников, совпадающие без учёта регистра: это намеренная защита от неоднозначного входа; сначала вручную разберись с дубликатами.
 
-Сначала подними PostgreSQL:
+Сначала подними PostgreSQL и дождись автоматической настройки отдельных ролей:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres db-roles
+docker compose logs db-roles
 docker compose ps
 ```
+
+Сервис `db-roles` использует административную учётную запись только для разового управления правами. Он создаёт `bible_runtime` и `bible_migrator`, передаёт мигратору владение объектами схемы и выдаёт backend только DML-права. Существующие строки и таблицы не удаляются. Для существующей базы сначала сделай резервную копию.
 
 На чистой базе примени версионируемые миграции отдельной командой:
 
