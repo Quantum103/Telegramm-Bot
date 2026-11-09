@@ -96,17 +96,38 @@ jobs:
               --set=migrations_password=ci-migrations-password \
               --file=/bootstrap/001_roles.sql
 
+      - name: Simulate a legacy table owned by the previous runtime role
+        run: |
+          docker run --rm --network host postgres:18-alpine \
+            psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
+              -c "GRANT CREATE ON SCHEMA public TO bible_runtime" \
+              -c "ALTER TABLE public.conversation_messages OWNER TO bible_runtime" \
+              -c "REVOKE CREATE ON SCHEMA public FROM bible_runtime"
+
+      - name: Reconcile all legacy object owners regardless of their previous role
+        run: |
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/backend/db/bootstrap:/bootstrap:ro" \
+            -e PGPASSWORD=ci-only-password \
+            postgres:18-alpine \
+            psql --host=127.0.0.1 --username=bible_app --dbname=bible_platform_test \
+              --set=bootstrap_user=bible_app \
+              --set=runtime_password=ci-runtime-password \
+              --set=migrations_password=ci-migrations-password \
+              --file=/bootstrap/001_roles.sql
+
       - name: Verify owned SERIAL sequence follows its table owner
         run: |
           set -euo pipefail
           owners="$(docker run --rm --network host postgres:18-alpine \
             psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
-            "SELECT pg_get_userbyid(t.relowner) || '|' || pg_get_userbyid(s.relowner) || '|' || pg_get_userbyid(m.relowner)
+            "SELECT pg_get_userbyid(t.relowner) || '|' || pg_get_userbyid(s.relowner) || '|' || pg_get_userbyid(m.relowner) || '|' || pg_get_userbyid(c.relowner)
              FROM pg_class t
              JOIN pg_class s ON s.oid = pg_get_serial_sequence('public.bootstrap_sequence_fixture', 'id')::regclass
              JOIN pg_class m ON m.oid = 'public.schema_migrations'::regclass
+             JOIN pg_class c ON c.oid = 'public.conversation_messages'::regclass
              WHERE t.oid = 'public.bootstrap_sequence_fixture'::regclass")"
-          test "$owners" = "bible_migrator|bible_migrator|bible_migrator"
+          test "$owners" = "bible_migrator|bible_migrator|bible_migrator|bible_migrator"
 
       - name: Apply SQL migrations using the dedicated migration role
         run: >-
