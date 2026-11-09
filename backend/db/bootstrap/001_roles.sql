@@ -98,8 +98,16 @@ ORDER BY CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 2 ELSE 0 END
 \gexec
 
 -- golang-migrate may have created this ledger under an earlier owner.
--- Always transfer it explicitly so the migration role can inspect/update it.
-ALTER TABLE IF EXISTS public.schema_migrations OWNER TO bible_migrator;
+-- Transfer it explicitly and grant its full metadata-table privileges so upgrades
+-- remain safe even when the table was created by an older deployment role.
+DO $$
+BEGIN
+    IF to_regclass('public.schema_migrations') IS NOT NULL THEN
+        EXECUTE 'ALTER TABLE public.schema_migrations OWNER TO bible_migrator';
+        EXECUTE 'GRANT ALL PRIVILEGES ON TABLE public.schema_migrations TO bible_migrator';
+    END IF;
+END
+$$;
 
 SELECT format(
     'ALTER %s %I.%I OWNER TO bible_migrator',
@@ -166,4 +174,14 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO bible_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT USAGE ON TYPES TO bible_runtime;
+
+-- Fail role provisioning early if an existing migration ledger is not readable
+-- by the same role that the migrate container will use.
+DO $$
+BEGIN
+    IF to_regclass('public.schema_migrations') IS NOT NULL THEN
+        PERFORM 1 FROM public.schema_migrations LIMIT 1;
+    END IF;
+END
+$$;
 RESET ROLE;
